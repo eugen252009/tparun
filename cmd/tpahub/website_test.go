@@ -16,18 +16,23 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
-		if path == "/nano" || path == "/pricing" {
+		if path == "/nano" || path == "/pricing" || path == "/docs" {
 			text := string(body)
 			wants := []string{"Nano"}
 			if path == "/nano" {
 				wants = append(wants, "Neovim 0.12.5", "about 2.4 KB", "recipe package, not Neovim itself", "2,500 recipe-sized packages", "200 times", "Your mileage may vary", "STANDARD", "PRO")
+			} else if path == "/pricing" {
+				wants = append(wants, "Standard", "Pro", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
 			} else {
-				wants = append(wants, "Standard", "Pro", "5 MB", "1 GB", "AVAILABLE NOW", "COMING SOON")
+				wants = append(wants, "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "future", "not implemented")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {
-					t.Fatalf("nano page missing %q", want)
+					t.Fatalf("website page %s missing %q", path, want)
 				}
+			}
+			if path == "/pricing" && (strings.Contains(text, "€") || strings.Contains(text, "$") || strings.Contains(text, "Buy Pro")) {
+				t.Fatal("pricing exposes an unimplemented Pro price or purchase action")
 			}
 		}
 	}
