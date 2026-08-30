@@ -115,6 +115,15 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parts[0]
+	if len(parts) == 1 && r.Method == "GET" {
+		repo, e := s.db.Repository(r.Context(), id)
+		if e != nil {
+			bad(w, 404, "repository not found")
+			return
+		}
+		jsonOut(w, repo)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "signing-key" {
 		s.key(w, r, id)
 		return
@@ -263,7 +272,7 @@ func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, 404, "repository signing key unavailable")
 		return
 	}
-	args := []string{"--armor", "--export", s.cfg.GPGFingerprint}
+	args := []string{"--export", s.cfg.GPGFingerprint}
 	cmd := exec.CommandContext(r.Context(), "gpg", args...)
 	if s.cfg.GPGHome != "" {
 		cmd.Env = append(os.Environ(), "GNUPGHOME="+s.cfg.GPGHome)

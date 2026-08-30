@@ -29,6 +29,13 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)
 	}
+	// A process cannot safely resume a child process from a previous run.
+	// Queued jobs remain available; jobs claimed by the old process are
+	// deterministically marked failed and can be retried by a new upload.
+	if _, err := db.Exec(`UPDATE publish_jobs SET state='failed', error='interrupted by service restart', finished_at=? WHERE state='running'`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("recover publish jobs: %w", err)
+	}
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
