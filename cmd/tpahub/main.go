@@ -88,6 +88,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/docs", s.web)
 	m.HandleFunc("/how-to", s.web)
 	m.HandleFunc("/pricing", s.web)
+	m.HandleFunc("/datenschutz", s.web)
 	m.HandleFunc("/", s.web)
 	m.HandleFunc("/tpahub.asc", s.publicKey)
 	m.HandleFunc("/version", s.version)
