@@ -120,7 +120,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			} else if path == "/pricing" {
 				wants = append(wants, "Standard", "Pro", "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
 			} else {
-				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "actual successful response-body bytes", "UTC calendar months", "not enforced yet", "future", "not implemented")
+				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "actual successful response-body bytes", "UTC calendar months", "not a hard cutoff", "future", "not implemented")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {

@@ -369,9 +369,22 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		bad(w, 404, "not found")
 		return
 	}
+	startedAt := s.currentTime().UTC()
+	period := startedAt.Format("2006-01")
+	limited := false
+	if used, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
+		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
+	} else {
+		limited = used >= NanoEgressBytes
+	}
 	counted := &repositoryCountingWriter{ResponseWriter: w}
-	defer func() { s.recordRepositoryEgress(repo.ID, counted.bytes) }()
-	http.ServeFile(counted, r, path)
+	var output http.ResponseWriter = counted
+	if limited && strings.HasSuffix(strings.ToLower(path), ".deb") {
+		w.Header().Set("X-TPAHub-Egress-Limited", "true")
+		output = &rateLimitedResponseWriter{ResponseWriter: counted, rate: NanoOverageBytesPerSecond}
+	}
+	defer func() { s.recordRepositoryEgress(repo.ID, period, counted.bytes) }()
+	http.ServeFile(output, r, path)
 }
 func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "GET" {

@@ -3,8 +3,9 @@ package main
 import "fmt"
 
 const (
-	NanoStorageBytes int64 = 5_000_000
-	NanoEgressBytes  int64 = 1_000_000_000
+	NanoStorageBytes          int64 = 5_000_000
+	NanoEgressBytes           int64 = 1_000_000_000
+	NanoOverageBytesPerSecond int64 = 128_000
 )
 
 type PlanLimits struct {
