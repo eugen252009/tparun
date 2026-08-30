@@ -71,9 +71,12 @@ func run(cfg config.Config) error {
 }
 func (s *server) routes() http.Handler {
 	m := http.NewServeMux()
-	m.HandleFunc("/v1/repositories", s.repositories)
-	m.HandleFunc("/v1/repositories/", s.repository)
-	m.HandleFunc("/v1/publish-jobs/", s.job)
+	m.HandleFunc("/v1/accounts", s.accounts)
+	m.HandleFunc("/v1/login", s.login)
+	m.HandleFunc("/v1/logout", s.logout)
+	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))
+	m.HandleFunc("/v1/repositories/", s.repositoryRoute)
+	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))
 	m.HandleFunc("/r/", s.files)
 	return m
 }
@@ -83,12 +86,22 @@ func jsonOut(w http.ResponseWriter, v any) {
 }
 func bad(w http.ResponseWriter, status int, msg string) { http.Error(w, msg, status) }
 func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		repos, e := s.db.Repositories(r.Context(), accountID(r))
+		if e != nil {
+			bad(w, 500, "repository lookup failed")
+			return
+		}
+		jsonOut(w, repos)
+		return
+	}
 	if r.Method != "POST" || r.URL.Path != "/v1/repositories" {
 		bad(w, 405, "method not allowed")
 		return
 	}
 	var in struct {
-		Name string `json:"name"`
+		Name       string `json:"name"`
+		Visibility string `json:"visibility"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
 		bad(w, 400, "name is required")
@@ -100,12 +113,27 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, e.Error())
 		return
 	}
-	if e := s.db.CreateRepository(r.Context(), store.Repository{ID: id, Name: strings.TrimSpace(in.Name), CreatedAt: now}); e != nil {
+	visibility := in.Visibility
+	if visibility != "public" {
+		visibility = "private"
+	}
+	if e := s.db.CreateRepository(r.Context(), store.Repository{ID: id, AccountID: accountID(r), Name: strings.TrimSpace(in.Name), Visibility: visibility, CreatedAt: now}); e != nil {
 		bad(w, 500, e.Error())
 		return
 	}
 	log.Printf("repository created id=%s", id)
-	jsonOut(w, map[string]any{"id": id, "name": strings.TrimSpace(in.Name), "created_at": now})
+	jsonOut(w, map[string]any{"id": id, "name": strings.TrimSpace(in.Name), "visibility": visibility, "created_at": now})
+}
+func (s *server) repositoryRoute(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/signing-key") {
+		s.repository(w, r)
+		return
+	}
+	if r.Method == "GET" && r.Header.Get("Authorization") == "" {
+		s.repository(w, r)
+		return
+	}
+	s.authHandler(s.repository)(w, r)
 }
 func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/v1/repositories/")
@@ -117,7 +145,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 	id := parts[0]
 	if len(parts) == 1 && r.Method == "GET" {
 		repo, e := s.db.Repository(r.Context(), id)
-		if e != nil {
+		if e == nil && repo.Visibility == "private" && accountID(r) != "" {
+			repo, e = s.db.OwnedRepository(r.Context(), accountID(r), id)
+		}
+		if e != nil || (repo.Visibility == "private" && accountID(r) == "") {
 			bad(w, 404, "repository not found")
 			return
 		}
@@ -128,15 +159,20 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		s.key(w, r, id)
 		return
 	}
-	if len(parts) != 2 || parts[1] != "publishes" || r.Method != "POST" {
-		bad(w, 404, "not found")
+	if len(parts) >= 2 && parts[1] == "reader-credentials" {
+		s.credentials(w, r, id, parts[2:])
 		return
 	}
-	if _, e := s.db.Repository(r.Context(), id); e != nil {
-		bad(w, 404, "repository not found")
+	if len(parts) == 2 && parts[1] == "publishes" && r.Method == "POST" {
+		repo, e := s.db.OwnedRepository(r.Context(), accountID(r), id)
+		if e != nil || repo.ID != id {
+			bad(w, 404, "repository not found")
+			return
+		}
+		s.upload(w, r, id)
 		return
 	}
-	s.upload(w, r, id)
+	bad(w, 404, "not found")
 }
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
@@ -231,6 +267,12 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	}
 	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/publish-jobs/"), "/")
 	j, e := s.db.Job(r.Context(), id)
+	if e == nil {
+		repo, _ := s.db.Repository(r.Context(), j.RepositoryID)
+		if repo.AccountID != accountID(r) {
+			e = store.ErrNotFound
+		}
+	}
 	if e != nil {
 		bad(w, 404, "job not found")
 		return
@@ -249,6 +291,20 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
 		bad(w, 404, "not found")
 		return
+	}
+	repo, e := s.db.Repository(r.Context(), parts[0])
+	if e != nil {
+		bad(w, 404, "not found")
+		return
+	}
+	if repo.Visibility == "private" {
+		_, pw, ok := r.BasicAuth()
+		allowed, err := s.db.ReaderRepository(r.Context(), repo.ID, store.HashToken(pw))
+		if !ok || err != nil || !allowed {
+			w.Header().Set("WWW-Authenticate", `Basic realm="TPA Hub"`)
+			bad(w, 401, "repository credentials required")
+			return
+		}
 	}
 	root := filepath.Join(s.cfg.DataDir, "repos", parts[0])
 	path := filepath.Join(root, rel)

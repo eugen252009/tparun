@@ -7,24 +7,26 @@ import (
 )
 
 type Config struct {
-	Listen         string
-	DataDir        string
-	TPABin         string
-	GPGHome        string
-	GPGFingerprint string
-	PublishTimeout time.Duration
-	MaxUpload      int64
+	Listen              string
+	DataDir             string
+	TPABin              string
+	GPGHome             string
+	GPGFingerprint      string
+	PublishTimeout      time.Duration
+	MaxUpload           int64
+	RegistrationEnabled bool
 }
 
 func Load() Config {
 	return Config{
-		Listen:         env("TPAHUB_LISTEN", "127.0.0.1:8080"),
-		DataDir:        env("TPAHUB_DATA_DIR", "./data"),
-		TPABin:         env("TPA_BIN", "tpa"),
-		GPGHome:        os.Getenv("GNUPGHOME"),
-		GPGFingerprint: os.Getenv("TPAHUB_GPG_FINGERPRINT"),
-		PublishTimeout: duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
-		MaxUpload:      integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
+		Listen:              env("TPAHUB_LISTEN", "127.0.0.1:8080"),
+		DataDir:             env("TPAHUB_DATA_DIR", "./data"),
+		TPABin:              env("TPA_BIN", "tpa"),
+		GPGHome:             os.Getenv("GNUPGHOME"),
+		GPGFingerprint:      os.Getenv("TPAHUB_GPG_FINGERPRINT"),
+		PublishTimeout:      duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
+		MaxUpload:           integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
+		RegistrationEnabled: os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
 	}
 }
 func env(k, fallback string) string {

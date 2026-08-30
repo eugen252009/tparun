@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,14 +22,19 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024}, db: db, runner: tpa.Runner{}}
+	_ = db.CreateAccount(context.Background(), store.Account{ID: "a", Email: "a@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"})
+	_ = db.CreateSession(context.Background(), store.Session{ID: "s", AccountID: "a", TokenPrefix: "tph_s_test"}, store.HashToken("tph_s_test"))
+	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true}, db: db, runner: tpa.Runner{}}
 	h := httptest.NewServer(s.routes())
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
 func TestHTTPRepositoryAndServing(t *testing.T) {
 	s, h := testServer(t)
-	resp, e := http.Post(h.URL+"/v1/repositories", "application/json", strings.NewReader(`{"name":"demo"}`))
+	req, _ := http.NewRequest("POST", h.URL+"/v1/repositories", strings.NewReader(`{"name":"demo","visibility":"public"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tph_s_test")
+	resp, e := http.DefaultClient.Do(req)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -42,7 +48,10 @@ func TestHTTPRepositoryAndServing(t *testing.T) {
 	if _, e = os.Stat(filepath.Join(s.cfg.DataDir, "repos", id)); e != nil {
 		t.Fatal(e)
 	}
-	if resp, e = http.Get(h.URL + "/v1/repositories/" + id); e != nil || resp.StatusCode != 200 {
+	req, _ = http.NewRequest("GET", h.URL+"/v1/repositories/"+id, nil)
+	req.Header.Set("Authorization", "Bearer tph_s_test")
+	resp, e = http.DefaultClient.Do(req)
+	if e != nil || resp.StatusCode != 200 {
 		t.Fatalf("lookup: %v %v", resp, e)
 	}
 	os.WriteFile(filepath.Join(s.cfg.DataDir, "repos", id, "file"), []byte("ok"), 0644)
@@ -61,7 +70,7 @@ func TestHTTPRepositoryAndServing(t *testing.T) {
 func TestHTTPInvalidUpload(t *testing.T) {
 	_, h := testServer(t)
 	resp, _ := http.Post(h.URL+"/v1/repositories/not-an-id/publishes?filename=x.deb", "application/octet-stream", strings.NewReader("x"))
-	if resp.StatusCode != 404 {
+	if resp.StatusCode != 401 && resp.StatusCode != 404 {
 		t.Fatalf("got %d", resp.StatusCode)
 	}
 }
