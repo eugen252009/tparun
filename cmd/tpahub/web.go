@@ -7,12 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,8 +31,11 @@ type pageData struct {
 	LoggedIn        bool
 	Error           string
 	CSRF            string
-	PackageCount    int
+	PackageCount    int64
 	HasPackageCount bool
+	StorageUsed     string
+	StorageBytes    int64
+	HasStorageUsage bool
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -68,12 +68,21 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	}
 	id := accountID(r)
 	email := ""
-	packageCount := 0
+	var packageCount int64
 	var countErr error
 	if name == "home" {
-		packageCount, countErr = s.publishedPackageCount()
+		stats, err := s.globalPublishedUsage()
+		packageCount, countErr = stats.PackageCount, err
 		if countErr != nil {
 			log.Printf("package count: %v", countErr)
+		}
+	}
+	var accountUsage AccountUsage
+	var usageErr error
+	if name == "account" && id != "" {
+		accountUsage, usageErr = s.accountUsage(r.Context(), id)
+		if usageErr != nil {
+			log.Printf("account storage usage: %v", usageErr)
 		}
 	}
 	if id != "" {
@@ -86,24 +95,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil})
-}
-func (s *server) publishedPackageCount() (int, error) {
-	root := filepath.Join(s.cfg.DataDir, "repos")
-	count := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && d.Type().IsRegular() && strings.HasSuffix(strings.ToLower(d.Name()), ".deb") {
-			count++
-		}
-		return nil
-	})
-	if os.IsNotExist(err) {
-		return 0, nil
-	}
-	return count, err
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {
