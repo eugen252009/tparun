@@ -83,6 +83,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/register", s.registerPage)
 	m.HandleFunc("/login", s.loginPage)
 	m.HandleFunc("/account", s.accountPage)
+	m.HandleFunc("/account/billing/nano/purchase", s.accountNanoPurchase)
 	m.HandleFunc("/logout", s.browserLogout)
 	m.HandleFunc("/docs", s.web)
 	m.HandleFunc("/how-to", s.web)

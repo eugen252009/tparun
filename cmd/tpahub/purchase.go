@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,67 +30,101 @@ type stripeCheckoutEvent struct {
 	} `json:"data"`
 }
 
-func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		bad(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+func (s *server) nanoPurchaseAvailable() bool {
+	return s.cfg.BillingPurchasesEnabled && ValidateBillingConfiguration(s.cfg) == nil
+}
+func (s *server) startNanoPurchase(ctx context.Context, account string) (store.BillingPurchase, CheckoutResult, error) {
+	if !s.nanoPurchaseAvailable() {
+		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("purchase flow unavailable")
 	}
-	if !s.cfg.BillingPurchasesEnabled || s.cfg.BillingProvider != "stripe" || s.cfg.BillingEnvironment != string(BillingEnvironmentTest) {
-		bad(w, http.StatusNotFound, "purchase flow unavailable")
-		return
-	}
-	if r.Body != nil {
-		r.Body.Close()
-	}
-	accountID := accountID(r)
 	now := s.currentTime().UTC()
 	period, err := entitlementPeriod(now.Format("2006-01-02"), now)
 	if err != nil {
-		bad(w, http.StatusInternalServerError, "entitlement period unavailable")
-		return
+		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("entitlement period unavailable")
 	}
-	card, err := rateCardByID("production-nano-v1")
+	card, err := rateCardByID(s.cfg.BillingRateCard)
 	if err != nil || validateRateCard(card) != nil {
-		bad(w, http.StatusServiceUnavailable, "Nano pricing unavailable")
-		return
+		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("Nano pricing unavailable")
 	}
 	purchaseID := newID()
 	created := now.Format(time.RFC3339Nano)
-	purchase := store.BillingPurchase{ID: purchaseID, AccountID: accountID, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
-	purchase, err = s.db.CreatePendingPurchase(r.Context(), purchase, created)
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	purchase, err = s.db.CreatePendingPurchase(ctx, purchase, created)
 	if err != nil {
-		if err.Error() == "purchase-already-active" {
-			bad(w, http.StatusConflict, err.Error())
-		} else {
-			bad(w, http.StatusConflict, "pending purchase already exists")
-		}
-		return
+		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
 	if purchase.ProviderReference != "" {
-		jsonOut(w, map[string]any{"purchase_id": purchase.ID, "status": purchase.Status, "provider": "stripe", "environment": "test", "checkout_reference": purchase.ProviderReference})
-		return
+		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ExternalReference: purchase.ProviderReference}, nil
 	}
 	var purchaseProvider PurchaseProvider = s.purchaseProvider
 	if purchaseProvider == nil {
 		provider, pe := NewStripeBillingProvider(s.db, s.cfg.StripeTestSecret, BillingEnvironmentTest)
 		if pe != nil {
-			bad(w, http.StatusServiceUnavailable, "purchase provider unavailable")
-			return
+			return store.BillingPurchase{}, CheckoutResult{}, pe
 		}
 		provider.SuccessURL = "https://tpa.lupricht.net/"
 		provider.CancelURL = "https://tpa.lupricht.net/"
 		purchaseProvider = provider
 	}
-	checkout, err := purchaseProvider.CreateCheckout(r.Context(), FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
+	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
 	if err != nil {
-		bad(w, http.StatusBadGateway, "checkout creation failed")
+		return store.BillingPurchase{}, CheckoutResult{}, err
+	}
+	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ExternalReference, now.Format(time.RFC3339Nano)); err != nil {
+		return store.BillingPurchase{}, CheckoutResult{}, err
+	}
+	purchase.ProviderReference = checkout.ExternalReference
+	return purchase, checkout, nil
+}
+
+func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if err = s.db.UpdatePurchaseCheckout(r.Context(), purchase.ID, checkout.ExternalReference, now.Format(time.RFC3339Nano)); err != nil {
-		bad(w, http.StatusInternalServerError, "purchase persistence failed")
+	if r.Body != nil {
+		r.Body.Close()
+	}
+	purchase, checkout, err := s.startNanoPurchase(r.Context(), accountID(r))
+	if err != nil {
+		if err.Error() == "purchase-already-active" {
+			bad(w, http.StatusConflict, err.Error())
+		} else {
+			bad(w, http.StatusBadGateway, "checkout creation failed")
+		}
 		return
 	}
-	jsonOut(w, map[string]any{"purchase_id": purchase.ID, "status": "pending", "provider": "stripe", "environment": "test", "checkout_url": checkout.CheckoutURL})
+	out := map[string]any{"purchase_id": purchase.ID, "status": purchase.Status, "provider": "stripe", "environment": "test"}
+	if checkout.CheckoutURL != "" {
+		out["checkout_url"] = checkout.CheckoutURL
+	} else {
+		out["checkout_reference"] = checkout.ExternalReference
+	}
+	jsonOut(w, out)
+}
+
+func (s *server) accountNanoPurchase(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.webAuth(w, r) {
+		return
+	}
+	_, checkout, err := s.startNanoPurchase(r.Context(), accountID(r))
+	if err != nil {
+		if err.Error() == "purchase-already-active" {
+			bad(w, http.StatusConflict, "Nano purchase already active")
+		} else {
+			bad(w, http.StatusBadGateway, "Sandbox checkout unavailable")
+		}
+		return
+	}
+	if checkout.CheckoutURL == "" {
+		bad(w, http.StatusBadGateway, "Sandbox checkout unavailable")
+		return
+	}
+	http.Redirect(w, r, checkout.CheckoutURL, http.StatusSeeOther)
 }
 
 func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {

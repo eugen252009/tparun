@@ -108,3 +108,51 @@ func TestStripeWebhookSignatureVerifier(t *testing.T) {
 		t.Fatal("missing signature accepted")
 	}
 }
+
+func TestWebsitePurchaseBridgeUsesSessionAndRedirects(t *testing.T) {
+	s, h := testServer(t)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	s.cfg.BillingPurchasesEnabled = true
+	s.cfg.BillingProvider = "stripe"
+	s.cfg.BillingEnvironment = "test"
+	s.cfg.BillingRateCard = "production-nano-v1"
+	s.cfg.StripeTestSecret = "sk_test_example"
+	s.cfg.StripeWebhookSecret = "whsec_example"
+	provider, _ := NewStripeBillingProvider(s.db, "sk_test_example", BillingEnvironmentTest)
+	provider.BaseURL = "https://stripe.test"
+	provider.Client = &http.Client{Transport: &checkoutTransport{}}
+	s.purchaseProvider = provider
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest(http.MethodPost, h.URL+"/account/billing/nano/purchase", strings.NewReader(""))
+	req.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+	req.Header.Set("Origin", h.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "https://checkout.test/cs_test_1" {
+		t.Fatalf("bridge status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	unauth, _ := http.NewRequest(http.MethodPost, h.URL+"/account/billing/nano/purchase", nil)
+	resp, err = client.Do(unauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unauthenticated status=%d", resp.StatusCode)
+	}
+	cross, _ := http.NewRequest(http.MethodPost, h.URL+"/account/billing/nano/purchase", nil)
+	cross.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+	cross.Header.Set("Origin", "https://evil.example")
+	resp, err = client.Do(cross)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin status=%d", resp.StatusCode)
+	}
+}
