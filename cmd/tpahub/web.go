@@ -36,6 +36,7 @@ type pageData struct {
 	StorageUsed     string
 	StorageBytes    int64
 	HasStorageUsage bool
+	StorageCapacity string
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -95,7 +96,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes)})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {

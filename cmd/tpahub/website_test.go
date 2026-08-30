@@ -140,6 +140,17 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	if r.StatusCode != 200 && r.StatusCode != 303 {
 		t.Fatalf("account status %d", r.StatusCode)
 	}
+	req, _ := http.NewRequest("GET", h.URL+"/account", nil)
+	req.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+	accountResponse, e := http.DefaultClient.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	accountBody, _ := io.ReadAll(accountResponse.Body)
+	accountResponse.Body.Close()
+	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") {
+		t.Fatalf("account storage display invalid: status=%d", accountResponse.StatusCode)
+	}
 	r, e = http.Get(h.URL + "/r/invalid/InRelease")
 	if e != nil {
 		t.Fatal(e)

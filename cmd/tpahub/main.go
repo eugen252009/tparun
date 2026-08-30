@@ -419,7 +419,9 @@ func (s *server) worker() {
 func (s *server) process(j store.Job) {
 	log.Printf("publish job started id=%s", j.ID)
 	work := filepath.Join(s.cfg.DataDir, "work", j.ID)
+	candidate := work + "-published"
 	defer os.RemoveAll(work)
+	defer os.RemoveAll(candidate)
 	if e := os.MkdirAll(work, 0700); e != nil {
 		s.fail(j, e)
 		return
@@ -436,6 +438,14 @@ func (s *server) process(j store.Job) {
 	out := filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID)
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PublishTimeout)
 	defer cancel()
+	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: candidate}); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := s.checkStorageCapacity(j.RepositoryID, candidate); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: out}); e != nil {
 		s.fail(j, e)
 		return
@@ -454,6 +464,29 @@ func (s *server) process(j store.Job) {
 	_ = s.db.Finish(context.Background(), j.ID, "succeeded", "")
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
+}
+func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
+	repository, err := s.db.Repository(context.Background(), repositoryID)
+	if err != nil {
+		return fmt.Errorf("repository lookup for storage capacity: %w", err)
+	}
+	account, err := s.accountUsage(context.Background(), repository.AccountID)
+	if err != nil {
+		return fmt.Errorf("storage usage unavailable: %w", err)
+	}
+	currentRepo, err := s.repositoryUsage(repositoryID)
+	if err != nil {
+		return fmt.Errorf("repository storage usage unavailable: %w", err)
+	}
+	prospective, err := publishedUsage(candidate)
+	if err != nil {
+		return fmt.Errorf("candidate storage usage unavailable: %w", err)
+	}
+	resulting := account.StoredBytes - currentRepo.StoredBytes + prospective.StoredBytes
+	if resulting > nanoPlan.StorageBytes && resulting > account.StoredBytes {
+		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: nanoPlan.StorageBytes}
+	}
+	return nil
 }
 func copyDebs(src, dst string, replace bool) error {
 	entries, e := os.ReadDir(src)
