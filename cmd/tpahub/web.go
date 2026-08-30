@@ -37,6 +37,9 @@ type pageData struct {
 	StorageBytes    int64
 	HasStorageUsage bool
 	StorageCapacity string
+	EgressUsed      string
+	EgressCapacity  string
+	HasEgressUsage  bool
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -80,10 +83,16 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	}
 	var accountUsage AccountUsage
 	var usageErr error
+	var egressBytes int64
+	var egressErr error
 	if name == "account" && id != "" {
 		accountUsage, usageErr = s.accountUsage(r.Context(), id)
 		if usageErr != nil {
 			log.Printf("account storage usage: %v", usageErr)
+		}
+		egressBytes, egressErr = s.accountEgress(id, s.currentTime())
+		if egressErr != nil {
+			log.Printf("account egress usage: %v", egressErr)
 		}
 	}
 	if id != "" {
@@ -96,7 +105,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes)})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {

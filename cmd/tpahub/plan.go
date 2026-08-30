@@ -2,7 +2,10 @@ package main
 
 import "fmt"
 
-const NanoStorageBytes int64 = 5_000_000
+const (
+	NanoStorageBytes int64 = 5_000_000
+	NanoEgressBytes  int64 = 1_000_000_000
+)
 
 type PlanLimits struct {
 	Name         string

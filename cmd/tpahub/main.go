@@ -34,6 +34,7 @@ type server struct {
 	runner    tpa.Runner
 	ctx       context.Context
 	startedAt time.Time
+	now       func() time.Time
 }
 
 func main() {
@@ -368,7 +369,9 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		bad(w, 404, "not found")
 		return
 	}
-	http.ServeFile(w, r, path)
+	counted := &repositoryCountingWriter{ResponseWriter: w}
+	defer func() { s.recordRepositoryEgress(repo.ID, counted.bytes) }()
+	http.ServeFile(counted, r, path)
 }
 func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "GET" {

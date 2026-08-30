@@ -120,7 +120,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			} else if path == "/pricing" {
 				wants = append(wants, "Standard", "Pro", "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
 			} else {
-				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "future", "not implemented")
+				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "actual successful response-body bytes", "UTC calendar months", "not enforced yet", "future", "not implemented")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {
@@ -148,7 +148,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	}
 	accountBody, _ := io.ReadAll(accountResponse.Body)
 	accountResponse.Body.Close()
-	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") {
+	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "Monthly egress is measured") {
 		t.Fatalf("account storage display invalid: status=%d", accountResponse.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/r/invalid/InRelease")
