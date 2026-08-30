@@ -71,6 +71,7 @@ func run(cfg config.Config) error {
 }
 func (s *server) routes() http.Handler {
 	m := http.NewServeMux()
+	m.HandleFunc("/install.sh", s.install)
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
 	m.HandleFunc("/v1/logout", s.logout)
@@ -79,6 +80,22 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))
 	m.HandleFunc("/r/", s.files)
 	return m
+}
+func (s *server) install(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	data, e := os.ReadFile("install.sh")
+	if e != nil {
+		data, e = os.ReadFile("../../install.sh")
+	}
+	if e != nil {
+		bad(w, 404, "installer not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

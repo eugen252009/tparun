@@ -6,9 +6,14 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   exit 1
 fi
 SERVER=${TPAHUB_SERVER:-https://tpa.lupricht.net}
-REPOSITORY_ID=${1:?usage: install.sh <public-repository-id>}
+DEFAULT_REPOSITORY_ID="a0d8fd0f82235ee431c41581aa253ec8"
+REPOSITORY_ID=${TPAHUB_REPOSITORY_ID:-$DEFAULT_REPOSITORY_ID}
 SERVER=${SERVER%/}
-case "$SERVER" in https://*) ;; *) echo 'TPAHUB_SERVER must use HTTPS' >&2; exit 1;; esac
+case "$SERVER" in https://*) ;; http://*) echo 'warning: using insecure HTTP override for development' >&2 ;; *) echo 'TPAHUB_SERVER must use HTTPS' >&2; exit 1;; esac
+for command in apt-get install; do command -v "${command%% *}" >/dev/null || { echo "required command missing: ${command%% *}" >&2; exit 1; }; done
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl gnupg
 name="tpahub-$REPOSITORY_ID"
 key="/etc/apt/keyrings/$name.gpg"
 source="/etc/apt/sources.list.d/$name.list"

@@ -4,6 +4,22 @@ TPA Hub is a CLI-first service for publishing and serving public or private APT 
 
 There is intentionally no web dashboard. The supported product interface is `tpahub` plus normal `apt` commands.
 
+## Install TPA Hub
+
+Recommended public installation:
+
+```sh
+curl -fsSL https://tpa.lupricht.net/install.sh | sudo bash
+```
+
+Inspect the complete installer first:
+
+```sh
+curl -fsSL https://tpa.lupricht.net/install.sh
+```
+
+The script installs the public signing key under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Mema support is not currently provided.
+
 ## Build and run
 
 Build TPA separately and make it available on `PATH`, or set `TPA_BIN`:
