@@ -15,10 +15,15 @@ import (
 	"time"
 )
 
-type checkoutTransport struct{ requests int }
+type checkoutTransport struct {
+	requests int
+	bodies   []string
+}
 
 func (t *checkoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	t.requests++
+	requestBody, _ := io.ReadAll(r.Body)
+	t.bodies = append(t.bodies, string(requestBody))
 	body := `{"id":"cs_test_1","url":"https://checkout.test/cs_test_1"}`
 	if strings.HasSuffix(r.URL.Path, "/customers") {
 		body = `{"id":"cus_test_1"}`

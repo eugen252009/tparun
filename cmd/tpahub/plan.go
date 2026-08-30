@@ -11,6 +11,13 @@ const (
 	NanoOverageBytesPerSecond int64 = 128_000
 )
 
+type ProductTaxClassification string
+
+const (
+	TaxSaaSPersonal ProductTaxClassification = "saas-personal"
+	TaxSaaSBusiness ProductTaxClassification = "saas-business"
+)
+
 type PlanCadence string
 
 const (
@@ -40,6 +47,7 @@ type PlanDefinition struct {
 	EgressAllowanceBytes int64
 	EgressCadence        PlanCadence
 	BillingCadence       PlanCadence
+	TaxClassification    ProductTaxClassification
 	StorageBlockBytes    int64
 	EgressBlockBytes     int64
 }
@@ -64,9 +72,9 @@ func entitlementPeriod(startedAt string, now time.Time) (EntitlementPeriod, erro
 }
 
 var planCatalog = map[string]PlanDefinition{
-	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes, EgressAllowanceBytes: NanoEgressBytes, EgressCadence: CadenceAnnual, BillingCadence: CadenceAnnual},
-	"standard": {Code: "standard", BillingMode: BillingFixed, StorageCapacityBytes: 500_000_000, EgressAllowanceBytes: 20_000_000_000, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly},
-	"pro":      {Code: "pro", BillingMode: BillingUsageBased, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
+	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes, EgressAllowanceBytes: NanoEgressBytes, EgressCadence: CadenceAnnual, BillingCadence: CadenceAnnual, TaxClassification: TaxSaaSPersonal},
+	"standard": {Code: "standard", BillingMode: BillingFixed, StorageCapacityBytes: 500_000_000, EgressAllowanceBytes: 20_000_000_000, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSPersonal},
+	"pro":      {Code: "pro", BillingMode: BillingUsageBased, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSBusiness, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
 }
 
 type StorageCapacityError struct {

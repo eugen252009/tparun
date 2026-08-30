@@ -64,6 +64,7 @@ const (
 type FinalizedPurchase struct {
 	PurchaseID, AccountID, PlanCode, RateCardID string
 	RateCardMode                                RateCardMode
+	TaxClassification                           ProductTaxClassification
 	Currency                                    string
 	AmountMinor                                 int64
 	BillingEnvironment                          BillingEnvironment
@@ -194,10 +195,11 @@ func (p *StripeBillingProvider) CreateCheckout(ctx context.Context, purchase Fin
 	}
 	values := url.Values{
 		"mode": {"payment"}, "customer": {customer.ProviderCustomerID},
-		"line_items[0][price_data][currency]":           {strings.ToLower(purchase.Currency)},
-		"line_items[0][price_data][unit_amount]":        {strconv.FormatInt(purchase.AmountMinor, 10)},
-		"line_items[0][price_data][product_data][name]": {"TPA Hub Nano annual plan"},
-		"line_items[0][quantity]":                       {"1"}, "metadata[tpahub_purchase_id]": {purchase.PurchaseID},
+		"line_items[0][price_data][currency]":               {strings.ToLower(purchase.Currency)},
+		"line_items[0][price_data][unit_amount]":            {strconv.FormatInt(purchase.AmountMinor, 10)},
+		"line_items[0][price_data][product_data][name]":     {"TPA Hub Nano annual plan"},
+		"line_items[0][price_data][product_data][tax_code]": {stripeTaxCode(purchase.TaxClassification)},
+		"line_items[0][quantity]":                           {"1"}, "metadata[tpahub_purchase_id]": {purchase.PurchaseID},
 		"success_url": {p.SuccessURL}, "cancel_url": {p.CancelURL},
 	}
 	var raw struct {
@@ -225,9 +227,19 @@ func (p *StripeBillingProvider) createCustomerForAccount(ctx context.Context, ac
 	}
 	return out.ID, nil
 }
+func stripeTaxCode(classification ProductTaxClassification) string {
+	switch classification {
+	case TaxSaaSPersonal:
+		return "txcd_10103000"
+	case TaxSaaSBusiness:
+		return "txcd_10103001"
+	default:
+		return ""
+	}
+}
 func validateFinalizedPurchase(p FinalizedPurchase) error {
 	card, cardErr := rateCardByID(p.RateCardID)
-	if p.PurchaseID == "" || p.AccountID == "" || p.PlanCode != "nano" || p.RateCardID != "production-nano-v1" || p.RateCardMode != RateCardProduction || p.Currency != "EUR" || p.AmountMinor != 500 || p.BillingEnvironment != BillingEnvironmentTest || p.IdempotencyKey == "" || cardErr != nil || validateRateCard(card) != nil || card.BillingCadence != CadenceAnnual {
+	if p.PurchaseID == "" || p.AccountID == "" || p.PlanCode != "nano" || p.RateCardID != "production-nano-v1" || p.RateCardMode != RateCardProduction || p.Currency != "EUR" || p.AmountMinor != 500 || p.BillingEnvironment != BillingEnvironmentTest || p.IdempotencyKey == "" || stripeTaxCode(p.TaxClassification) == "" || cardErr != nil || validateRateCard(card) != nil || card.BillingCadence != CadenceAnnual {
 		return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("invalid Nano purchase")}
 	}
 	return nil

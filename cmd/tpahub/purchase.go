@@ -33,7 +33,7 @@ type stripeCheckoutEvent struct {
 func (s *server) nanoPurchaseAvailable() bool {
 	return s.cfg.BillingPurchasesEnabled && ValidateBillingConfiguration(s.cfg) == nil
 }
-func (s *server) startNanoPurchase(ctx context.Context, account string) (store.BillingPurchase, CheckoutResult, error) {
+func (s *server) startNanoPurchase(ctx context.Context, account string, businessUse bool) (store.BillingPurchase, CheckoutResult, error) {
 	if !s.nanoPurchaseAvailable() {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("purchase flow unavailable")
 	}
@@ -48,7 +48,11 @@ func (s *server) startNanoPurchase(ctx context.Context, account string) (store.B
 	}
 	purchaseID := newID()
 	created := now.Format(time.RFC3339Nano)
-	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	classification := TaxSaaSPersonal
+	if businessUse {
+		classification = TaxSaaSBusiness
+	}
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
 	purchase, err = s.db.CreatePendingPurchase(ctx, purchase, created)
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
@@ -66,7 +70,7 @@ func (s *server) startNanoPurchase(ctx context.Context, account string) (store.B
 		provider.CancelURL = "https://tpa.lupricht.net/"
 		purchaseProvider = provider
 	}
-	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
+	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, TaxClassification: ProductTaxClassification(purchase.TaxClassification), Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
@@ -82,10 +86,12 @@ func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if r.Body != nil {
-		r.Body.Close()
+	businessUse, parseErr := parseBusinessUseJSON(r)
+	if parseErr != nil {
+		bad(w, http.StatusBadRequest, parseErr.Error())
+		return
 	}
-	purchase, checkout, err := s.startNanoPurchase(r.Context(), accountID(r))
+	purchase, checkout, err := s.startNanoPurchase(r.Context(), accountID(r), businessUse)
 	if err != nil {
 		if err.Error() == "purchase-already-active" {
 			bad(w, http.StatusConflict, err.Error())
@@ -111,7 +117,12 @@ func (s *server) accountNanoPurchase(w http.ResponseWriter, r *http.Request) {
 	if !s.webAuth(w, r) {
 		return
 	}
-	_, checkout, err := s.startNanoPurchase(r.Context(), accountID(r))
+	businessUse, parseErr := parseBusinessUseForm(r)
+	if parseErr != nil {
+		bad(w, http.StatusBadRequest, parseErr.Error())
+		return
+	}
+	_, checkout, err := s.startNanoPurchase(r.Context(), accountID(r), businessUse)
 	if err != nil {
 		if err.Error() == "purchase-already-active" {
 			bad(w, http.StatusConflict, "Nano purchase already active")
@@ -125,6 +136,45 @@ func (s *server) accountNanoPurchase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, checkout.CheckoutURL, http.StatusSeeOther)
+}
+
+func parseBusinessUseJSON(r *http.Request) (bool, error) {
+	body, e := io.ReadAll(io.LimitReader(r.Body, 8193))
+	if e != nil || len(body) > 8192 {
+		return false, fmt.Errorf("invalid purchase request")
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return false, nil
+	}
+	var input struct {
+		BusinessUse *bool `json:"business_use"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if e = dec.Decode(&input); e != nil {
+		return false, fmt.Errorf("invalid purchase request")
+	}
+	var extra any
+	if e = dec.Decode(&extra); e != io.EOF {
+		return false, fmt.Errorf("invalid purchase request")
+	}
+	if input.BusinessUse == nil {
+		return false, nil
+	}
+	return *input.BusinessUse, nil
+}
+func parseBusinessUseForm(r *http.Request) (bool, error) {
+	if e := r.ParseForm(); e != nil {
+		return false, fmt.Errorf("invalid purchase request")
+	}
+	value, ok := r.Form["business_use"]
+	if !ok || len(value) == 0 || value[0] == "" {
+		return false, nil
+	}
+	if value[0] != "on" && value[0] != "true" && value[0] != "1" {
+		return false, fmt.Errorf("invalid business_use")
+	}
+	return true, nil
 }
 
 func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
