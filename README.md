@@ -6,6 +6,8 @@ There is intentionally no web dashboard. The supported product interface is `tpa
 
 ## Install TPA Hub
 
+The official bootstrap trust material is also available for inspection at `https://tpa.lupricht.net/tpahub.asc`. The public deployment marker is available at `https://tpa.lupricht.net/version` and returns the service version, startup time, and revision marker.
+
 Recommended public installation:
 
 ```sh
@@ -18,7 +20,7 @@ Inspect the complete installer first:
 curl -fsSL https://tpa.lupricht.net/install.sh
 ```
 
-The script installs the public signing key under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly. The public zero-bootstrap path is qualified with `./tests/bootstrap-qualification.sh` in clean Debian. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Mema support is not currently provided.
+The script embeds the public signing key, installs it under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly and does not use curl or wget after it starts. The public zero-bootstrap path is qualified with `./tests/bootstrap-qualification.sh` in clean Debian. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Mema support is not currently provided.
 
 ## Build and run
 

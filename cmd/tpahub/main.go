@@ -21,6 +21,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
+	appversion "github.com/eugen252009/tpahub/internal/version"
 )
 
 var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -28,10 +29,11 @@ var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
 func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
 
 type server struct {
-	cfg    config.Config
-	db     *store.Store
-	runner tpa.Runner
-	ctx    context.Context
+	cfg       config.Config
+	db        *store.Store
+	runner    tpa.Runner
+	ctx       context.Context
+	startedAt time.Time
 }
 
 func main() {
@@ -52,7 +54,7 @@ func run(cfg config.Config) error {
 		return e
 	}
 	defer db.Close()
-	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}}
+	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC()}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if e = s.runner.Check(ctx); e != nil {
@@ -72,6 +74,8 @@ func run(cfg config.Config) error {
 func (s *server) routes() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/install.sh", s.install)
+	m.HandleFunc("/tpahub.asc", s.publicKey)
+	m.HandleFunc("/version", s.version)
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
 	m.HandleFunc("/v1/logout", s.logout)
@@ -96,6 +100,31 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data)
+}
+func (s *server) publicKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	data, e := os.ReadFile("tpahub.asc")
+	if e != nil {
+		data, e = os.ReadFile("../../tpahub.asc")
+	}
+	if e != nil {
+		bad(w, 404, "public key not found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
+}
+func (s *server) version(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{"service": appversion.Service, "version": appversion.Current, "revision": "unknown", "started_at": s.startedAt.Format(time.RFC3339)})
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
