@@ -205,7 +205,7 @@ func ceilBlocks(value, block int64) int64 {
 	if value <= 0 || block <= 0 {
 		return 0
 	}
-	return (value + block - 1) / block
+	return (value-1)/block + 1
 }
 
 func (s *server) billingSnapshot(ctx context.Context, accountID string, now time.Time) (BillingUsageSnapshot, error) {
