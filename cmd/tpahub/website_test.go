@@ -3,12 +3,46 @@ package main
 import (
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+func TestPublishedPackageCountTracksCanonicalArtifacts(t *testing.T) {
+	s, _ := testServer(t)
+	root := filepath.Join(s.cfg.DataDir, "repos", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if e := os.MkdirAll(filepath.Join(root, "metadata"), 0755); e != nil {
+		t.Fatal(e)
+	}
+	for _, name := range []string{"one.deb", "two.DEB"} {
+		if e := os.WriteFile(filepath.Join(root, name), []byte("deb"), 0644); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := os.WriteFile(filepath.Join(root, "metadata", "ignored.deb.tmp"), []byte("tmp"), 0644); e != nil {
+		t.Fatal(e)
+	}
+	if got, e := s.publishedPackageCount(); e != nil || got != 2 {
+		t.Fatalf("initial count = %d, %v", got, e)
+	}
+	if e := os.Remove(filepath.Join(root, "one.deb")); e != nil {
+		t.Fatal(e)
+	}
+	if got, e := s.publishedPackageCount(); e != nil || got != 1 {
+		t.Fatalf("after removal count = %d, %v", got, e)
+	}
+}
+
 func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
-	_, h := testServer(t)
+	s, h := testServer(t)
+	root := filepath.Join(s.cfg.DataDir, "repos", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if e := os.MkdirAll(filepath.Join(root, "metadata"), 0755); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "package.deb"), []byte("deb"), 0644); e != nil {
+		t.Fatal(e)
+	}
 	for _, path := range []string{"/", "/docs", "/how-to", "/pricing", "/nano", "/register", "/login"} {
 		r, e := http.Get(h.URL + path)
 		if e != nil || r.StatusCode != 200 {
@@ -20,7 +54,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			text := string(body)
 			wants := []string{"Nano"}
 			if path == "/" {
-				wants = append(wants, "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "AVAILABLE NOW", "COMING SOON", "actual resources", "package or repository-count limits", "/pricing")
+				wants = append(wants, "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "AVAILABLE NOW", "COMING SOON", "actual resources", "package or repository-count limits", "project-stat", ">1</strong>", "packages currently published through TPA Hub", "/pricing")
 			} else if path == "/nano" {
 				wants = append(wants, "Neovim 0.12.5", "about 2.4 KB", "recipe package, not Neovim itself", "2,500 recipe-sized packages", "200 times", "Your mileage may vary", "STANDARD", "PRO", "same core TPA Hub capabilities")
 			} else if path == "/pricing" {

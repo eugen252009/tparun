@@ -7,8 +7,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"io/fs"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,10 +30,12 @@ var webRate = struct {
 }{hits: make(map[string][]time.Time)}
 
 type pageData struct {
-	Title, Email string
-	LoggedIn     bool
-	Error        string
-	CSRF         string
+	Title, Email    string
+	LoggedIn        bool
+	Error           string
+	CSRF            string
+	PackageCount    int
+	HasPackageCount bool
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -62,6 +68,14 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	}
 	id := accountID(r)
 	email := ""
+	packageCount := 0
+	var countErr error
+	if name == "home" {
+		packageCount, countErr = s.publishedPackageCount()
+		if countErr != nil {
+			log.Printf("package count: %v", countErr)
+		}
+	}
 	if id != "" {
 		if a, e := s.accountByID(r, id); e == nil {
 			email = a.Email
@@ -72,7 +86,24 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != ""})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil})
+}
+func (s *server) publishedPackageCount() (int, error) {
+	root := filepath.Join(s.cfg.DataDir, "repos")
+	count := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && d.Type().IsRegular() && strings.HasSuffix(strings.ToLower(d.Name()), ".deb") {
+			count++
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	return count, err
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {
