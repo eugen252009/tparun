@@ -1,0 +1,375 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/eugen252009/tpahub/internal/config"
+	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpa"
+)
+
+var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
+
+type server struct {
+	cfg    config.Config
+	db     *store.Store
+	runner tpa.Runner
+	ctx    context.Context
+}
+
+func main() {
+	cfg := config.Load()
+	if len(os.Args) > 1 && os.Args[1] != "serve" {
+		if err := cli(cfg, os.Args[1:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if err := run(cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+func run(cfg config.Config) error {
+	db, e := store.Open(cfg.DataDir)
+	if e != nil {
+		return e
+	}
+	defer db.Close()
+	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if e = s.runner.Check(ctx); e != nil {
+		return e
+	}
+	s.ctx = ctx
+	go s.worker()
+	srv := &http.Server{Addr: cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { <-ctx.Done(); srv.Shutdown(context.Background()) }()
+	log.Printf("TPA Hub listening on http://%s", cfg.Listen)
+	e = srv.ListenAndServe()
+	if errors.Is(e, http.ErrServerClosed) {
+		return nil
+	}
+	return e
+}
+func (s *server) routes() http.Handler {
+	m := http.NewServeMux()
+	m.HandleFunc("/v1/repositories", s.repositories)
+	m.HandleFunc("/v1/repositories/", s.repository)
+	m.HandleFunc("/v1/publish-jobs/", s.job)
+	m.HandleFunc("/r/", s.files)
+	return m
+}
+func jsonOut(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+func bad(w http.ResponseWriter, status int, msg string) { http.Error(w, msg, status) }
+func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" || r.URL.Path != "/v1/repositories" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
+		bad(w, 400, "name is required")
+		return
+	}
+	id := newID()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if e := os.MkdirAll(filepath.Join(s.cfg.DataDir, "repos", id), 0755); e != nil {
+		bad(w, 500, e.Error())
+		return
+	}
+	if e := s.db.CreateRepository(r.Context(), store.Repository{ID: id, Name: strings.TrimSpace(in.Name), CreatedAt: now}); e != nil {
+		bad(w, 500, e.Error())
+		return
+	}
+	log.Printf("repository created id=%s", id)
+	jsonOut(w, map[string]any{"id": id, "name": strings.TrimSpace(in.Name), "created_at": now})
+}
+func (s *server) repository(w http.ResponseWriter, r *http.Request) {
+	p := strings.TrimPrefix(r.URL.Path, "/v1/repositories/")
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	if len(parts) < 1 || !idRE.MatchString(parts[0]) {
+		bad(w, 404, "repository not found")
+		return
+	}
+	id := parts[0]
+	if len(parts) == 2 && parts[1] == "signing-key" {
+		s.key(w, r, id)
+		return
+	}
+	if len(parts) != 2 || parts[1] != "publishes" || r.Method != "POST" {
+		bad(w, 404, "not found")
+		return
+	}
+	if _, e := s.db.Repository(r.Context(), id); e != nil {
+		bad(w, 404, "repository not found")
+		return
+	}
+	s.upload(w, r, id)
+}
+func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
+	jobID := newID()
+	dir := filepath.Join(s.cfg.DataDir, "incoming", jobID)
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		bad(w, 500, e.Error())
+		return
+	}
+	defer func() {
+		if r.Context().Err() != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	var total int64
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/") {
+		if e := r.ParseMultipartForm(s.cfg.MaxUpload); e != nil {
+			_ = os.RemoveAll(dir)
+			bad(w, 400, "invalid upload")
+			return
+		}
+		for _, hs := range r.MultipartForm.File {
+			for _, h := range hs {
+				if !strings.HasSuffix(strings.ToLower(h.Filename), ".deb") {
+					_ = os.RemoveAll(dir)
+					bad(w, 400, "only .deb files are accepted")
+					return
+				}
+				name := filepath.Base(h.Filename)
+				f, e := h.Open()
+				if e != nil {
+					bad(w, 400, "cannot read upload")
+					return
+				}
+				dst, e := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if e == nil {
+					n, ce := io.Copy(dst, io.LimitReader(f, s.cfg.MaxUpload-total+1))
+					dst.Close()
+					f.Close()
+					total += n
+					e = ce
+					if total > s.cfg.MaxUpload {
+						e = fmt.Errorf("upload too large")
+					}
+				} else {
+					f.Close()
+				}
+				if e != nil {
+					_ = os.RemoveAll(dir)
+					bad(w, 413, e.Error())
+					return
+				}
+			}
+		}
+	} else {
+		if !strings.HasSuffix(strings.ToLower(r.URL.Query().Get("filename")), ".deb") {
+			_ = os.RemoveAll(dir)
+			bad(w, 400, "filename query ending in .deb is required")
+			return
+		}
+		dst, e := os.OpenFile(filepath.Join(dir, filepath.Base(r.URL.Query().Get("filename"))), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if e == nil {
+			total, e = io.Copy(dst, io.LimitReader(r.Body, s.cfg.MaxUpload+1))
+			dst.Close()
+		}
+		if e != nil || total > s.cfg.MaxUpload {
+			_ = os.RemoveAll(dir)
+			bad(w, 413, "upload too large")
+			return
+		}
+	}
+	if total == 0 {
+		_ = os.RemoveAll(dir)
+		bad(w, 400, "at least one .deb is required")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if e := s.db.CreateJob(r.Context(), store.Job{ID: jobID, RepositoryID: id, State: "queued", IncomingPath: dir, CreatedAt: now}); e != nil {
+		_ = os.RemoveAll(dir)
+		bad(w, 500, e.Error())
+		return
+	}
+	log.Printf("publish job queued id=%s repository=%s bytes=%d", jobID, id, total)
+	w.WriteHeader(http.StatusAccepted)
+	jsonOut(w, map[string]any{"id": jobID, "state": "queued"})
+}
+func (s *server) job(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/publish-jobs/"), "/")
+	j, e := s.db.Job(r.Context(), id)
+	if e != nil {
+		bad(w, 404, "job not found")
+		return
+	}
+	jsonOut(w, j)
+}
+func (s *server) files(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/r/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || !idRE.MatchString(parts[0]) {
+		bad(w, 404, "not found")
+		return
+	}
+	rel := filepath.Clean("/" + parts[1])
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+		bad(w, 404, "not found")
+		return
+	}
+	root := filepath.Join(s.cfg.DataDir, "repos", parts[0])
+	path := filepath.Join(root, rel)
+	info, e := os.Stat(path)
+	if e != nil || !info.Mode().IsRegular() {
+		bad(w, 404, "not found")
+		return
+	}
+	http.ServeFile(w, r, path)
+}
+func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	if _, e := s.db.Repository(r.Context(), id); e != nil {
+		bad(w, 404, "repository not found")
+		return
+	}
+	if s.cfg.GPGFingerprint == "" {
+		bad(w, 404, "repository signing key unavailable")
+		return
+	}
+	args := []string{"--armor", "--export", s.cfg.GPGFingerprint}
+	cmd := exec.CommandContext(r.Context(), "gpg", args...)
+	if s.cfg.GPGHome != "" {
+		cmd.Env = append(os.Environ(), "GNUPGHOME="+s.cfg.GPGHome)
+	}
+	out, e := cmd.Output()
+	if e != nil {
+		bad(w, 500, "signing key unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pgp-keys")
+	w.Write(out)
+}
+func (s *server) worker() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+		j, e := s.db.Claim(s.ctx)
+		if e != nil {
+			if errors.Is(e, store.ErrNotFound) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			log.Printf("worker claim: %v", e)
+			time.Sleep(time.Second)
+			continue
+		}
+		s.process(j)
+	}
+}
+func (s *server) process(j store.Job) {
+	log.Printf("publish job started id=%s", j.ID)
+	work := filepath.Join(s.cfg.DataDir, "work", j.ID)
+	defer os.RemoveAll(work)
+	if e := os.MkdirAll(work, 0700); e != nil {
+		s.fail(j, e)
+		return
+	}
+	art := filepath.Join(s.cfg.DataDir, "artifacts", j.RepositoryID)
+	if e := copyDebs(art, work, false); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := copyDebs(j.IncomingPath, work, true); e != nil {
+		s.fail(j, e)
+		return
+	}
+	out := filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID)
+	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PublishTimeout)
+	defer cancel()
+	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: out}); e != nil {
+		s.fail(j, e)
+		return
+	}
+	e := os.RemoveAll(art)
+	if e == nil {
+		e = os.MkdirAll(filepath.Dir(art), 0755)
+		if e == nil {
+			e = os.Rename(work, art)
+		}
+	}
+	if e != nil {
+		s.fail(j, e)
+		return
+	}
+	_ = s.db.Finish(context.Background(), j.ID, "succeeded", "")
+	_ = os.RemoveAll(j.IncomingPath)
+	log.Printf("publish job succeeded id=%s", j.ID)
+}
+func copyDebs(src, dst string, replace bool) error {
+	entries, e := os.ReadDir(src)
+	if e != nil {
+		if os.IsNotExist(e) {
+			return nil
+		}
+		return e
+	}
+	for _, x := range entries {
+		if x.IsDir() || !strings.HasSuffix(strings.ToLower(x.Name()), ".deb") {
+			continue
+		}
+		in := filepath.Join(src, x.Name())
+		out := filepath.Join(dst, x.Name())
+		a, e := os.Open(in)
+		if e != nil {
+			return e
+		}
+		if replace {
+			_ = os.Remove(out)
+		}
+		b, e := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if e == nil {
+			_, e = io.Copy(b, a)
+			b.Close()
+		}
+		a.Close()
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func (s *server) fail(j store.Job, e error) {
+	msg := e.Error()
+	_ = s.db.Finish(context.Background(), j.ID, "failed", msg)
+	log.Printf("publish job failed id=%s error=%s", j.ID, msg)
+}
