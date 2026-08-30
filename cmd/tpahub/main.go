@@ -502,8 +502,8 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 		return fmt.Errorf("candidate storage usage unavailable: %w", err)
 	}
 	resulting := account.StoredBytes - currentRepo.StoredBytes + prospective.StoredBytes
-	if resulting > nanoPlan.StorageBytes && resulting > account.StoredBytes {
-		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: nanoPlan.StorageBytes}
+	if resulting > planCatalog["nano"].StorageCapacityBytes && resulting > account.StoredBytes {
+		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: planCatalog["nano"].StorageCapacityBytes}
 	}
 	return nil
 }

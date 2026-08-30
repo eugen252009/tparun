@@ -31,13 +31,6 @@ var planCatalog = map[string]PlanDefinition{
 	"pro":      {Code: "pro", BillingMode: BillingUsageBased, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
 }
 
-var nanoPlan = PlanLimits{Name: "Nano", StorageBytes: NanoStorageBytes}
-
-type PlanLimits struct {
-	Name         string
-	StorageBytes int64
-}
-
 type StorageCapacityError struct {
 	CurrentBytes   int64
 	ResultingBytes int64

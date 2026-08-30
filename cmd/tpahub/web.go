@@ -119,7 +119,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(planCatalog["nano"].StorageCapacityBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {
