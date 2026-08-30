@@ -477,6 +477,9 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.observeAccountStorage(context.Background(), j.RepositoryID, s.currentTime()); e != nil {
+		log.Printf("storage high-water update: repository=%s: %v", j.RepositoryID, e)
+	}
 	_ = s.db.Finish(context.Background(), j.ID, "succeeded", "")
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)

@@ -27,19 +27,23 @@ var webRate = struct {
 }{hits: make(map[string][]time.Time)}
 
 type pageData struct {
-	Title, Email    string
-	LoggedIn        bool
-	Error           string
-	CSRF            string
-	PackageCount    int64
-	HasPackageCount bool
-	StorageUsed     string
-	StorageBytes    int64
-	HasStorageUsage bool
-	StorageCapacity string
-	EgressUsed      string
-	EgressCapacity  string
-	HasEgressUsage  bool
+	Title, Email      string
+	LoggedIn          bool
+	Error             string
+	CSRF              string
+	PackageCount      int64
+	HasPackageCount   bool
+	StorageUsed       string
+	StorageBytes      int64
+	HasStorageUsage   bool
+	StorageCapacity   string
+	EgressUsed        string
+	EgressCapacity    string
+	HasEgressUsage    bool
+	BillingMode       string
+	BillingPeriod     string
+	StorageHighWater  string
+	HasBillingPreview bool
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -85,6 +89,9 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	var usageErr error
 	var egressBytes int64
 	var egressErr error
+	var billingSnapshot BillingUsageSnapshot
+	var billingPreview BillingPreview
+	var billingErr error
 	if name == "account" && id != "" {
 		accountUsage, usageErr = s.accountUsage(r.Context(), id)
 		if usageErr != nil {
@@ -93,6 +100,13 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		egressBytes, egressErr = s.accountEgress(id, s.currentTime())
 		if egressErr != nil {
 			log.Printf("account egress usage: %v", egressErr)
+		}
+		billingSnapshot, billingErr = s.billingSnapshot(r.Context(), id, s.currentTime())
+		if billingErr == nil {
+			billingPreview, billingErr = s.billingProvider().Preview(r.Context(), billingSnapshot)
+		}
+		if billingErr != nil {
+			log.Printf("billing preview: %v", billingErr)
 		}
 	}
 	if id != "" {
@@ -105,7 +119,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(nanoPlan.StorageBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {

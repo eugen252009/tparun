@@ -8,12 +8,35 @@ const (
 	NanoOverageBytesPerSecond int64 = 128_000
 )
 
+type BillingMode string
+
+const (
+	BillingFixed      BillingMode = "fixed"
+	BillingUsageBased BillingMode = "usage-based"
+)
+
+type PlanDefinition struct {
+	Code                 string
+	BillingMode          BillingMode
+	Available            bool
+	StorageCapacityBytes int64
+	MonthlyEgressBytes   int64
+	StorageBlockBytes    int64
+	EgressBlockBytes     int64
+}
+
+var planCatalog = map[string]PlanDefinition{
+	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes},
+	"standard": {Code: "standard", BillingMode: BillingFixed, StorageCapacityBytes: 500_000_000, MonthlyEgressBytes: 20_000_000_000},
+	"pro":      {Code: "pro", BillingMode: BillingUsageBased, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
+}
+
+var nanoPlan = PlanLimits{Name: "Nano", StorageBytes: NanoStorageBytes}
+
 type PlanLimits struct {
 	Name         string
 	StorageBytes int64
 }
-
-var nanoPlan = PlanLimits{Name: "Nano", StorageBytes: NanoStorageBytes}
 
 type StorageCapacityError struct {
 	CurrentBytes   int64

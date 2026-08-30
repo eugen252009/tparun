@@ -148,7 +148,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	}
 	accountBody, _ := io.ReadAll(accountResponse.Body)
 	accountResponse.Body.Close()
-	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "Monthly egress is measured") {
+	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "Monthly egress is measured") || !strings.Contains(string(accountBody), "Billing preview") || strings.Contains(string(accountBody), "€") {
 		t.Fatalf("account storage display invalid: status=%d", accountResponse.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/r/invalid/InRelease")
