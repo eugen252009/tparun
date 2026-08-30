@@ -18,5 +18,5 @@ type StorageCapacityError struct {
 }
 
 func (e StorageCapacityError) Error() string {
-	return fmt.Sprintf("storage-capacity-exceeded: Storage capacity exceeded. Current usage: %s; resulting usage: %s; Nano capacity: %s", formatBytes(e.CurrentBytes), formatBytes(e.ResultingBytes), formatBytes(e.CapacityBytes))
+	return fmt.Sprintf("storage-capacity-exceeded: Storage capacity exceeded. Current usage: %s (current_bytes=%d); resulting usage: %s (resulting_bytes=%d); Nano capacity: %s (capacity_bytes=%d)", formatBytes(e.CurrentBytes), e.CurrentBytes, formatBytes(e.ResultingBytes), e.ResultingBytes, formatBytes(e.CapacityBytes), e.CapacityBytes)
 }
