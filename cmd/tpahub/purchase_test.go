@@ -18,17 +18,24 @@ import (
 type checkoutTransport struct {
 	requests int
 	bodies   []string
+	status   int
+	keys     []string
 }
 
 func (t *checkoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	t.requests++
+	t.keys = append(t.keys, r.Header.Get("Idempotency-Key"))
 	requestBody, _ := io.ReadAll(r.Body)
 	t.bodies = append(t.bodies, string(requestBody))
 	body := `{"id":"cs_test_1","url":"https://checkout.test/cs_test_1"}`
 	if strings.HasSuffix(r.URL.Path, "/customers") {
 		body = `{"id":"cus_test_1"}`
 	}
-	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	status := t.status
+	if status == 0 {
+		status = 200
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 }
 func signedStripeEvent(body, secret string, at time.Time) string {
 	ts := strconv.FormatInt(at.Unix(), 10)

@@ -311,7 +311,11 @@ func (p *StripeBillingProvider) request(ctx context.Context, path string, values
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return providerError{Code: "provider-rejected", Cause: fmt.Errorf("Stripe returned HTTP %d", res.StatusCode)}
+		code := "provider-rejected"
+		if res.StatusCode >= 400 && res.StatusCode < 500 {
+			code = "provider-rejected-4xx"
+		}
+		return providerError{Code: code, Cause: fmt.Errorf("Stripe returned HTTP %d", res.StatusCode)}
 	}
 	if e = json.Unmarshal(body, out); e != nil {
 		return providerError{Code: "provider-invalid-response", Cause: e}

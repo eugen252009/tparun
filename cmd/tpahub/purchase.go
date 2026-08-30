@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,13 +53,13 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if businessUse {
 		classification = TaxSaaSBusiness
 	}
-	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, CheckoutRequestVersion: "v2", AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
 	purchase, err = s.db.CreatePendingPurchase(ctx, purchase, created)
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
 	if purchase.ProviderReference != "" {
-		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ExternalReference: purchase.ProviderReference}, nil
+		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ExternalReference: purchase.ProviderReference, CheckoutURL: purchase.CheckoutURL}, nil
 	}
 	var purchaseProvider PurchaseProvider = s.purchaseProvider
 	if purchaseProvider == nil {
@@ -70,11 +71,15 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 		provider.CancelURL = "https://tpa.lupricht.net/"
 		purchaseProvider = provider
 	}
-	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, TaxClassification: ProductTaxClassification(purchase.TaxClassification), Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
+	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, TaxClassification: ProductTaxClassification(purchase.TaxClassification), Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2", FinalizedAt: now})
 	if err != nil {
-		return store.BillingPurchase{}, CheckoutResult{}, err
+		var pe providerError
+		if errors.As(err, &pe) && pe.Code == "provider-rejected-4xx" {
+			_ = s.db.FailPendingPurchase(ctx, purchase.ID, now.Format(time.RFC3339Nano))
+		}
+		return purchase, CheckoutResult{}, err
 	}
-	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ExternalReference, now.Format(time.RFC3339Nano)); err != nil {
+	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ExternalReference, checkout.CheckoutURL, now.Format(time.RFC3339Nano)); err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
 	purchase.ProviderReference = checkout.ExternalReference
