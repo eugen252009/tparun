@@ -16,10 +16,12 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
-		if path == "/nano" || path == "/pricing" || path == "/docs" {
+		if path == "/" || path == "/nano" || path == "/pricing" || path == "/docs" {
 			text := string(body)
 			wants := []string{"Nano"}
-			if path == "/nano" {
+			if path == "/" {
+				wants = append(wants, "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "AVAILABLE NOW", "COMING SOON", "actual resources", "package or repository-count limits", "/pricing")
+			} else if path == "/nano" {
 				wants = append(wants, "Neovim 0.12.5", "about 2.4 KB", "recipe package, not Neovim itself", "2,500 recipe-sized packages", "200 times", "Your mileage may vary", "STANDARD", "PRO")
 			} else if path == "/pricing" {
 				wants = append(wants, "Standard", "Pro", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
