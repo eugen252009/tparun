@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
@@ -22,14 +23,38 @@ type BillingUsageSnapshot struct {
 	MonthlyEgressBytes    int64         `json:"monthly_egress_bytes"`
 }
 
+type RateCard struct {
+	ID                      string
+	Currency                string
+	FixedPlanAmountsMinor   map[string]int64
+	ProBaseAmountMinor      int64
+	StorageBlockAmountMinor int64
+	EgressBlockAmountMinor  int64
+}
+
+var mockRateCardV1 = RateCard{ID: "mock-rate-card-v1", Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": 440, "standard": 2200}, ProBaseAmountMinor: 500, StorageBlockAmountMinor: 100, EgressBlockAmountMinor: 200}
+
+type BillingLineItem struct {
+	Kind            string `json:"kind"`
+	Quantity        int64  `json:"quantity"`
+	UnitAmountMinor int64  `json:"unit_amount_minor"`
+	AmountMinor     int64  `json:"amount_minor"`
+	Currency        string `json:"currency"`
+}
+
 type BillingPreview struct {
-	AccountID             string        `json:"account_id"`
-	PlanCode              string        `json:"plan_code"`
-	Period                BillingPeriod `json:"period"`
-	StorageHighWaterBytes int64         `json:"storage_high_water_bytes"`
-	EgressBytes           int64         `json:"egress_bytes"`
-	StorageBlocks         int64         `json:"storage_blocks"`
-	EgressBlocks          int64         `json:"egress_blocks"`
+	AccountID             string            `json:"account_id"`
+	PlanCode              string            `json:"plan_code"`
+	Period                BillingPeriod     `json:"period"`
+	RateCardID            string            `json:"rate_card_id"`
+	StorageHighWaterBytes int64             `json:"storage_high_water_bytes"`
+	EgressBytes           int64             `json:"egress_bytes"`
+	StorageBlocks         int64             `json:"storage_blocks"`
+	EgressBlocks          int64             `json:"egress_blocks"`
+	Currency              string            `json:"currency"`
+	LineItems             []BillingLineItem `json:"line_items"`
+	TotalAmountMinor      int64             `json:"total_amount_minor"`
+	IsVirtual             bool              `json:"is_virtual"`
 }
 
 type BillingProvider interface {
@@ -38,17 +63,47 @@ type BillingProvider interface {
 }
 
 type MockBillingProvider struct {
-	Store *store.Store
-	Now   func() time.Time
+	Store    *store.Store
+	Now      func() time.Time
+	RateCard RateCard
 }
 
+func (m MockBillingProvider) card() RateCard {
+	if m.RateCard.ID == "" {
+		return mockRateCardV1
+	}
+	return m.RateCard
+}
 func (m MockBillingProvider) Preview(ctx context.Context, snapshot BillingUsageSnapshot) (BillingPreview, error) {
-	result := rateBilling(snapshot)
-	return result, m.record(ctx, snapshot, "billing-preview-generated", result)
+	card := m.card()
+	result, e := rateBillingWithRateCard(snapshot, card)
+	if e != nil {
+		return BillingPreview{}, e
+	}
+	return result, m.record(ctx, snapshot, "billing-preview-generated:"+card.ID, result)
 }
 func (m MockBillingProvider) Finalize(ctx context.Context, snapshot BillingUsageSnapshot) (BillingPreview, error) {
-	result := rateBilling(snapshot)
-	return result, m.record(ctx, snapshot, "period-finalized", result)
+	card := m.card()
+	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
+		var result BillingPreview
+		if json.Unmarshal([]byte(payload), &result) == nil {
+			return result, nil
+		}
+	}
+	result, e := rateBillingWithRateCard(snapshot, card)
+	if e != nil {
+		return BillingPreview{}, e
+	}
+	if e = m.record(ctx, snapshot, "period-finalized", result); e != nil {
+		return BillingPreview{}, e
+	}
+	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
+		var stable BillingPreview
+		if json.Unmarshal([]byte(payload), &stable) == nil {
+			return stable, nil
+		}
+	}
+	return result, nil
 }
 func (m MockBillingProvider) record(ctx context.Context, s BillingUsageSnapshot, event string, result BillingPreview) error {
 	if m.Store == nil {
@@ -67,13 +122,84 @@ func (m MockBillingProvider) record(ctx context.Context, s BillingUsageSnapshot,
 }
 
 func rateBilling(s BillingUsageSnapshot) BillingPreview {
-	p := planCatalog[s.PlanCode]
-	result := BillingPreview{AccountID: s.AccountID, PlanCode: s.PlanCode, Period: s.Period, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: s.MonthlyEgressBytes}
-	if p.BillingMode == BillingUsageBased {
-		result.StorageBlocks = ceilBlocks(s.StorageHighWaterBytes, p.StorageBlockBytes)
-		result.EgressBlocks = ceilBlocks(s.MonthlyEgressBytes, p.EgressBlockBytes)
-	}
+	result, _ := rateBillingWithRateCard(s, mockRateCardV1)
 	return result
+}
+func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPreview, error) {
+	if err := validateRateCard(card); err != nil {
+		return BillingPreview{}, err
+	}
+	p, ok := planCatalog[s.PlanCode]
+	if !ok {
+		return BillingPreview{}, fmt.Errorf("unknown plan: %s", s.PlanCode)
+	}
+	result := BillingPreview{AccountID: s.AccountID, PlanCode: s.PlanCode, Period: s.Period, RateCardID: card.ID, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: s.MonthlyEgressBytes, Currency: card.Currency, IsVirtual: true}
+	if p.BillingMode == BillingFixed {
+		amount, ok := card.FixedPlanAmountsMinor[s.PlanCode]
+		if !ok {
+			return BillingPreview{}, fmt.Errorf("rate card has no fixed amount for plan %s", s.PlanCode)
+		}
+		result.LineItems = []BillingLineItem{{Kind: "fixed-plan", Quantity: 1, UnitAmountMinor: amount, AmountMinor: amount, Currency: card.Currency}}
+		result.TotalAmountMinor = amount
+		return result, nil
+	}
+	result.StorageBlocks = ceilBlocks(s.StorageHighWaterBytes, p.StorageBlockBytes)
+	result.EgressBlocks = ceilBlocks(s.MonthlyEgressBytes, p.EgressBlockBytes)
+	items := []BillingLineItem{}
+	if card.ProBaseAmountMinor > 0 {
+		items = append(items, BillingLineItem{Kind: "base", Quantity: 1, UnitAmountMinor: card.ProBaseAmountMinor, AmountMinor: card.ProBaseAmountMinor, Currency: card.Currency})
+		result.TotalAmountMinor = card.ProBaseAmountMinor
+	}
+	var e error
+	if result.StorageBlocks > 0 {
+		var amount int64
+		amount, e = safeMultiply(result.StorageBlocks, card.StorageBlockAmountMinor)
+		if e != nil {
+			return BillingPreview{}, e
+		}
+		items = append(items, BillingLineItem{Kind: "storage-block", Quantity: result.StorageBlocks, UnitAmountMinor: card.StorageBlockAmountMinor, AmountMinor: amount, Currency: card.Currency})
+		result.TotalAmountMinor, e = safeAdd(result.TotalAmountMinor, amount)
+		if e != nil {
+			return BillingPreview{}, e
+		}
+	}
+	if result.EgressBlocks > 0 {
+		var amount int64
+		amount, e = safeMultiply(result.EgressBlocks, card.EgressBlockAmountMinor)
+		if e != nil {
+			return BillingPreview{}, e
+		}
+		items = append(items, BillingLineItem{Kind: "egress-block", Quantity: result.EgressBlocks, UnitAmountMinor: card.EgressBlockAmountMinor, AmountMinor: amount, Currency: card.Currency})
+		result.TotalAmountMinor, e = safeAdd(result.TotalAmountMinor, amount)
+		if e != nil {
+			return BillingPreview{}, e
+		}
+	}
+	result.LineItems = items
+	return result, nil
+}
+func validateRateCard(c RateCard) error {
+	if c.ID == "" || c.Currency == "" || c.ProBaseAmountMinor < 0 || c.StorageBlockAmountMinor < 0 || c.EgressBlockAmountMinor < 0 {
+		return fmt.Errorf("invalid rate card")
+	}
+	for _, amount := range c.FixedPlanAmountsMinor {
+		if amount < 0 {
+			return fmt.Errorf("invalid rate card")
+		}
+	}
+	return nil
+}
+func safeMultiply(a, b int64) (int64, error) {
+	if a < 0 || b < 0 || a != 0 && b > math.MaxInt64/a {
+		return 0, fmt.Errorf("billing amount overflow")
+	}
+	return a * b, nil
+}
+func safeAdd(a, b int64) (int64, error) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, fmt.Errorf("billing amount overflow")
+	}
+	return a + b, nil
 }
 func ceilBlocks(value, block int64) int64 {
 	if value <= 0 || block <= 0 {
@@ -112,7 +238,6 @@ func (s *server) observeAccountStorage(ctx context.Context, repositoryID string,
 	}
 	return s.db.ObserveStorageHighWater(ctx, repo.AccountID, now.UTC().Format("2006-01"), usage.StoredBytes, now.UTC().Format(time.RFC3339Nano))
 }
-
 func (s *server) billingProvider() BillingProvider {
-	return MockBillingProvider{Store: s.db, Now: s.currentTime}
+	return MockBillingProvider{Store: s.db, Now: s.currentTime, RateCard: mockRateCardV1}
 }

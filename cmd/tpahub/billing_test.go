@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -76,14 +77,39 @@ func TestMockBillingPreviewIsDeterministicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second {
+	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("previews differ: %+v %+v", first, second)
 	}
+	if first.TotalAmountMinor != 1400 || len(first.LineItems) != 3 || first.RateCardID != "mock-rate-card-v1" || !first.IsVirtual {
+		t.Fatalf("unexpected Pro monetary preview: %+v", first)
+	}
+	nano, err := (MockBillingProvider{Store: s.db, RateCard: mockRateCardV1}).Preview(context.Background(), BillingUsageSnapshot{AccountID: "a", PlanCode: "nano", Period: "2026-08", StorageHighWaterBytes: 4_000_000, MonthlyEgressBytes: 800_000_000})
+	if err != nil || nano.TotalAmountMinor != 440 || nano.StorageBlocks != 0 {
+		t.Fatalf("unexpected Nano monetary preview: %+v, %v", nano, err)
+	}
 	if _, err := provider.Finalize(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := provider.Finalize(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
+	}
+	v2 := mockRateCardV1
+	v2.ID = "mock-rate-card-v2"
+	v2.ProBaseAmountMinor = 9000
+	v2Preview, err := (MockBillingProvider{Store: s.db, RateCard: v2}).Preview(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v2Preview.TotalAmountMinor == first.TotalAmountMinor || v2Preview.StorageBlocks != first.StorageBlocks || v2Preview.EgressBlocks != first.EgressBlocks {
+		t.Fatalf("rate card did not change only monetary result: v1=%+v v2=%+v", first, v2Preview)
+	}
+	stableProvider := MockBillingProvider{Store: s.db, RateCard: v2}
+	stable, err := stableProvider.Finalize(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, stable) {
+		t.Fatalf("finalized preview was repriced: first=%+v stable=%+v", first, stable)
 	}
 }
 

@@ -99,6 +99,11 @@ func (s *Store) StorageHighWater(c context.Context, accountID, period string) (i
 	}
 	return bytes, e
 }
+func (s *Store) MockBillingEventPayload(c context.Context, accountID, period, eventType string) (string, error) {
+	var payload string
+	e := s.db.QueryRowContext(c, `SELECT payload FROM mock_billing_events WHERE account_id=? AND period=? AND event_type=?`, accountID, period, eventType).Scan(&payload)
+	return payload, e
+}
 func (s *Store) RecordMockBillingEvent(c context.Context, id, accountID, period, eventType, payload, createdAt string) error {
 	_, e := s.db.ExecContext(c, `INSERT INTO mock_billing_events(id,account_id,period,event_type,payload,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,period,event_type) DO NOTHING`, id, accountID, period, eventType, payload, createdAt)
 	return e
