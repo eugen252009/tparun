@@ -17,6 +17,7 @@ type Config struct {
 	RegistrationEnabled bool
 	BillingProvider     string
 	BillingEnvironment  string
+	BillingRateCard     string
 	StripeTestSecret    string
 }
 
@@ -32,6 +33,7 @@ func Load() Config {
 		RegistrationEnabled: os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
 		BillingProvider:     env("TPAHUB_BILLING_PROVIDER", "mock"),
 		BillingEnvironment:  env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
+		BillingRateCard:     env("TPAHUB_BILLING_RATE_CARD", "mock-rate-card-v1"),
 		StripeTestSecret:    os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
 	}
 }

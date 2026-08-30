@@ -34,6 +34,8 @@ const (
 type RateCard struct {
 	ID                      string
 	Mode                    RateCardMode
+	PlanCode                string
+	BillingCadence          PlanCadence
 	Currency                string
 	FixedPlanAmountsMinor   map[string]int64
 	ProBaseAmountMinor      int64
@@ -89,6 +91,32 @@ type MockBillingProvider struct {
 	Store    *store.Store
 	Now      func() time.Time
 	RateCard RateCard
+}
+
+func productionNanoRateCard() RateCard {
+	return RateCard{ID: "production-nano-v1", Mode: RateCardProduction, PlanCode: "nano", BillingCadence: CadenceAnnual, Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": 500}}
+}
+
+var productionNanoRateCardV1 = productionNanoRateCard()
+
+func rateCardByID(id string) (RateCard, error) {
+	switch id {
+	case mockRateCardV1.ID:
+		card := mockRateCardV1
+		card.FixedPlanAmountsMinor = map[string]int64{"nano": 440, "standard": 2200}
+		return card, nil
+	case "production-nano-v1":
+		return productionNanoRateCard(), nil
+	default:
+		return RateCard{}, fmt.Errorf("rate card not found: %s", id)
+	}
+}
+func finalizeBillingWithRateCard(snapshot BillingUsageSnapshot, card RateCard, now time.Time) (FinalizedBillingPeriod, error) {
+	result, e := rateBillingWithRateCard(snapshot, card)
+	if e != nil {
+		return FinalizedBillingPeriod{}, e
+	}
+	return FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now.UTC(), IdempotencyKey: fmt.Sprintf("tpahub:%s:%s:final", snapshot.AccountID, snapshot.Period)}, nil
 }
 
 func (m MockBillingProvider) card() RateCard {
@@ -243,6 +271,11 @@ func validateRateCard(c RateCard) error {
 	for _, amount := range c.FixedPlanAmountsMinor {
 		if amount < 0 {
 			return fmt.Errorf("invalid rate card")
+		}
+	}
+	if c.Mode == RateCardProduction {
+		if c.ID != "production-nano-v1" || c.PlanCode != "nano" || c.Currency != "EUR" || c.BillingCadence != CadenceAnnual || c.FixedPlanAmountsMinor["nano"] != 500 || len(c.FixedPlanAmountsMinor) != 1 {
+			return fmt.Errorf("invalid production Nano rate card")
 		}
 	}
 	return nil

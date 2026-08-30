@@ -17,8 +17,18 @@ import (
 
 func ValidateBillingConfiguration(c config.Config) error {
 	env := BillingEnvironment(c.BillingEnvironment)
+	card, cardErr := rateCardByID(c.BillingRateCard)
+	if c.BillingRateCard == "" {
+		card, cardErr = mockRateCardV1, nil
+	}
+	if cardErr != nil || validateRateCard(card) != nil {
+		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("invalid billing rate card: %s", c.BillingRateCard)}
+	}
+	if err := validateProviderCompatibility(card.Mode, env); err != nil {
+		return err
+	}
 	if c.BillingProvider == "mock" {
-		if env != BillingEnvironmentMock {
+		if env != BillingEnvironmentMock || card.Mode != RateCardMock {
 			return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("mock provider requires mock billing environment")}
 		}
 		return nil
@@ -71,8 +81,8 @@ func validateProviderCompatibility(mode RateCardMode, environment BillingEnviron
 	if environment == BillingEnvironmentProduction {
 		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("production billing is disabled until a production rate card exists")}
 	}
-	if mode == RateCardProduction && environment != BillingEnvironmentProduction {
-		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("production rate cards require a production provider")}
+	if mode == RateCardProduction && environment != BillingEnvironmentTest {
+		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("production rate cards are currently enabled only with the Stripe test provider")}
 	}
 	return nil
 }
@@ -96,6 +106,19 @@ func validateFinalized(f FinalizedBillingPeriod) error {
 	}
 	if sum != f.TotalAmountMinor {
 		return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("billing line item sum does not equal total")}
+	}
+	if f.RateCardMode == RateCardProduction {
+		card, e := rateCardByID(f.RateCardID)
+		parts := strings.Split(string(f.Period), "/")
+		start, se := time.Parse("2006-01-02", "")
+		end, ee := time.Parse("2006-01-02", "")
+		if len(parts) == 2 {
+			start, se = time.Parse("2006-01-02", parts[0])
+			end, ee = time.Parse("2006-01-02", parts[1])
+		}
+		if e != nil || validateRateCard(card) != nil || f.PlanCode != "nano" || f.Currency != "EUR" || f.TotalAmountMinor != 500 || se != nil || ee != nil || !end.Equal(start.AddDate(1, 0, 0)) {
+			return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("invalid production Nano finalization")}
+		}
 	}
 	return nil
 }
