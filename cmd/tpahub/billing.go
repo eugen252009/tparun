@@ -20,7 +20,8 @@ type BillingUsageSnapshot struct {
 	Period                BillingPeriod `json:"period"`
 	CurrentStorageBytes   int64         `json:"current_storage_bytes"`
 	StorageHighWaterBytes int64         `json:"storage_high_water_bytes"`
-	MonthlyEgressBytes    int64         `json:"monthly_egress_bytes"`
+	MonthlyEgressBytes    int64         `json:"monthly_egress_bytes,omitempty"`
+	EgressBytes           int64         `json:"egress_bytes"`
 }
 
 type RateCardMode string
@@ -186,7 +187,11 @@ func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPrev
 	if !ok {
 		return BillingPreview{}, fmt.Errorf("unknown plan: %s", s.PlanCode)
 	}
-	result := BillingPreview{AccountID: s.AccountID, PlanCode: s.PlanCode, Period: s.Period, RateCardID: card.ID, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: s.MonthlyEgressBytes, Currency: card.Currency, IsVirtual: true}
+	egressBytes := s.MonthlyEgressBytes
+	if s.EgressBytes != 0 || (p.EgressCadence == CadenceAnnual && s.MonthlyEgressBytes == 0) {
+		egressBytes = s.EgressBytes
+	}
+	result := BillingPreview{AccountID: s.AccountID, PlanCode: s.PlanCode, Period: s.Period, RateCardID: card.ID, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: egressBytes, Currency: card.Currency, IsVirtual: true}
 	if p.BillingMode == BillingFixed {
 		amount, ok := card.FixedPlanAmountsMinor[s.PlanCode]
 		if !ok {
@@ -197,7 +202,7 @@ func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPrev
 		return result, nil
 	}
 	result.StorageBlocks = ceilBlocks(s.StorageHighWaterBytes, p.StorageBlockBytes)
-	result.EgressBlocks = ceilBlocks(s.MonthlyEgressBytes, p.EgressBlockBytes)
+	result.EgressBlocks = ceilBlocks(egressBytes, p.EgressBlockBytes)
 	items := []BillingLineItem{}
 	if card.ProBaseAmountMinor > 0 {
 		items = append(items, BillingLineItem{Kind: "base", Quantity: 1, UnitAmountMinor: card.ProBaseAmountMinor, AmountMinor: card.ProBaseAmountMinor, Currency: card.Currency})
@@ -262,23 +267,45 @@ func ceilBlocks(value, block int64) int64 {
 }
 
 func (s *server) billingSnapshot(ctx context.Context, accountID string, now time.Time) (BillingUsageSnapshot, error) {
+	entitlement, e := s.db.Entitlement(ctx, accountID)
+	if e != nil {
+		return BillingUsageSnapshot{}, e
+	}
 	period := BillingPeriod(now.UTC().Format("2006-01"))
+	resourcePeriod, pe := entitlementPeriod(entitlement.StartedAt, now)
+	if pe != nil {
+		return BillingUsageSnapshot{}, pe
+	}
+	if entitlement.PlanCode == "nano" {
+		period = BillingPeriod(resourcePeriod.Start.Format("2006-01-02") + "/" + resourcePeriod.End.Format("2006-01-02"))
+	}
 	usage, e := s.accountUsage(ctx, accountID)
 	if e != nil {
 		return BillingUsageSnapshot{}, e
 	}
-	if e = s.db.ObserveStorageHighWater(ctx, accountID, string(period), usage.StoredBytes, now.UTC().Format(time.RFC3339Nano)); e != nil {
+	// Nano's fixed annual price does not depend on high-water, so retain the
+	// existing monthly operational observation semantics for future monthly PAYG.
+	highWaterPeriod := string(period)
+	if entitlement.PlanCode == "nano" {
+		highWaterPeriod = now.UTC().Format("2006-01")
+	}
+	if e = s.db.ObserveStorageHighWater(ctx, accountID, highWaterPeriod, usage.StoredBytes, now.UTC().Format(time.RFC3339Nano)); e != nil {
 		return BillingUsageSnapshot{}, e
 	}
-	high, e := s.db.StorageHighWater(ctx, accountID, string(period))
+	high, e := s.db.StorageHighWater(ctx, accountID, highWaterPeriod)
 	if e != nil {
 		return BillingUsageSnapshot{}, e
 	}
-	egress, e := s.db.AccountEgress(ctx, accountID, string(period))
+	var egress int64
+	if entitlement.PlanCode == "nano" {
+		egress, e = s.db.AccountEgressWindow(ctx, accountID, resourcePeriod.Start, resourcePeriod.End)
+	} else {
+		egress, e = s.db.AccountEgress(ctx, accountID, string(period))
+	}
 	if e != nil {
 		return BillingUsageSnapshot{}, e
 	}
-	return BillingUsageSnapshot{AccountID: accountID, PlanCode: "nano", Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress}, nil
+	return BillingUsageSnapshot{AccountID: accountID, PlanCode: entitlement.PlanCode, Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress, EgressBytes: egress}, nil
 }
 func (s *server) observeAccountStorage(ctx context.Context, repositoryID string, now time.Time) error {
 	repo, e := s.db.Repository(ctx, repositoryID)

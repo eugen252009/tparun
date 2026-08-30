@@ -373,7 +373,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startedAt := s.currentTime().UTC()
-	period := startedAt.Format("2006-01")
+	period := startedAt.Format("2006-01-02")
 	limited := false
 	if used, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
 		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)

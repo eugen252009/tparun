@@ -12,10 +12,13 @@ import (
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
-func TestEgressGracefulPackageLimitingAndMonthlyReset(t *testing.T) {
+func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {
 	s, h := testServer(t)
 	clock := time.Date(2026, 8, 31, 23, 59, 0, 0, time.UTC)
 	s.now = func() time.Time { return clock }
+	if err := s.db.SetEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2025-08-31T00:00:00Z", CreatedAt: "2025-08-31T00:00:00Z", UpdatedAt: "2025-08-31T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
 	id := "55555555555555555555555555555555"
 	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: id, AccountID: "a", Name: "limited", Visibility: "public", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
@@ -30,7 +33,7 @@ func TestEgressGracefulPackageLimitingAndMonthlyReset(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "Packages.gz"), make([]byte, 100), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.AddRepositoryEgress(context.Background(), id, "2026-08", NanoEgressBytes-1000, "now"); err != nil {
+	if err := s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", NanoEgressBytes-1000, "now"); err != nil {
 		t.Fatal(err)
 	}
 	get := func(path string) *http.Response {
@@ -63,8 +66,8 @@ func TestEgressGracefulPackageLimitingAndMonthlyReset(t *testing.T) {
 	clock = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	response = get("/r/" + id + "/package.deb")
 	response.Body.Close()
-	if response.Header.Get("X-TPAHub-Egress-Limited") != "" {
-		t.Fatal("new UTC month remained limited")
+	if response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
+		t.Fatal("annual pool unexpectedly reset at month boundary")
 	}
 	if got, err := s.db.RepositoryEgress(context.Background(), id, "2026-09"); err != nil || got != 1000 {
 		t.Fatalf("September egress=%d, %v", got, err)

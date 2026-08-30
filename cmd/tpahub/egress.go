@@ -49,13 +49,13 @@ func (w *rateLimitedResponseWriter) Flush() {
 	}
 }
 
-func (s *server) recordRepositoryEgress(repositoryID, period string, bytes int64) {
+func (s *server) recordRepositoryEgress(repositoryID, usageDate string, bytes int64) {
 	if bytes == 0 {
 		return
 	}
 	now := s.currentTime().UTC()
-	if err := s.db.AddRepositoryEgress(context.Background(), repositoryID, period, bytes, now.Format(time.RFC3339Nano)); err != nil {
-		log.Printf("repository egress accounting: repository=%s bytes=%d period=%s: %v", repositoryID, bytes, period, err)
+	if err := s.db.AddRepositoryEgressDaily(context.Background(), repositoryID, usageDate, bytes, now.Format(time.RFC3339Nano)); err != nil {
+		log.Printf("repository egress accounting: repository=%s bytes=%d date=%s: %v", repositoryID, bytes, usageDate, err)
 	}
 }
 
@@ -67,11 +67,19 @@ func (s *server) currentTime() time.Time {
 }
 
 func (s *server) accountEgress(accountID string, now time.Time) (int64, error) {
-	return s.db.AccountEgress(context.Background(), accountID, now.UTC().Format("2006-01"))
+	entitlement, err := s.db.Entitlement(context.Background(), accountID)
+	if err != nil {
+		return 0, err
+	}
+	period, err := entitlementPeriod(entitlement.StartedAt, now)
+	if err != nil {
+		return 0, err
+	}
+	return s.db.AccountEgressWindow(context.Background(), accountID, period.Start, period.End)
 }
 func egressCapacityMessage(used int64) string {
 	if used >= NanoEgressBytes {
-		return fmt.Sprintf("Monthly egress exceeded by %s. New package downloads are currently rate-limited until the next monthly period.", formatBytes(used-NanoEgressBytes))
+		return fmt.Sprintf("Annual egress allowance exceeded by %s. New package downloads are currently rate-limited until the next entitlement period.", formatBytes(used-NanoEgressBytes))
 	}
-	return "Package delivery is currently unrestricted by the monthly egress limit."
+	return "Package delivery is currently unrestricted by the annual egress allowance."
 }

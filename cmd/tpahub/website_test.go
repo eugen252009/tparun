@@ -114,13 +114,13 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			text := string(body)
 			wants := []string{"Nano"}
 			if path == "/" {
-				wants = append(wants, "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "AVAILABLE NOW", "COMING SOON", "actual resources", "package or repository-count limits", "project-stat", ">1</strong>", "packages currently published through TPA Hub", "/pricing")
+				wants = append(wants, "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "12 GB", "500 MB", "20 GB", "Pay as you go", "AVAILABLE NOW", "COMING SOON", "actual resources", "package or repository-count limits", "project-stat", ">1</strong>", "packages currently published through TPA Hub", "/pricing")
 			} else if path == "/nano" {
 				wants = append(wants, "Neovim 0.12.5", "about 2.4 KB", "recipe package, not Neovim itself", "2,500 recipe-sized packages", "200 times", "Your mileage may vary", "STANDARD", "PRO", "same core TPA Hub capabilities")
 			} else if path == "/pricing" {
-				wants = append(wants, "Standard", "Pro", "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "1 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
+				wants = append(wants, "Standard", "Pro", "Same capability. Different capacity.", "same core TPA Hub capabilities", "5 MB", "12 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "AVAILABLE NOW", "COMING SOON")
 			} else {
-				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "1 GB", "500 MB", "20 GB", "pay as you go", "actual successful response-body bytes", "UTC calendar months", "not a hard cutoff", "future", "not implemented")
+				wants = append(wants, "Same capability. Different capacity.", "not feature-based", "5 MB", "12 GB", "500 MB", "20 GB", "pay as you go", "actual successful response-body bytes", "UTC daily buckets", "not a hard cutoff", "future", "not implemented")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {
@@ -148,7 +148,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	}
 	accountBody, _ := io.ReadAll(accountResponse.Body)
 	accountResponse.Body.Close()
-	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "Monthly egress is measured") || !strings.Contains(string(accountBody), "Billing preview") || strings.Contains(string(accountBody), "€") {
+	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Nano capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "used this entitlement year") || !strings.Contains(string(accountBody), "Billing preview") || strings.Contains(string(accountBody), "€") {
 		t.Fatalf("account storage display invalid: status=%d", accountResponse.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/r/invalid/InRelease")
