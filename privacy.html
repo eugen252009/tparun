@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datenschutzerklärung</title>
+  <style>
+    :root{color-scheme:light;--ink:#182126;--muted:#617078;--line:#dce4e5;--accent:#167a70;--soft:#eef6f4}*{box-sizing:border-box}body{max-width:820px;margin:0 auto;padding:48px 24px;color:var(--ink);font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}h1{font-size:clamp(2.4rem,7vw,4rem);line-height:1.05;letter-spacing:-.04em}h2{margin-top:2.8rem;border-top:1px solid var(--line);padding-top:1.5rem}h3{margin-top:1.8rem}a{color:var(--accent)}address{font-style:normal}.note{background:var(--soft);padding:1rem 1.2rem;border-left:4px solid var(--accent)}code{font-family:ui-monospace,SFMono-Regular,monospace}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1.5rem;color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Datenschutzerklärung</h1>
+  <p>Diese Erklärung informiert gemäß Art. 13 Datenschutz-Grundverordnung (DSGVO) über die Verarbeitung personenbezogener Daten bei den Websites, Diensten und Softwareangeboten desselben Anbieters. Die einzelnen Angebote verwenden unterschiedliche technische Funktionen; diese werden nachfolgend getrennt beschrieben.</p>
+
+  <h2>1. Verantwortlicher</h2>
+  <address>Eugen Lupricht<br>von-Hörmann str. 5<br>87600 Kaufbeuren<br>E-Mail: <a href="mailto:support@lupricht.net">support@lupricht.net</a></address>
+  <p>Weitere Anbieterinformationen finden Sie im <a href="/legal/">Impressum</a>. Bezeichnungen wie Lupricht, Coffee Maker Studio, TPA, TPA Hub und Mema sind Produkt-, Projekt- oder Angebotsnamen desselben Verantwortlichen und keine eigenständigen Rechtsträger.</p>
+
+  <h2>2. Allgemeine Hinweise</h2>
+  <p>Personenbezogene Daten werden nur verarbeitet, soweit dies zur Bereitstellung der jeweiligen Website oder Leistung, zur Kommunikation, zur Vertragsdurchführung, zur Abrechnung oder zum sicheren und stabilen technischen Betrieb erforderlich ist. Die jeweils einschlägige Rechtsgrundlage wird bei der betreffenden Verarbeitung genannt.</p>
+  <p>Eine rechtlich erhebliche ausschließlich automatisierte Entscheidungsfindung einschließlich Profiling gemäß Art. 22 DSGVO findet nicht statt.</p>
+
+  <h2>3. Hosting und technische Bereitstellung</h2>
+  <h3>Serverhosting für lupricht.net und TPA Hub</h3>
+  <p>lupricht.net und TPA Hub werden auf derselben Serverinstanz bei der ZAP-Hosting GmbH &amp; Co. KG am Serverstandort Frankfurt am Main, Deutschland, betrieben. Der Anbieter kann bei der technischen Bereitstellung mit Verbindungs- und gespeicherten Dienstdaten in Berührung kommen. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO, soweit das Hosting zur Erbringung einer vereinbarten Leistung erforderlich ist, sowie Art. 6 Abs. 1 lit. f DSGVO mit dem berechtigten Interesse an einem sicheren und zuverlässigen Betrieb.</p>
+  <h3>Cloudflare für lupricht.net</h3>
+  <p>lupricht.net wird zusätzlich über das Netzwerk von Cloudflare ausgeliefert. Dabei verarbeitet Cloudflare technisch erforderliche Verbindungs- und Sicherheitsdaten, insbesondere IP-Adresse und HTTP-Anfragedaten, um Inhalte auszuliefern und Angriffe abzuwehren. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Weitere Informationen stellt Cloudflare in seiner <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener noreferrer">Datenschutzerklärung</a> und seinem <a href="https://www.cloudflare.com/cloudflare-customer-dpa/" rel="noopener noreferrer">Data Processing Addendum</a> bereit. Cloudflare nennt für Übermittlungen in die USA insbesondere das EU-US Data Privacy Framework und vertragliche Garantien.</p>
+
+  <h2>4. Technische Verbindungs- und Protokolldaten</h2>
+  <p>Beim Aufruf einer Website, API oder eines bereitgestellten Repository-Inhalts werden die für die Verbindung und Antwort notwendigen Daten verarbeitet. Dazu können IP-Adresse, Zeitpunkt, HTTP-Methode, angeforderte Ressource, Antwortstatus, übertragene Datenmenge, Referrer und User-Agent gehören. Die Verarbeitung dient der Auslieferung, Stabilität, Fehleranalyse, Sicherheit und Missbrauchsabwehr und beruht auf Art. 6 Abs. 1 lit. f DSGVO.</p>
+  <h3>TPA-Hub-Protokolle</h3>
+  <p>Der TPA Hub vorgeschaltete nginx-Webserver übermittelt Zugriffsprotokolle im Combined-Log-Format an syslog/systemd-journald. Diese Einträge unterliegen der automatischen Aufbewahrung und Rotation des Systemjournals anhand der verfügbaren Speicher- und Ressourcengrenzen. Eine gesonderte feste zeitliche Aufbewahrungsfrist ist dafür nicht konfiguriert.</p>
+  <p>nginx-Fehlerprotokolle werden täglich rotiert, in 14 Rotationen vorgehalten und nach der Rotation komprimiert. Sie können im Einzelfall Verbindungs- oder Anfragedaten enthalten und dienen dem technischen Betrieb, der Fehleranalyse und der Sicherheit.</p>
+  <p>Die Go-Anwendung TPA Hub führt selbst kein dauerhaftes allgemeines HTTP-Zugriffsprotokoll. Anwendungsprotokolle können operative Informationen wie Repository- und Veröffentlichungsauftrag-IDs, Bytezahlen sowie Verarbeitungs- und Abrechnungsfehler enthalten.</p>
+
+  <h2>5. lupricht.net</h2>
+  <h3>Kontaktformular und Kontaktaufnahme</h3>
+  <p>Das Kontaktformular unter lupricht.net/contact verarbeitet Name, E-Mail-Adresse, Betreff und Nachricht. Das Feld „Website“ ist ein nicht für normale Nutzer bestimmtes Honeypot-Feld zur Erkennung automatisierter Eingaben. Die Angaben werden zur Bearbeitung und Beantwortung der Anfrage verarbeitet. Das Kontaktformular gehört technisch zu lupricht.net und nicht zu TPA Hub.</p>
+  <p>Bei allgemeinen Anfragen ist Rechtsgrundlage Art. 6 Abs. 1 lit. f DSGVO; unser berechtigtes Interesse ist die sachgerechte Bearbeitung der Anfrage. Soweit die Anfrage der Anbahnung oder Durchführung eines Vertrags dient, ist Art. 6 Abs. 1 lit. b DSGVO einschlägig. Gleiches gilt entsprechend für Anfragen per E-Mail.</p>
+  <p>Die Angaben werden bis zur abschließenden Bearbeitung des Anliegens gespeichert. Eine längere Aufbewahrung erfolgt nur, soweit gesetzliche Aufbewahrungs- oder Nachweispflichten bestehen oder Daten zur Geltendmachung, Ausübung oder Verteidigung von Rechtsansprüchen benötigt werden.</p>
+
+  <h3>Microsoft Clarity</h3>
+  <p>Auf lupricht.net ist Microsoft Clarity, ein Dienst der Microsoft Corporation, eingebunden. Clarity dient dazu, die Nutzung der Website anhand von Interaktions- und technischen Nutzungsdaten zu verstehen. Dabei können insbesondere aufgerufene Seiten, Interaktionen, Geräte- und Browserinformationen, IP-Adresse sowie durch Clarity gesetzte oder gelesene Kennungen verarbeitet und an Microsoft übermittelt werden. TPA Hub bindet Clarity nicht ein.</p>
+  <p>Eine Verarbeitung durch Clarity und ein nicht technisch notwendiger Zugriff auf Informationen im Endgerät dürfen nur auf Grundlage einer Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO und § 25 Abs. 1 TDDDG erfolgen. Die Einwilligung kann mit Wirkung für die Zukunft widerrufen werden. Weitere Informationen: <a href="https://privacy.microsoft.com/de-de/privacystatement" rel="noopener noreferrer">Datenschutzerklärung von Microsoft</a> und <a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data" rel="noopener noreferrer">Informationen zur Datenerhebung durch Clarity</a>.</p>
+
+  <h3>Newsletter</h3>
+  <p>Soweit ein Newsletter angeboten und von Ihnen bestellt wird, verarbeiten wir Ihre E-Mail-Adresse und die zur Prüfung der Anmeldung erforderlichen Angaben für den Versand. Rechtsgrundlage ist Ihre Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO. Sie können diese jederzeit mit Wirkung für die Zukunft widerrufen, insbesondere über einen Abmeldelink im Newsletter. Die für den Newsletter geführten Daten werden nach Abmeldung oder endgültiger Einstellung des Newsletters gelöscht, soweit keine andere Rechtsgrundlage eine weitere Aufbewahrung erlaubt. Eine gegebenenfalls erforderliche Sperrliste darf zur Verhinderung weiterer Zusendungen auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO geführt werden.</p>
+
+  <h2>6. TPA Hub</h2>
+  <h3>Benutzerkonten</h3>
+  <p>Bei der Registrierung verarbeitet TPA Hub E-Mail-Adresse, eine interne Konto-ID, Kontostatus und Erstellungszeitpunkt. Das Passwort wird zur Authentifizierung verarbeitet und ausschließlich als bcrypt-Hash gespeichert; das Klartextpasswort wird nicht gespeichert. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO. Sicherheits- und Missbrauchsschutzmaßnahmen beruhen ergänzend auf Art. 6 Abs. 1 lit. f DSGVO.</p>
+
+  <h3>Sitzungen und Authentifizierung</h3>
+  <p>Für Anmeldungen werden zufällige, nicht sprechende Sitzungsschlüssel ausgegeben. Serverseitig werden eine gehashte Darstellung, die Kontozuordnung sowie Erstellungs-, letzte Nutzungs- und gegebenenfalls Widerrufszeitpunkte gespeichert.</p>
+  <p>Die Webanmeldung verwendet den technisch notwendigen Cookie <code>tpahub_session</code>. Er ist als <code>Secure</code>, <code>HttpOnly</code> und <code>SameSite=Lax</code> gekennzeichnet und hat im Browser eine Höchstlebensdauer von 30 Tagen. Beim Abmelden wird die Sitzung widerrufen und der Cookie entfernt. Die Endgerätespeicherung ist für die ausdrücklich gewünschte angemeldete Funktion erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG); die weitere Verarbeitung beruht auf Art. 6 Abs. 1 lit. b und lit. f DSGVO.</p>
+
+  <h3>Lokale CLI-Konfiguration</h3>
+  <p>Die TPA-Hub-CLI kann auf dem Gerät des Nutzers die gewählte Serveradresse, E-Mail-Adresse und den Sitzungsschlüssel in einer zugriffsbeschränkten Konfigurationsdatei speichern. Diese lokale Speicherung erfolgt, damit die vom Nutzer veranlasste Anmeldung und nachfolgende CLI-Befehle ausgeführt werden können. Sie ist von der browserbasierten Cookie-Nutzung zu unterscheiden.</p>
+
+  <h3>Repositories, Pakete und Veröffentlichungen</h3>
+  <p>TPA Hub verarbeitet Repository-ID, Repository-Name, Zuordnung zum Konto, Sichtbarkeit und Zeitstempel. Beim Veröffentlichen werden hochgeladene <code>.deb</code>-Paketartefakte, Debian-Paket- und Repository-Metadaten, technische Angaben zu Veröffentlichungsaufträgen sowie der Veröffentlichungszustand verarbeitet und gespeichert. Die Inhalte dienen der vom Nutzer veranlassten Repository-Bereitstellung und sind nicht allein aufgrund ihres Dateiformats personenbezogene Daten.</p>
+  <p>Bei einem als öffentlich angelegten Repository sind die zur Veröffentlichung bestimmten Repository-Metadaten und Paketartefakte ohne Anmeldung öffentlich abrufbar. Die Veröffentlichung ist eine vom Nutzer gewählte Dienstfunktion. Kontodaten wie die E-Mail-Adresse werden dadurch nicht automatisch öffentlich bereitgestellt.</p>
+  <p>Private Repositories sind nur mit repositorybezogenen Lesezugangsdaten oder über den authentifizierten Verwaltungszugang abrufbar. Eine Ende-zu-Ende-Verschlüsselung ist damit nicht verbunden.</p>
+  <p>Diese Verarbeitungen beruhen auf Art. 6 Abs. 1 lit. b DSGVO und, soweit Sicherheits- oder Missbrauchsschutzmaßnahmen betroffen sind, auf Art. 6 Abs. 1 lit. f DSGVO.</p>
+
+  <h3>Reader-Zugangsdaten</h3>
+  <p>Für private Repositories verarbeitet TPA Hub den Namen des Reader-Zugangs, die Repository-Zuordnung, Erstellungs- und Widerrufszeitpunkte sowie ausschließlich eine gehashte Darstellung des geheimen Reader-Tokens. Der vollständige Schlüssel wird nur bei seiner Erstellung ausgegeben.</p>
+
+  <h3>Nutzungsmessung</h3>
+  <p>TPA Hub verarbeitet Repository-Speichertotale und tägliche Egress-Totale zur Messung der Nutzung, Durchsetzung von Dienst- und Tarifgrenzen und gegebenenfalls Abrechnung. Die Egress-Abrechnungsdatensätze speichern nicht die IP-Adresse des jeweiligen Abrufs.</p>
+
+  <h3>Registrierungs-Ratenbegrenzung</h3>
+  <p>Zur Begrenzung automatisierter oder missbräuchlicher Registrierungsversuche wird die IP-Adresse vorübergehend im Arbeitsspeicher verarbeitet. Die dafür berücksichtigten Zugriffe werden für ungefähr eine Minute im Speicher gehalten und nicht als Registrierungs-IP dauerhaft in der TPA-Hub-Datenbank gespeichert. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO.</p>
+
+  <h3>Zahlungen über Stripe</h3>
+  <p>Eine gewöhnliche Nutzung oder ein gewöhnlicher Seitenaufruf bei TPA Hub führt nicht zu einer Übermittlung an Stripe. Erst wenn ein Nutzer ausdrücklich einen kostenpflichtigen Checkout beziehungsweise Kauf startet, wird Stripe Checkout verwendet.</p>
+  <p>Dabei übermittelt TPA Hub eine nicht sprechende interne Konto-ID und Kaufdaten, insbesondere Kauf-ID, Tarif beziehungsweise Produkt, Betrag, Währung, steuerliche Produktklassifikation und technische Checkout-Metadaten. Stripe verarbeitet außerdem die im Stripe Checkout unmittelbar eingegebenen Zahlungs- und Abrechnungsdaten. TPA Hub übermittelt weder Kontopasswörter noch Repository-Inhalte an Stripe. Zur Zuordnung speichert TPA Hub unter anderem Kaufstatus, Stripe-Kunden- und Checkout-Referenzen, Betrag, Währung, Tarif, Klassifikation und Zeitpunkte.</p>
+  <p>Für die Verarbeitung in Europa nennt Stripe die Stripe Payments Europe Limited (SPEL) als zuständige Stripe-Einheit. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO für die Anbahnung und Durchführung des Kaufs sowie Art. 6 Abs. 1 lit. c DSGVO, soweit gesetzliche Aufbewahrungs- oder Nachweispflichten bestehen. Stripe verarbeitet Zahlungsdaten teilweise in eigener Verantwortlichkeit. Weitere Informationen: <a href="https://stripe.com/de/legal/privacy-center" rel="noopener noreferrer">Stripe Privacy Center</a>.</p>
+  <p>Stripe weist darauf hin, dass Daten im Rahmen seiner internationalen Infrastruktur auch außerhalb des EWR verarbeitet werden können. Stripe nennt als Übermittlungsmechanismen insbesondere das EU-US Data Privacy Framework und, soweit erforderlich, die von der Europäischen Kommission genehmigten Standardvertragsklauseln.</p>
+
+  <h2>7. Cookies, Endgerätespeicherung und Tracking</h2>
+  <p>TPA Hub verwendet ausschließlich den oben beschriebenen technisch notwendigen Sitzungscookie. Die TPA-Hub-Website verwendet keine Analyse- oder Werbedienste, Tracking-Pixel, externen Schriftarten, Drittanbieter-Einbettungen, <code>localStorage</code>, <code>sessionStorage</code> oder IndexedDB. Stripe wird nur nach ausdrücklichem Start des Checkout kontaktiert. Für diesen notwendigen TPA-Hub-Cookie ist kein Einwilligungsbanner erforderlich.</p>
+  <p>Auf lupricht.net gelten daneben die vorstehend beschriebenen Verarbeitungen durch Cloudflare und Microsoft Clarity. Links zu externen Profilen oder Angeboten führen erst bei Betätigung zu den jeweiligen Drittanbietern.</p>
+
+  <h2>8. Empfänger und internationale Übermittlungen</h2>
+  <p>Empfänger sind nur, soweit für den jeweiligen Zweck erforderlich: Cloudflare für dessen Auslieferung und Schutz, Microsoft bei Einsatz von Clarity, ZAP-Hosting für das gemeinsame Serverhosting von lupricht.net und TPA Hub sowie Stripe nach ausdrücklichem Start eines Checkouts. Bei öffentlichen TPA-Hub-Repositories erhalten beliebige Internetnutzer Zugriff auf die zur Veröffentlichung bestimmten Repository- und Paketdaten.</p>
+  <p>Bei Anbietern mit Verarbeitung in den USA können internationale Übermittlungen stattfinden. Soweit einschlägig, werden hierfür ein Angemessenheitsbeschluss zum EU-US Data Privacy Framework oder geeignete Garantien wie Standardvertragsklauseln nach Art. 46 DSGVO herangezogen. Die jeweils verlinkten Anbieterinformationen enthalten weitere Einzelheiten.</p>
+
+  <h2>9. Speicherdauer</h2>
+  <p>Soweit keine speziellere Angabe gemacht wurde, werden personenbezogene Daten nur gespeichert, bis der jeweilige Zweck entfällt. Danach werden sie gelöscht oder anonymisiert, sofern keine gesetzlichen Aufbewahrungs- und Nachweispflichten, berechtigten Verteidigungsinteressen oder andere Rechtsgrundlagen eine weitere Aufbewahrung erfordern.</p>
+  <ul>
+    <li>Kontaktanfragen: bis zur abschließenden Bearbeitung, vorbehaltlich einschlägiger gesetzlicher Pflichten oder Rechtsverteidigung.</li>
+    <li>TPA-Hub-Konto-, Repository-, Paket-, Berechtigungs-, Nutzungs- und Kaufdaten: grundsätzlich für die Dauer des jeweiligen Nutzungs- oder Vertragsverhältnisses; vom Nutzer entfernte Inhalte werden nach Maßgabe der Dienstfunktion und vorbehaltlich gesetzlicher Pflichten gelöscht.</li>
+    <li>TPA-Hub-Sitzungsdaten: bis zum Widerruf oder zur Löschung; Browser-Cookie höchstens 30 Tage.</li>
+    <li>Registrierungs-Ratenbegrenzung: ungefähr eine Minute im Arbeitsspeicher.</li>
+    <li>TPA-Hub-Zugriffsprotokolle in journald: automatische speicher- und ressourcenabhängige Rotation ohne gesondert konfigurierte feste Zeitfrist.</li>
+    <li>nginx-Fehlerprotokolle bei TPA Hub: tägliche Rotation mit 14 vorgehaltenen Rotationen.</li>
+    <li>Zahlungs- und Abrechnungsunterlagen: nach den einschlägigen vertraglichen, steuer- und handelsrechtlichen Aufbewahrungspflichten.</li>
+  </ul>
+
+  <h2>10. Rechte betroffener Personen</h2>
+  <p>Unter den gesetzlichen Voraussetzungen bestehen Rechte auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16 DSGVO), Löschung (Art. 17 DSGVO), Einschränkung der Verarbeitung (Art. 18 DSGVO) und Datenübertragbarkeit (Art. 20 DSGVO). Einer Verarbeitung auf Grundlage von Art. 6 Abs. 1 lit. e oder lit. f DSGVO kann nach Maßgabe des Art. 21 DSGVO widersprochen werden. Soweit eine Verarbeitung auf einer Einwilligung beruht, kann diese jederzeit mit Wirkung für die Zukunft widerrufen werden; die Rechtmäßigkeit der bis dahin erfolgten Verarbeitung bleibt unberührt.</p>
+
+  <h2>11. Beschwerderecht</h2>
+  <p>Nach Art. 77 DSGVO besteht das Recht, sich bei einer Datenschutzaufsichtsbehörde zu beschweren, insbesondere am gewöhnlichen Aufenthaltsort, Arbeitsplatz oder Ort des mutmaßlichen Verstoßes.</p>
+
+  <h2>12. Datensicherheit</h2>
+  <p>Die öffentlichen Websites und Dienste werden über HTTPS/TLS bereitgestellt. Daneben werden angemessene technische und organisatorische Maßnahmen eingesetzt, um Daten gegen Verlust, unbefugten Zugriff und Missbrauch zu schützen. Ein absoluter Schutz kann nicht gewährleistet werden.</p>
+
+  <h2>13. Änderungen dieser Datenschutzerklärung</h2>
+  <p>Diese Erklärung wird angepasst, wenn sich Funktionen, Dienstleister oder rechtliche Anforderungen ändern. Maßgeblich ist die jeweils unter <a href="/privacy/">/privacy/</a> veröffentlichte Fassung.</p>
+</main>
+<footer><a href="/legal/">Impressum</a> · <a href="/privacy/" aria-current="page">Datenschutz</a></footer>
+</body>
+</html>

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestPrivacyNoticeAndFooterLinks(t *testing.T) {
+func TestCentralLegalNavigation(t *testing.T) {
 	_, h := testServer(t)
 	for _, path := range []string{"/", "/docs", "/pricing", "/nano", "/register", "/login"} {
 		response, err := http.Get(h.URL + path)
@@ -16,24 +16,19 @@ func TestPrivacyNoticeAndFooterLinks(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `href="/datenschutz"`) {
-			t.Fatalf("%s does not link to the privacy notice", path)
+		text := string(body)
+		if response.StatusCode != http.StatusOK || !strings.Contains(text, `href="https://lupricht.net/legal/"`) || !strings.Contains(text, `href="https://lupricht.net/privacy/"`) {
+			t.Fatalf("%s does not link to the central legal pages", path)
 		}
 	}
 
-	response, err := http.Get(h.URL + "/datenschutz")
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Get(h.URL + "/datenschutz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	text := string(body)
-	for _, want := range []string{"Datenschutzerklärung", "Eugen Lupricht", "ZAP-Hosting", "systemd-journald", "Stripe", "tpahub_session", "Öffentliche und private Repositories"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("privacy notice missing %q", want)
-		}
-	}
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("privacy notice status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusPermanentRedirect || response.Header.Get("Location") != "https://lupricht.net/privacy/" {
+		t.Fatalf("legacy privacy redirect status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
