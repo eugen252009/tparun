@@ -2,7 +2,7 @@
 
 TPA Hub is a CLI-first service for publishing and serving public or private APT repositories. **TPA Hub uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
-There is intentionally no web dashboard. The supported product interface is `tpahub` plus normal `apt` commands.
+TPA Hub now has a small public website at `https://tpa.lupricht.net`. It explains the CLI-first workflow and Nano availability; repository and package management remain in `tpahub` plus normal `apt` commands.
 
 ## Install TPA Hub
 
@@ -44,6 +44,12 @@ TPAHUB_PUBLISH_TIMEOUT        10m
 TPAHUB_MAX_UPLOAD_BYTES       512 MiB
 TPAHUB_REGISTRATION_ENABLED   true (set false to disable)
 ```
+
+## Website and onboarding
+
+Start at `https://tpa.lupricht.net/`, read the practical guide at `/docs`, or inspect the public installer and signing key at `/install.sh` and `/tpahub.asc`. Nano is available now; Standard and Pro are displayed as coming soon and have no activation or billing flow.
+
+The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPAHUB_REGISTRATION_ENABLED`.
 
 ## CLI workflow
 

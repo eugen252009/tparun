@@ -75,6 +75,7 @@ func (s *Store) CreateAccount(c context.Context, a Account) error {
 	_, e := s.db.ExecContext(c, "INSERT INTO accounts VALUES(?,?,?,?,?)", a.ID, a.Email, a.PasswordHash, a.Status, a.CreatedAt)
 	return e
 }
+func (s *Store) AccountByID(c context.Context, id string) (Account, error) { var a Account; e:=s.db.QueryRowContext(c,"SELECT id,email,password_hash,status,created_at FROM accounts WHERE id=?",id).Scan(&a.ID,&a.Email,&a.PasswordHash,&a.Status,&a.CreatedAt); return a,e }
 func (s *Store) AccountByEmail(c context.Context, email string) (Account, error) {
 	var a Account
 	e := s.db.QueryRowContext(c, "SELECT id,email,password_hash,status,created_at FROM accounts WHERE email=?", email).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt)
