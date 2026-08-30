@@ -16,6 +16,9 @@ import (
 )
 
 func ValidateBillingConfiguration(c config.Config) error {
+	if c.BillingPurchasesEnabled && c.BillingProvider != "stripe" {
+		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("purchase flow requires Stripe test provider")}
+	}
 	env := BillingEnvironment(c.BillingEnvironment)
 	card, cardErr := rateCardByID(c.BillingRateCard)
 	if c.BillingRateCard == "" {
@@ -40,6 +43,11 @@ func ValidateBillingConfiguration(c config.Config) error {
 		if !strings.HasPrefix(c.StripeTestSecret, "sk_test_") {
 			return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("Stripe test secret is required")}
 		}
+		if c.BillingPurchasesEnabled {
+			if c.BillingRateCard != "production-nano-v1" || c.StripeWebhookSecret == "" {
+				return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("Nano TEST purchases require production-nano-v1 and a webhook secret")}
+			}
+		}
 		return nil
 	}
 	return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("unknown billing provider: %s", c.BillingProvider)}
@@ -52,6 +60,26 @@ const (
 	BillingEnvironmentTest       BillingEnvironment = "test"
 	BillingEnvironmentProduction BillingEnvironment = "production"
 )
+
+type FinalizedPurchase struct {
+	PurchaseID, AccountID, PlanCode, RateCardID string
+	RateCardMode                                RateCardMode
+	Currency                                    string
+	AmountMinor                                 int64
+	BillingEnvironment                          BillingEnvironment
+	IdempotencyKey                              string
+	FinalizedAt                                 time.Time
+}
+type CheckoutResult struct {
+	Provider          string
+	Environment       BillingEnvironment
+	ExternalReference string
+	CheckoutURL       string
+	ExpiresAt         time.Time
+}
+type PurchaseProvider interface {
+	CreateCheckout(context.Context, FinalizedPurchase) (CheckoutResult, error)
+}
 
 type ProviderBillingRequest struct {
 	CustomerReference string
@@ -129,6 +157,8 @@ type StripeBillingProvider struct {
 	Environment BillingEnvironment
 	BaseURL     string
 	Client      *http.Client
+	SuccessURL  string
+	CancelURL   string
 }
 
 func NewStripeBillingProvider(st *store.Store, secret string, environment BillingEnvironment) (*StripeBillingProvider, error) {
@@ -141,6 +171,67 @@ func NewStripeBillingProvider(st *store.Store, secret string, environment Billin
 	return &StripeBillingProvider{Store: st, SecretKey: secret, Environment: environment, BaseURL: "https://api.stripe.com", Client: http.DefaultClient}, nil
 }
 func (p *StripeBillingProvider) EnvironmentName() BillingEnvironment { return p.Environment }
+func (p *StripeBillingProvider) CreateCheckout(ctx context.Context, purchase FinalizedPurchase) (CheckoutResult, error) {
+	if p.Environment != BillingEnvironmentTest || purchase.BillingEnvironment != BillingEnvironmentTest {
+		return CheckoutResult{}, providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("Stripe Checkout is test-only")}
+	}
+	if err := validateFinalizedPurchase(purchase); err != nil {
+		return CheckoutResult{}, err
+	}
+	if p.Store == nil {
+		return CheckoutResult{}, providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("purchase mapping store unavailable")}
+	}
+	customer, err := p.Store.ProviderAccount(ctx, purchase.AccountID, "stripe", string(p.Environment))
+	if err != nil {
+		cid, ce := p.createCustomerForAccount(ctx, purchase.AccountID, purchase.IdempotencyKey+":customer")
+		if ce != nil {
+			return CheckoutResult{}, ce
+		}
+		customer = store.BillingProviderAccount{AccountID: purchase.AccountID, Provider: "stripe", Environment: string(p.Environment), ProviderCustomerID: cid, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		if ce = p.Store.SaveProviderAccount(ctx, customer); ce != nil {
+			return CheckoutResult{}, ce
+		}
+	}
+	values := url.Values{
+		"mode": {"payment"}, "customer": {customer.ProviderCustomerID},
+		"line_items[0][price_data][currency]":           {strings.ToLower(purchase.Currency)},
+		"line_items[0][price_data][unit_amount]":        {strconv.FormatInt(purchase.AmountMinor, 10)},
+		"line_items[0][price_data][product_data][name]": {"TPA Hub Nano annual plan"},
+		"line_items[0][quantity]":                       {"1"}, "metadata[tpahub_purchase_id]": {purchase.PurchaseID},
+		"success_url": {p.SuccessURL}, "cancel_url": {p.CancelURL},
+	}
+	var raw struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err = p.request(ctx, "/v1/checkout/sessions", values, purchase.IdempotencyKey, &raw); err != nil {
+		return CheckoutResult{}, err
+	}
+	if raw.ID == "" || raw.URL == "" {
+		return CheckoutResult{}, providerError{Code: "provider-invalid-response", Cause: fmt.Errorf("Stripe Checkout response incomplete")}
+	}
+	return CheckoutResult{Provider: "stripe", Environment: p.Environment, ExternalReference: raw.ID, CheckoutURL: raw.URL}, nil
+}
+func (p *StripeBillingProvider) createCustomerForAccount(ctx context.Context, accountID, key string) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	e := p.request(ctx, "/v1/customers", url.Values{"description": {"TPA Hub account " + accountID}, "metadata[tpahub_account_id]": {accountID}}, key, &out)
+	if e != nil {
+		return "", e
+	}
+	if out.ID == "" {
+		return "", providerError{Code: "provider-invalid-response", Cause: fmt.Errorf("Stripe customer ID missing")}
+	}
+	return out.ID, nil
+}
+func validateFinalizedPurchase(p FinalizedPurchase) error {
+	card, cardErr := rateCardByID(p.RateCardID)
+	if p.PurchaseID == "" || p.AccountID == "" || p.PlanCode != "nano" || p.RateCardID != "production-nano-v1" || p.RateCardMode != RateCardProduction || p.Currency != "EUR" || p.AmountMinor != 500 || p.BillingEnvironment != BillingEnvironmentTest || p.IdempotencyKey == "" || cardErr != nil || validateRateCard(card) != nil || card.BillingCadence != CadenceAnnual {
+		return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("invalid Nano purchase")}
+	}
+	return nil
+}
 func (p *StripeBillingProvider) Submit(ctx context.Context, f FinalizedBillingPeriod) (ProviderSubmissionResult, error) {
 	if err := validateProviderCompatibility(f.RateCardMode, p.Environment); err != nil {
 		return ProviderSubmissionResult{}, err

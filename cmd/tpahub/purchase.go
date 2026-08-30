@@ -1,0 +1,199 @@
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/eugen252009/tpahub/internal/store"
+)
+
+type stripeCheckoutEvent struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Data struct {
+		Object struct {
+			ID            string            `json:"id"`
+			PaymentStatus string            `json:"payment_status"`
+			AmountTotal   int64             `json:"amount_total"`
+			Currency      string            `json:"currency"`
+			Metadata      map[string]string `json:"metadata"`
+		} `json:"object"`
+	} `json:"data"`
+}
+
+func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.cfg.BillingPurchasesEnabled || s.cfg.BillingProvider != "stripe" || s.cfg.BillingEnvironment != string(BillingEnvironmentTest) {
+		bad(w, http.StatusNotFound, "purchase flow unavailable")
+		return
+	}
+	if r.Body != nil {
+		r.Body.Close()
+	}
+	accountID := accountID(r)
+	now := s.currentTime().UTC()
+	period, err := entitlementPeriod(now.Format("2006-01-02"), now)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, "entitlement period unavailable")
+		return
+	}
+	card, err := rateCardByID("production-nano-v1")
+	if err != nil || validateRateCard(card) != nil {
+		bad(w, http.StatusServiceUnavailable, "Nano pricing unavailable")
+		return
+	}
+	purchaseID := newID()
+	created := now.Format(time.RFC3339Nano)
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: accountID, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), Currency: card.Currency, AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	purchase, err = s.db.CreatePendingPurchase(r.Context(), purchase, created)
+	if err != nil {
+		if err.Error() == "purchase-already-active" {
+			bad(w, http.StatusConflict, err.Error())
+		} else {
+			bad(w, http.StatusConflict, "pending purchase already exists")
+		}
+		return
+	}
+	if purchase.ProviderReference != "" {
+		jsonOut(w, map[string]any{"purchase_id": purchase.ID, "status": purchase.Status, "provider": "stripe", "environment": "test", "checkout_reference": purchase.ProviderReference})
+		return
+	}
+	var purchaseProvider PurchaseProvider = s.purchaseProvider
+	if purchaseProvider == nil {
+		provider, pe := NewStripeBillingProvider(s.db, s.cfg.StripeTestSecret, BillingEnvironmentTest)
+		if pe != nil {
+			bad(w, http.StatusServiceUnavailable, "purchase provider unavailable")
+			return
+		}
+		provider.SuccessURL = "https://tpa.lupricht.net/"
+		provider.CancelURL = "https://tpa.lupricht.net/"
+		purchaseProvider = provider
+	}
+	checkout, err := purchaseProvider.CreateCheckout(r.Context(), FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout", FinalizedAt: now})
+	if err != nil {
+		bad(w, http.StatusBadGateway, "checkout creation failed")
+		return
+	}
+	if err = s.db.UpdatePurchaseCheckout(r.Context(), purchase.ID, checkout.ExternalReference, now.Format(time.RFC3339Nano)); err != nil {
+		bad(w, http.StatusInternalServerError, "purchase persistence failed")
+		return
+	}
+	jsonOut(w, map[string]any{"purchase_id": purchase.ID, "status": "pending", "provider": "stripe", "environment": "test", "checkout_url": checkout.CheckoutURL})
+}
+
+func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.cfg.BillingPurchasesEnabled || s.cfg.BillingProvider != "stripe" || s.cfg.BillingEnvironment != string(BillingEnvironmentTest) || s.cfg.StripeWebhookSecret == "" {
+		bad(w, http.StatusNotFound, "webhook unavailable")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		bad(w, http.StatusRequestEntityTooLarge, "webhook body too large")
+		return
+	}
+	if err = verifyStripeSignature(r.Header.Get("Stripe-Signature"), body, s.cfg.StripeWebhookSecret, s.currentTime()); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var event stripeCheckoutEvent
+	if json.Unmarshal(body, &event) != nil || event.ID == "" || event.Data.Object.ID == "" {
+		bad(w, http.StatusBadRequest, "invalid provider event")
+		return
+	}
+	obj := event.Data.Object
+	purchaseID := obj.Metadata["tpahub_purchase_id"]
+	if purchaseID == "" {
+		bad(w, http.StatusBadRequest, "purchase reference missing")
+		return
+	}
+	purchase, err := s.db.Purchase(r.Context(), purchaseID)
+	if err != nil || purchase.Provider != "stripe" || purchase.BillingEnvironment != "test" || purchase.ProviderReference != obj.ID {
+		bad(w, http.StatusBadRequest, "provider reference mismatch")
+		return
+	}
+	kind := ""
+	switch event.Type {
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
+		if obj.PaymentStatus != "paid" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if obj.AmountTotal != purchase.AmountMinor || strings.ToUpper(obj.Currency) != strings.ToUpper(purchase.Currency) {
+			bad(w, http.StatusBadRequest, "payment verification failed")
+			return
+		}
+		kind = "success"
+	case "checkout.session.async_payment_failed":
+		kind = "failed"
+	case "checkout.session.expired":
+		kind = "expired"
+	default:
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	activationPeriod, perr := entitlementPeriod(s.currentTime().UTC().Format("2006-01-02"), s.currentTime())
+	if perr != nil {
+		bad(w, http.StatusInternalServerError, "entitlement activation unavailable")
+		return
+	}
+	received := s.currentTime().UTC().Format(time.RFC3339Nano)
+	amount, currency := purchase.AmountMinor, purchase.Currency
+	if kind == "success" {
+		amount, currency = obj.AmountTotal, strings.ToUpper(obj.Currency)
+	}
+	eventRecord := store.BillingProviderEvent{Provider: "stripe", Environment: "test", ProviderEventID: event.ID, EventType: event.Type, ReceivedAt: received}
+	if err = s.db.ApplyBillingProviderEvent(r.Context(), eventRecord, purchase.ID, obj.ID, kind, amount, currency, received, activationPeriod.Start.Format(time.RFC3339Nano), activationPeriod.End.Format(time.RFC3339Nano)); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func verifyStripeSignature(header string, body []byte, secret string, now time.Time) error {
+	var timestamp string
+	var signatures []string
+	for _, part := range strings.Split(header, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "t":
+			timestamp = kv[1]
+		case "v1":
+			signatures = append(signatures, kv[1])
+		}
+	}
+	unix, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || timestamp == "" {
+		return fmt.Errorf("invalid webhook signature")
+	}
+	if delta := now.Unix() - unix; delta > 300 || delta < -300 {
+		return fmt.Errorf("expired webhook signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "."))
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	for _, sig := range signatures {
+		if hmac.Equal([]byte(expected), []byte(sig)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid webhook signature")
+}

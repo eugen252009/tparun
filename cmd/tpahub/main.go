@@ -29,12 +29,13 @@ var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
 func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
 
 type server struct {
-	cfg       config.Config
-	db        *store.Store
-	runner    tpa.Runner
-	ctx       context.Context
-	startedAt time.Time
-	now       func() time.Time
+	cfg              config.Config
+	db               *store.Store
+	runner           tpa.Runner
+	ctx              context.Context
+	startedAt        time.Time
+	now              func() time.Time
+	purchaseProvider PurchaseProvider
 }
 
 func main() {
@@ -92,6 +93,8 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
 	m.HandleFunc("/v1/logout", s.logout)
+	m.HandleFunc("/v1/billing/purchases/nano", s.authHandler(s.createNanoPurchase))
+	m.HandleFunc("/v1/billing/providers/stripe/webhook", s.stripeWebhook)
 	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))
 	m.HandleFunc("/v1/repositories/", s.repositoryRoute)
 	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))

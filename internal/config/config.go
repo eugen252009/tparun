@@ -7,34 +7,38 @@ import (
 )
 
 type Config struct {
-	Listen              string
-	DataDir             string
-	TPABin              string
-	GPGHome             string
-	GPGFingerprint      string
-	PublishTimeout      time.Duration
-	MaxUpload           int64
-	RegistrationEnabled bool
-	BillingProvider     string
-	BillingEnvironment  string
-	BillingRateCard     string
-	StripeTestSecret    string
+	Listen                  string
+	DataDir                 string
+	TPABin                  string
+	GPGHome                 string
+	GPGFingerprint          string
+	PublishTimeout          time.Duration
+	MaxUpload               int64
+	RegistrationEnabled     bool
+	BillingProvider         string
+	BillingEnvironment      string
+	BillingRateCard         string
+	StripeTestSecret        string
+	StripeWebhookSecret     string
+	BillingPurchasesEnabled bool
 }
 
 func Load() Config {
 	return Config{
-		Listen:              env("TPAHUB_LISTEN", "127.0.0.1:8080"),
-		DataDir:             env("TPAHUB_DATA_DIR", "./data"),
-		TPABin:              env("TPA_BIN", "tpa"),
-		GPGHome:             os.Getenv("GNUPGHOME"),
-		GPGFingerprint:      os.Getenv("TPAHUB_GPG_FINGERPRINT"),
-		PublishTimeout:      duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
-		MaxUpload:           integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
-		RegistrationEnabled: os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
-		BillingProvider:     env("TPAHUB_BILLING_PROVIDER", "mock"),
-		BillingEnvironment:  env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
-		BillingRateCard:     env("TPAHUB_BILLING_RATE_CARD", "mock-rate-card-v1"),
-		StripeTestSecret:    os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
+		Listen:                  env("TPAHUB_LISTEN", "127.0.0.1:8080"),
+		DataDir:                 env("TPAHUB_DATA_DIR", "./data"),
+		TPABin:                  env("TPA_BIN", "tpa"),
+		GPGHome:                 os.Getenv("GNUPGHOME"),
+		GPGFingerprint:          os.Getenv("TPAHUB_GPG_FINGERPRINT"),
+		PublishTimeout:          duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
+		MaxUpload:               integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
+		RegistrationEnabled:     os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
+		BillingProvider:         env("TPAHUB_BILLING_PROVIDER", "mock"),
+		BillingEnvironment:      env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
+		BillingRateCard:         env("TPAHUB_BILLING_RATE_CARD", "mock-rate-card-v1"),
+		StripeTestSecret:        os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
+		StripeWebhookSecret:     os.Getenv("TPAHUB_STRIPE_WEBHOOK_SECRET"),
+		BillingPurchasesEnabled: os.Getenv("TPAHUB_BILLING_PURCHASES_ENABLED") == "true",
 	}
 }
 func env(k, fallback string) string {

@@ -1,0 +1,110 @@
+package main
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+type checkoutTransport struct{ requests int }
+
+func (t *checkoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	t.requests++
+	body := `{"id":"cs_test_1","url":"https://checkout.test/cs_test_1"}`
+	if strings.HasSuffix(r.URL.Path, "/customers") {
+		body = `{"id":"cus_test_1"}`
+	}
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+}
+func signedStripeEvent(body, secret string, at time.Time) string {
+	ts := strconv.FormatInt(at.Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "." + body))
+	return "t=" + ts + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
+	s, h := testServer(t)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	s.cfg.BillingPurchasesEnabled = true
+	s.cfg.BillingProvider = "stripe"
+	s.cfg.BillingEnvironment = "test"
+	s.cfg.BillingRateCard = "production-nano-v1"
+	s.cfg.StripeTestSecret = "sk_test_example"
+	s.cfg.StripeWebhookSecret = "whsec_example"
+	transport := &checkoutTransport{}
+	provider, _ := NewStripeBillingProvider(s.db, "sk_test_example", BillingEnvironmentTest)
+	provider.Client = &http.Client{Transport: transport}
+	provider.BaseURL = "https://stripe.test"
+	s.purchaseProvider = provider
+	req, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/purchases/nano", strings.NewReader(""))
+	req.Header.Set("Authorization", "Bearer tph_s_test")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "checkout.test") {
+		t.Fatalf("checkout status=%d body=%s", resp.StatusCode, body)
+	}
+	var created struct {
+		PurchaseID string `json:"purchase_id"`
+	}
+	if json.Unmarshal(body, &created) != nil || created.PurchaseID == "" {
+		t.Fatalf("purchase response=%s", body)
+	}
+	purchase, _ := s.db.Purchase(context.Background(), created.PurchaseID)
+	if purchase.Status != "pending" {
+		t.Fatalf("status=%s", purchase.Status)
+	}
+	event := fmt.Sprintf(`{"id":"evt_test_1","type":"checkout.session.completed","data":{"object":{"id":"cs_test_1","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, created.PurchaseID)
+	web, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
+	web.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", now))
+	wr, err := http.DefaultClient.Do(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb, _ := io.ReadAll(wr.Body)
+	wr.Body.Close()
+	if wr.StatusCode != http.StatusOK {
+		t.Fatalf("webhook status=%d body=%s", wr.StatusCode, wb)
+	}
+	purchase, _ = s.db.Purchase(context.Background(), created.PurchaseID)
+	if purchase.Status != "paid" {
+		t.Fatalf("paid status=%s", purchase.Status)
+	}
+	ent, _ := s.db.Entitlement(context.Background(), "a")
+	if ent.Source != "purchase" || ent.PurchaseID != created.PurchaseID {
+		t.Fatalf("entitlement=%+v", ent)
+	}
+	web2, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
+	web2.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", now))
+	wr, err = http.DefaultClient.Do(web2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr.Body.Close()
+	if wr.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate status=%d", wr.StatusCode)
+	}
+}
+func TestStripeWebhookSignatureVerifier(t *testing.T) {
+	at := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	body := `{"id":"evt_1"}`
+	if err := verifyStripeSignature(signedStripeEvent(body, "whsec_example", at), []byte(body), "whsec_example", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyStripeSignature("", []byte(body), "whsec_example", at); err == nil {
+		t.Fatal("missing signature accepted")
+	}
+}
