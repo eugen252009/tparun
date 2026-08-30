@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
@@ -18,6 +20,10 @@ import (
 //go:embed templates/*.html static/site.css
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
+var webRate = struct {
+	sync.Mutex
+	hits map[string][]time.Time
+}{hits: make(map[string][]time.Time)}
 
 type pageData struct {
 	Title, Email string
@@ -132,10 +138,15 @@ func (s *server) registerPage(w http.ResponseWriter, r *http.Request) {
 		s.webError(w, r, "Registration is currently unavailable.")
 		return
 	}
+	if !webRateAllowed(r.RemoteAddr) {
+		http.Error(w, "too many registration attempts", http.StatusTooManyRequests)
+		return
+	}
 	if !sameOrigin(r) {
 		bad(w, 403, "invalid request origin")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if e := r.ParseForm(); e != nil {
 		s.webError(w, r, "Invalid form.")
 		return
@@ -209,6 +220,28 @@ func (s *server) webError(w http.ResponseWriter, r *http.Request, msg string) {
 }
 func setBrowserCookie(w http.ResponseWriter, t string) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: t, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
+}
+func webRateAllowed(remote string) bool {
+	host, _, e := net.SplitHostPort(remote)
+	if e != nil {
+		host = remote
+	}
+	now := time.Now()
+	webRate.Lock()
+	defer webRate.Unlock()
+	old := webRate.hits[host]
+	keep := old[:0]
+	for _, t := range old {
+		if now.Sub(t) < time.Minute {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= 10 {
+		webRate.hits[host] = keep
+		return false
+	}
+	webRate.hits[host] = append(keep, now)
+	return true
 }
 func clearBrowserCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: "", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
