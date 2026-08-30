@@ -50,6 +50,9 @@ func main() {
 	}
 }
 func run(cfg config.Config) error {
+	if e := ValidateBillingConfiguration(cfg); e != nil {
+		return e
+	}
 	db, e := store.Open(cfg.DataDir)
 	if e != nil {
 		return e

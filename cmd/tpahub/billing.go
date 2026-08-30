@@ -23,8 +23,16 @@ type BillingUsageSnapshot struct {
 	MonthlyEgressBytes    int64         `json:"monthly_egress_bytes"`
 }
 
+type RateCardMode string
+
+const (
+	RateCardMock       RateCardMode = "mock"
+	RateCardProduction RateCardMode = "production"
+)
+
 type RateCard struct {
 	ID                      string
+	Mode                    RateCardMode
 	Currency                string
 	FixedPlanAmountsMinor   map[string]int64
 	ProBaseAmountMinor      int64
@@ -32,7 +40,7 @@ type RateCard struct {
 	EgressBlockAmountMinor  int64
 }
 
-var mockRateCardV1 = RateCard{ID: "mock-rate-card-v1", Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": 440, "standard": 2200}, ProBaseAmountMinor: 500, StorageBlockAmountMinor: 100, EgressBlockAmountMinor: 200}
+var mockRateCardV1 = RateCard{ID: "mock-rate-card-v1", Mode: RateCardMock, Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": 440, "standard": 2200}, ProBaseAmountMinor: 500, StorageBlockAmountMinor: 100, EgressBlockAmountMinor: 200}
 
 type BillingLineItem struct {
 	Kind            string `json:"kind"`
@@ -57,9 +65,23 @@ type BillingPreview struct {
 	IsVirtual             bool              `json:"is_virtual"`
 }
 
+type FinalizedBillingPeriod struct {
+	BillingPreview
+	RateCardMode   RateCardMode `json:"rate_card_mode"`
+	FinalizedAt    time.Time    `json:"finalized_at"`
+	IdempotencyKey string       `json:"idempotency_key"`
+}
+
+type ProviderSubmissionResult struct {
+	Provider          string             `json:"provider"`
+	Environment       BillingEnvironment `json:"environment"`
+	ExternalReference string             `json:"external_reference"`
+	Status            string             `json:"status"`
+}
+
 type BillingProvider interface {
-	Preview(context.Context, BillingUsageSnapshot) (BillingPreview, error)
-	Finalize(context.Context, BillingUsageSnapshot) (BillingPreview, error)
+	EnvironmentName() BillingEnvironment
+	Submit(context.Context, FinalizedBillingPeriod) (ProviderSubmissionResult, error)
 }
 
 type MockBillingProvider struct {
@@ -85,25 +107,56 @@ func (m MockBillingProvider) Preview(ctx context.Context, snapshot BillingUsageS
 func (m MockBillingProvider) Finalize(ctx context.Context, snapshot BillingUsageSnapshot) (BillingPreview, error) {
 	card := m.card()
 	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
-		var result BillingPreview
-		if json.Unmarshal([]byte(payload), &result) == nil {
-			return result, nil
+		var stable FinalizedBillingPeriod
+		if json.Unmarshal([]byte(payload), &stable) == nil && stable.RateCardID != "" {
+			return stable.BillingPreview, nil
 		}
 	}
 	result, e := rateBillingWithRateCard(snapshot, card)
 	if e != nil {
 		return BillingPreview{}, e
 	}
-	if e = m.record(ctx, snapshot, "period-finalized", result); e != nil {
+	now := time.Now().UTC()
+	if m.Now != nil {
+		now = m.Now().UTC()
+	}
+	finalized := FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now, IdempotencyKey: fmt.Sprintf("tpahub:%s:%s:final", snapshot.AccountID, snapshot.Period)}
+	if e = m.recordFinalized(ctx, snapshot, finalized); e != nil {
 		return BillingPreview{}, e
 	}
 	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
-		var stable BillingPreview
+		var stable FinalizedBillingPeriod
 		if json.Unmarshal([]byte(payload), &stable) == nil {
-			return stable, nil
+			return stable.BillingPreview, nil
 		}
 	}
 	return result, nil
+}
+func (m MockBillingProvider) EnvironmentName() BillingEnvironment { return BillingEnvironmentMock }
+func (m MockBillingProvider) Submit(ctx context.Context, finalized FinalizedBillingPeriod) (ProviderSubmissionResult, error) {
+	if err := validateProviderCompatibility(finalized.RateCardMode, m.EnvironmentName()); err != nil {
+		return ProviderSubmissionResult{}, err
+	}
+	if err := validateFinalized(finalized); err != nil {
+		return ProviderSubmissionResult{}, err
+	}
+	return ProviderSubmissionResult{Provider: "mock", Environment: m.EnvironmentName(), ExternalReference: "mock:" + finalized.IdempotencyKey, Status: "submitted"}, nil
+}
+
+func (m MockBillingProvider) recordFinalized(ctx context.Context, s BillingUsageSnapshot, finalized FinalizedBillingPeriod) error {
+	if m.Store == nil {
+		return fmt.Errorf("mock billing store unavailable")
+	}
+	payload, e := json.Marshal(finalized)
+	if e != nil {
+		return e
+	}
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:period-finalized", s.AccountID, s.Period)))
+	now := time.Now().UTC()
+	if m.Now != nil {
+		now = m.Now().UTC()
+	}
+	return m.Store.RecordMockBillingEvent(ctx, hex.EncodeToString(h[:]), s.AccountID, string(s.Period), "period-finalized", string(payload), now.Format(time.RFC3339Nano))
 }
 func (m MockBillingProvider) record(ctx context.Context, s BillingUsageSnapshot, event string, result BillingPreview) error {
 	if m.Store == nil {
@@ -179,7 +232,7 @@ func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPrev
 	return result, nil
 }
 func validateRateCard(c RateCard) error {
-	if c.ID == "" || c.Currency == "" || c.ProBaseAmountMinor < 0 || c.StorageBlockAmountMinor < 0 || c.EgressBlockAmountMinor < 0 {
+	if c.ID == "" || (c.Mode != RateCardMock && c.Mode != RateCardProduction) || c.Currency == "" || c.ProBaseAmountMinor < 0 || c.StorageBlockAmountMinor < 0 || c.EgressBlockAmountMinor < 0 {
 		return fmt.Errorf("invalid rate card")
 	}
 	for _, amount := range c.FixedPlanAmountsMinor {
@@ -238,6 +291,6 @@ func (s *server) observeAccountStorage(ctx context.Context, repositoryID string,
 	}
 	return s.db.ObserveStorageHighWater(ctx, repo.AccountID, now.UTC().Format("2006-01"), usage.StoredBytes, now.UTC().Format(time.RFC3339Nano))
 }
-func (s *server) billingProvider() BillingProvider {
+func (s *server) billingProvider() MockBillingProvider {
 	return MockBillingProvider{Store: s.db, Now: s.currentTime, RateCard: mockRateCardV1}
 }
