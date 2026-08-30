@@ -95,6 +95,10 @@ data/{tpahub.db,incoming/<job>,work/<job>,artifacts/<repo-id>,repos/<repo-id>}
 
 This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. There is no email verification, password reset, billing, OAuth, or web UI yet. HTTP local development is supported; production deployment should use TLS.
 
+## VServer deployment
+
+The production deployment uses a bare Git receive repository and user systemd services. The deployed source releases live under `/home/eugen/tpahub_releases`, `/home/eugen/tpahub_current` points at the active release, and persistent state remains in `/home/eugen/data/tpahub`. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`.
+
 ## Development and qualification
 
 ```sh
