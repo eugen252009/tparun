@@ -42,8 +42,12 @@ func repoCLI(c cliConfig, a []string) error {
 		if has(a, "--public") {
 			v["visibility"] = "public"
 		}
-		var out any
-		return postAuth(c, "/v1/repositories", v, &out)
+		var out map[string]any
+		e := postAuth(c, "/v1/repositories", v, &out)
+		if e == nil {
+			_ = json.NewEncoder(os.Stdout).Encode(out)
+		}
+		return e
 	case "list":
 		return getPrint(c.Server+"/v1/repositories", c.Token)
 	case "show":
