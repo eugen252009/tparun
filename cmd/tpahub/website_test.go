@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -8,12 +9,21 @@ import (
 
 func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	_, h := testServer(t)
-	for _, path := range []string{"/", "/docs", "/how-to", "/pricing", "/register", "/login"} {
+	for _, path := range []string{"/", "/docs", "/how-to", "/pricing", "/nano", "/register", "/login"} {
 		r, e := http.Get(h.URL + path)
 		if e != nil || r.StatusCode != 200 {
 			t.Fatalf("%s: %v %d", path, e, r.StatusCode)
 		}
+		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
+		if path == "/nano" {
+			text := string(body)
+			for _, want := range []string{"Neovim 0.12.5", "about 2.4 KB", "recipe package, not Neovim itself", "Mema"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("nano page missing %q", want)
+				}
+			}
+		}
 	}
 	r, e := http.Get(h.URL + "/account")
 	if e != nil {
