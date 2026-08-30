@@ -15,9 +15,9 @@ type Config struct {
 	PublishTimeout      time.Duration
 	MaxUpload           int64
 	RegistrationEnabled bool
-	BillingProvider string
-	BillingEnvironment string
-	StripeTestSecret string
+	BillingProvider     string
+	BillingEnvironment  string
+	StripeTestSecret    string
 }
 
 func Load() Config {
@@ -30,9 +30,9 @@ func Load() Config {
 		PublishTimeout:      duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
 		MaxUpload:           integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		RegistrationEnabled: os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
-		BillingProvider: env("TPAHUB_BILLING_PROVIDER", "mock"),
-		BillingEnvironment: env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
-		StripeTestSecret: os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
+		BillingProvider:     env("TPAHUB_BILLING_PROVIDER", "mock"),
+		BillingEnvironment:  env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
+		StripeTestSecret:    os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
 	}
 }
 func env(k, fallback string) string {
