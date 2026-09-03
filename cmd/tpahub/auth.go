@@ -52,7 +52,7 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "password hashing failed")
 		return
 	}
-	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: "active", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if e = s.db.CreateAccount(r.Context(), a); e != nil {
 		bad(w, 409, "account already exists")
 		return
@@ -81,7 +81,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		bad(w, 401, "invalid credentials")
 		return
 	}
-	a, e := s.db.AccountByEmail(r.Context(), strings.ToLower(strings.TrimSpace(in.Email)))
+	a, e := s.db.ActiveAccountByEmail(r.Context(), strings.ToLower(strings.TrimSpace(in.Email)))
 	if e != nil || bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(in.Password)) != nil {
 		time.Sleep(150 * time.Millisecond)
 		bad(w, 401, "invalid credentials")

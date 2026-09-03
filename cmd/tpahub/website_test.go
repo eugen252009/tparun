@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
 )
@@ -92,6 +93,63 @@ func TestPublishedPackageCountTracksCanonicalArtifacts(t *testing.T) {
 	if got, e := s.publishedPackageCount(); e != nil || got != 1 {
 		t.Fatalf("after removal count = %d, %v", got, e)
 	}
+}
+
+func TestAccountEgressStatusMatchesEnforcementThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		used int64
+		want string
+	}{
+		{"below", NanoEgressBytes - 1, "Package delivery is currently unrestricted"},
+		{"at", NanoEgressBytes, "Annual egress allowance reached"},
+		{"over", NanoEgressBytes + 1, "Annual egress allowance exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, h := testServer(t)
+			now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+			s.now = func() time.Time { return now }
+			if err := s.db.SetEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2026-01-01T00:00:00Z", ValidFrom: "2026-01-01T00:00:00Z", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z", Source: "legacy"}); err != nil {
+				t.Fatal(err)
+			}
+			repositoryID := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+			if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "egress-ui", Visibility: "public", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.AddRepositoryEgressDaily(context.Background(), repositoryID, "2026-08-15", tc.used, "2026-08-15T12:00:00Z"); err != nil {
+				t.Fatal(err)
+			}
+			request, _ := http.NewRequest(http.MethodGet, h.URL+"/account", nil)
+			request.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if response.StatusCode != http.StatusOK || !strings.Contains(string(body), tc.want) {
+				t.Fatalf("status=%d body missing %q", response.StatusCode, tc.want)
+			}
+		})
+	}
+
+	t.Run("unavailable", func(t *testing.T) {
+		s, h := testServer(t)
+		if err := s.db.SetEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "invalid", ValidFrom: "invalid", CreatedAt: "now", UpdatedAt: "now", Source: "legacy"}); err != nil {
+			t.Fatal(err)
+		}
+		request, _ := http.NewRequest(http.MethodGet, h.URL+"/account", nil)
+		request.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "Egress usage unavailable") {
+			t.Fatalf("unavailable status=%d", response.StatusCode)
+		}
+	})
 }
 
 func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {

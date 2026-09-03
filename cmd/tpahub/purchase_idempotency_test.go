@@ -23,6 +23,29 @@ func configuredPurchaseTestServer(t *testing.T) *server {
 	s.purchaseProvider = p
 	return s
 }
+func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
+	s := configuredPurchaseTestServer(t)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	ctx := context.Background()
+	active := store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2026-09-15T00:00:00Z", ValidFrom: "2026-09-15T00:00:00Z", ValidUntil: "2027-09-15T00:00:00Z", CreatedAt: "2026-09-15T00:00:00Z", UpdatedAt: "2026-09-15T00:00:00Z", Source: "purchase", PurchaseID: "paid-active"}
+	if err := s.db.SetEntitlement(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.startNanoPurchase(ctx, "a", false); err == nil || err.Error() != "purchase-already-active" {
+		t.Fatalf("active entitlement purchase error=%v", err)
+	}
+	active.ValidFrom = "2025-09-15T00:00:00Z"
+	active.ValidUntil = "2026-09-15T12:00:00Z"
+	if err := s.db.SetEntitlement(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
+	if err != nil || purchase.ID == "" || checkout.CheckoutURL == "" {
+		t.Fatalf("expired entitlement purchase=%+v checkout=%+v err=%v", purchase, checkout, err)
+	}
+}
+
 func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 	s := configuredPurchaseTestServer(t)
 	s.now = func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) }

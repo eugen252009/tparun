@@ -305,7 +305,7 @@ func (s *server) billingSnapshot(ctx context.Context, accountID string, now time
 		return BillingUsageSnapshot{}, e
 	}
 	period := BillingPeriod(now.UTC().Format("2006-01"))
-	resourcePeriod, pe := entitlementPeriod(entitlement.StartedAt, now)
+	resourcePeriod, pe := effectiveEntitlementPeriod(entitlement, now)
 	if pe != nil {
 		return BillingUsageSnapshot{}, pe
 	}

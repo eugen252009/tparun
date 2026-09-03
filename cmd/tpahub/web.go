@@ -39,6 +39,7 @@ type pageData struct {
 	StorageCapacity       string
 	EgressUsed            string
 	EgressCapacity        string
+	EgressStatus          string
 	HasEgressUsage        bool
 	BillingMode           string
 	BillingPeriod         string
@@ -124,7 +125,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(planCatalog["nano"].StorageCapacityBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(planCatalog["nano"].StorageCapacityBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), EgressStatus: egressCapacityMessage(egressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {
@@ -172,7 +173,7 @@ func (s *server) createAccount(r *http.Request, email, password string) (store.A
 	if e != nil {
 		return store.Account{}, e
 	}
-	a := store.Account{ID: newID(), Email: email, PasswordHash: string(h), Status: "active", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	a := store.Account{ID: newID(), Email: email, PasswordHash: string(h), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if e = s.db.CreateAccount(r.Context(), a); e != nil {
 		return store.Account{}, e
 	}
@@ -232,7 +233,7 @@ func (s *server) loginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
-	a, e := s.db.AccountByEmail(r.Context(), strings.ToLower(strings.TrimSpace(r.FormValue("email"))))
+	a, e := s.db.ActiveAccountByEmail(r.Context(), strings.ToLower(strings.TrimSpace(r.FormValue("email"))))
 	if e != nil || bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(r.FormValue("password"))) != nil {
 		s.webError(w, r, "Invalid email or password.")
 		return

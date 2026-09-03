@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,9 +97,14 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 		t.Fatalf("paid status=%s", purchase.Status)
 	}
 	ent, _ := s.db.Entitlement(context.Background(), "a")
-	if ent.Source != "purchase" || ent.PurchaseID != created.PurchaseID {
+	if ent.Source != "purchase" || ent.PurchaseID != created.PurchaseID || ent.ValidFrom != "2026-09-15T00:00:00Z" || ent.ValidUntil != "2027-09-15T00:00:00Z" {
 		t.Fatalf("entitlement=%+v", ent)
 	}
+	active, activeErr := ent.ActiveAt(now)
+	if activeErr != nil || !active {
+		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
+	}
+	entBeforeDuplicate := ent
 	web2, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web2.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", now))
 	wr, err = http.DefaultClient.Do(web2)
@@ -108,6 +114,10 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	wr.Body.Close()
 	if wr.StatusCode != http.StatusOK {
 		t.Fatalf("duplicate status=%d", wr.StatusCode)
+	}
+	entAfterDuplicate, _ := s.db.Entitlement(context.Background(), "a")
+	if !reflect.DeepEqual(entBeforeDuplicate, entAfterDuplicate) {
+		t.Fatalf("duplicate webhook mutated entitlement: before=%+v after=%+v", entBeforeDuplicate, entAfterDuplicate)
 	}
 }
 func TestStripeWebhookSignatureVerifier(t *testing.T) {

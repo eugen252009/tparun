@@ -71,14 +71,19 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	period, err := entitlementPeriod(entitlement.StartedAt, now)
+	period, err := effectiveEntitlementPeriod(entitlement, now)
 	if err != nil {
 		return 0, err
 	}
 	return s.db.AccountEgressWindow(context.Background(), accountID, period.Start, period.End)
 }
+func egressLimited(used int64) bool { return used >= NanoEgressBytes }
+
 func egressCapacityMessage(used int64) string {
-	if used >= NanoEgressBytes {
+	if used == NanoEgressBytes {
+		return "Annual egress allowance reached. New package downloads are currently rate-limited until the next entitlement period."
+	}
+	if used > NanoEgressBytes {
 		return fmt.Sprintf("Annual egress allowance exceeded by %s. New package downloads are currently rate-limited until the next entitlement period.", formatBytes(used-NanoEgressBytes))
 	}
 	return "Package delivery is currently unrestricted by the annual egress allowance."

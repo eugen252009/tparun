@@ -1,13 +1,91 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/eugen252009/tpahub/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func TestAccountStatusEnforcedAcrossAuthenticationPaths(t *testing.T) {
+	s, h := testServer(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("long-enough-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.CreateAccount(context.Background(), store.Account{ID: "status-account", Email: "status@example.invalid", PasswordHash: string(hash), Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.CreateSession(context.Background(), store.Session{ID: "status-session", AccountID: "status-account", TokenPrefix: "tph_s_status"}, store.HashToken("tph_s_status")); err != nil {
+		t.Fatal(err)
+	}
+
+	apiLogin := func() int {
+		response, err := http.Post(h.URL+"/v1/login", "application/json", strings.NewReader(`{"Email":"status@example.invalid","Password":"long-enough-password"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	websiteLogin := func() int {
+		request, _ := http.NewRequest(http.MethodPost, h.URL+"/login", strings.NewReader("email=status%40example.invalid&password=long-enough-password"))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Origin", h.URL)
+		client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	if got := apiLogin(); got != http.StatusOK {
+		t.Fatalf("active API login=%d", got)
+	}
+	if got := websiteLogin(); got != http.StatusSeeOther {
+		t.Fatalf("active website login=%d", got)
+	}
+
+	if err = s.db.SetAccountStatus(context.Background(), "status-account", "suspended"); err != nil {
+		t.Fatal(err)
+	}
+	if got := apiLogin(); got != http.StatusUnauthorized {
+		t.Fatalf("suspended API login=%d", got)
+	}
+	if got := websiteLogin(); got != http.StatusOK {
+		t.Fatalf("suspended website login=%d", got)
+	}
+
+	request, _ := http.NewRequest(http.MethodGet, h.URL+"/v1/repositories", nil)
+	request.Header.Set("Authorization", "Bearer tph_s_status")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("suspended bearer session=%d", response.StatusCode)
+	}
+
+	request, _ = http.NewRequest(http.MethodGet, h.URL+"/account", nil)
+	request.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_status"})
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
+		t.Fatalf("suspended cookie session=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
 
 func TestAuthenticationAndPrivateReader(t *testing.T) {
 	s, h := testServer(t)

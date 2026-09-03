@@ -16,6 +16,9 @@ import (
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
 type Job struct{ ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt string }
 type Account struct{ ID, Email, PasswordHash, Status, CreatedAt string }
+
+const AccountStatusActive = "active"
+
 type Session struct{ ID, AccountID, TokenPrefix string }
 type ReaderCredential struct{ ID, RepositoryID, Name, TokenPrefix, CreatedAt string }
 type Store struct{ db *sql.DB }
@@ -32,18 +35,23 @@ func Open(dir string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db}
-	_, e = db.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT); CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,account_id TEXT, name TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public',created_at TEXT NOT NULL,UNIQUE(account_id,name),FOREIGN KEY(account_id) REFERENCES accounts(id)); CREATE TABLE IF NOT EXISTS publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL,incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT); CREATE TABLE IF NOT EXISTS reader_credentials(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),name TEXT NOT NULL,token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(repository_id,name)); CREATE INDEX IF NOT EXISTS publish_jobs_queue ON publish_jobs(state,created_at); CREATE TABLE IF NOT EXISTS repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repositories(id),period TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,period)); CREATE INDEX IF NOT EXISTS repository_egress_period ON repository_egress_usage(period); CREATE TABLE IF NOT EXISTS account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period)); CREATE TABLE IF NOT EXISTS mock_billing_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(account_id,period,event_type)); CREATE TABLE IF NOT EXISTS billing_provider_accounts(account_id TEXT NOT NULL REFERENCES accounts(id),provider TEXT NOT NULL,environment TEXT NOT NULL,provider_customer_id TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(account_id,provider,environment)); CREATE TABLE IF NOT EXISTS billing_provider_submissions(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,provider TEXT NOT NULL,environment TEXT NOT NULL,finalization_id TEXT NOT NULL,status TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',attempted_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(account_id,period,provider,environment)); CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT PRIMARY KEY REFERENCES accounts(id),plan_code TEXT NOT NULL,started_at TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'legacy',purchase_id TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS billing_purchases(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),plan_code TEXT NOT NULL,rate_card_id TEXT NOT NULL,rate_card_mode TEXT NOT NULL,tax_classification TEXT NOT NULL DEFAULT 'saas-personal',currency TEXT NOT NULL,amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),billing_environment TEXT NOT NULL,provider TEXT NOT NULL,status TEXT NOT NULL,entitlement_period_start TEXT NOT NULL,entitlement_period_end TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',checkout_url TEXT NOT NULL DEFAULT '',checkout_request_version TEXT NOT NULL DEFAULT 'v1',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,paid_at TEXT NOT NULL DEFAULT '',failed_at TEXT NOT NULL DEFAULT '',expired_at TEXT NOT NULL DEFAULT ''); CREATE UNIQUE INDEX IF NOT EXISTS billing_purchases_pending ON billing_purchases(account_id,provider,billing_environment) WHERE status='pending'; CREATE TABLE IF NOT EXISTS billing_provider_events(provider TEXT NOT NULL,environment TEXT NOT NULL,provider_event_id TEXT NOT NULL,event_type TEXT NOT NULL,received_at TEXT NOT NULL,processed_at TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,environment,provider_event_id)); CREATE TABLE IF NOT EXISTS repository_egress_daily(repository_id TEXT NOT NULL REFERENCES repositories(id),usage_date TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,usage_date)); CREATE INDEX IF NOT EXISTS repository_egress_daily_date ON repository_egress_daily(usage_date);`)
+	_, e = db.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT); CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,account_id TEXT, name TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public',created_at TEXT NOT NULL,UNIQUE(account_id,name),FOREIGN KEY(account_id) REFERENCES accounts(id)); CREATE TABLE IF NOT EXISTS publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL,incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT); CREATE TABLE IF NOT EXISTS reader_credentials(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),name TEXT NOT NULL,token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(repository_id,name)); CREATE INDEX IF NOT EXISTS publish_jobs_queue ON publish_jobs(state,created_at); CREATE TABLE IF NOT EXISTS repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repositories(id),period TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,period)); CREATE INDEX IF NOT EXISTS repository_egress_period ON repository_egress_usage(period); CREATE TABLE IF NOT EXISTS account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period)); CREATE TABLE IF NOT EXISTS mock_billing_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(account_id,period,event_type)); CREATE TABLE IF NOT EXISTS billing_provider_accounts(account_id TEXT NOT NULL REFERENCES accounts(id),provider TEXT NOT NULL,environment TEXT NOT NULL,provider_customer_id TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(account_id,provider,environment)); CREATE TABLE IF NOT EXISTS billing_provider_submissions(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,provider TEXT NOT NULL,environment TEXT NOT NULL,finalization_id TEXT NOT NULL,status TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',attempted_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(account_id,period,provider,environment)); CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT PRIMARY KEY REFERENCES accounts(id),plan_code TEXT NOT NULL,started_at TEXT NOT NULL,valid_from TEXT NOT NULL DEFAULT '',valid_until TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'legacy',purchase_id TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS billing_purchases(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),plan_code TEXT NOT NULL,rate_card_id TEXT NOT NULL,rate_card_mode TEXT NOT NULL,tax_classification TEXT NOT NULL DEFAULT 'saas-personal',currency TEXT NOT NULL,amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),billing_environment TEXT NOT NULL,provider TEXT NOT NULL,status TEXT NOT NULL,entitlement_period_start TEXT NOT NULL,entitlement_period_end TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',checkout_url TEXT NOT NULL DEFAULT '',checkout_request_version TEXT NOT NULL DEFAULT 'v1',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,paid_at TEXT NOT NULL DEFAULT '',failed_at TEXT NOT NULL DEFAULT '',expired_at TEXT NOT NULL DEFAULT ''); CREATE UNIQUE INDEX IF NOT EXISTS billing_purchases_pending ON billing_purchases(account_id,provider,billing_environment) WHERE status='pending'; CREATE TABLE IF NOT EXISTS billing_provider_events(provider TEXT NOT NULL,environment TEXT NOT NULL,provider_event_id TEXT NOT NULL,event_type TEXT NOT NULL,received_at TEXT NOT NULL,processed_at TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,environment,provider_event_id)); CREATE TABLE IF NOT EXISTS repository_egress_daily(repository_id TEXT NOT NULL REFERENCES repositories(id),usage_date TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,usage_date)); CREATE INDEX IF NOT EXISTS repository_egress_daily_date ON repository_egress_daily(usage_date);`)
 	if e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", e)
 	}
-	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''"} {
+	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''"} {
 		if _, ae := db.Exec(stmt); ae != nil && !strings.Contains(strings.ToLower(ae.Error()), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("migrate entitlements: %w", ae)
 		}
 	}
-	if _, e = db.Exec(`INSERT OR IGNORE INTO account_entitlements(account_id,plan_code,started_at,created_at,updated_at) SELECT id,'nano',created_at,created_at,created_at FROM accounts`); e != nil {
+	if _, e = db.Exec(`UPDATE account_entitlements SET valid_from=started_at WHERE valid_from='';
+UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_start FROM billing_purchases WHERE id=account_entitlements.purchase_id AND status='paid'),valid_from),valid_until=COALESCE((SELECT entitlement_period_end FROM billing_purchases WHERE id=account_entitlements.purchase_id AND status='paid'),'') WHERE source='purchase';`); e != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate entitlement validity: %w", e)
+	}
+	if _, e = db.Exec(`INSERT OR IGNORE INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at) SELECT id,'nano',created_at,created_at,'',created_at,created_at FROM accounts`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize entitlements: %w", e)
 	}
@@ -150,16 +158,49 @@ func (s *Store) SaveProviderSubmission(c context.Context, x BillingProviderSubmi
 	return e
 }
 
-type AccountEntitlement struct{ AccountID, PlanCode, StartedAt, CreatedAt, UpdatedAt, Source, PurchaseID string }
+type AccountEntitlement struct{ AccountID, PlanCode, StartedAt, ValidFrom, ValidUntil, CreatedAt, UpdatedAt, Source, PurchaseID string }
 
+func parseEntitlementTime(value string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse("2006-01-02", value)
+	}
+	return parsed, err
+}
+func (x AccountEntitlement) ActiveAt(now time.Time) (bool, error) {
+	from, e := parseEntitlementTime(x.ValidFrom)
+	if e != nil {
+		return false, fmt.Errorf("invalid entitlement valid_from: %w", e)
+	}
+	if now.UTC().Before(from.UTC()) {
+		return false, nil
+	}
+	if x.ValidUntil == "" {
+		return x.Source == "legacy", nil
+	}
+	until, e := parseEntitlementTime(x.ValidUntil)
+	if e != nil {
+		return false, fmt.Errorf("invalid entitlement valid_until: %w", e)
+	}
+	return now.UTC().Before(until.UTC()), nil
+}
+func scanEntitlement(row interface{ Scan(...any) error }) (AccountEntitlement, error) {
+	var x AccountEntitlement
+	e := row.Scan(&x.AccountID, &x.PlanCode, &x.StartedAt, &x.ValidFrom, &x.ValidUntil, &x.CreatedAt, &x.UpdatedAt, &x.Source, &x.PurchaseID)
+	return x, e
+}
 func (s *Store) SetEntitlement(c context.Context, x AccountEntitlement) error {
-	_, e := s.db.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, x.AccountID, x.PlanCode, x.StartedAt, x.CreatedAt, x.UpdatedAt, x.Source, x.PurchaseID)
+	if x.ValidFrom == "" {
+		x.ValidFrom = x.StartedAt
+	}
+	if x.Source == "" {
+		x.Source = "legacy"
+	}
+	_, e := s.db.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, x.AccountID, x.PlanCode, x.StartedAt, x.ValidFrom, x.ValidUntil, x.CreatedAt, x.UpdatedAt, x.Source, x.PurchaseID)
 	return e
 }
 func (s *Store) Entitlement(c context.Context, accountID string) (AccountEntitlement, error) {
-	var x AccountEntitlement
-	e := s.db.QueryRowContext(c, `SELECT account_id,plan_code,started_at,created_at,updated_at,source,purchase_id FROM account_entitlements WHERE account_id=?`, accountID).Scan(&x.AccountID, &x.PlanCode, &x.StartedAt, &x.CreatedAt, &x.UpdatedAt, &x.Source, &x.PurchaseID)
-	return x, e
+	return scanEntitlement(s.db.QueryRowContext(c, `SELECT account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id FROM account_entitlements WHERE account_id=?`, accountID))
 }
 
 type BillingPurchase struct {
@@ -193,7 +234,9 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if e == nil {
 		compatible := existing.AccountID == p.AccountID && existing.PlanCode == p.PlanCode && existing.RateCardID == p.RateCardID && existing.RateCardMode == p.RateCardMode && existing.TaxClassification == p.TaxClassification && existing.Currency == p.Currency && existing.AmountMinor == p.AmountMinor && existing.Provider == p.Provider && existing.BillingEnvironment == p.BillingEnvironment && existing.CheckoutRequestVersion == p.CheckoutRequestVersion && (existing.ProviderReference == "" || existing.CheckoutURL != "")
 		if compatible {
-			_ = tx.Commit()
+			if e = tx.Commit(); e != nil {
+				return BillingPurchase{}, e
+			}
 			return existing, nil
 		}
 		if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='failed',failed_at=?,updated_at=? WHERE id=? AND status='pending'`, now, now, existing.ID); e != nil {
@@ -203,10 +246,22 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if e != sql.ErrNoRows && e != nil {
 		return BillingPurchase{}, e
 	}
-	var source, end string
-	e = tx.QueryRowContext(c, `SELECT source,entitlement_period_end FROM account_entitlements WHERE account_id=?`, p.AccountID).Scan(&source, &end)
-	if e == nil && source == "purchase" && end > now {
-		return BillingPurchase{}, fmt.Errorf("purchase-already-active")
+	entitlement, entitlementErr := scanEntitlement(tx.QueryRowContext(c, `SELECT account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id FROM account_entitlements WHERE account_id=?`, p.AccountID))
+	if entitlementErr != nil && entitlementErr != sql.ErrNoRows {
+		return BillingPurchase{}, entitlementErr
+	}
+	if entitlementErr == nil && entitlement.Source == "purchase" {
+		at, parseErr := time.Parse(time.RFC3339Nano, now)
+		if parseErr != nil {
+			return BillingPurchase{}, parseErr
+		}
+		active, activeErr := entitlement.ActiveAt(at)
+		if activeErr != nil {
+			return BillingPurchase{}, activeErr
+		}
+		if active {
+			return BillingPurchase{}, fmt.Errorf("purchase-already-active")
+		}
 	}
 	_, e = tx.ExecContext(c, `INSERT INTO billing_purchases(`+purchaseColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.ID, p.AccountID, p.PlanCode, p.RateCardID, p.RateCardMode, p.TaxClassification, p.Currency, p.AmountMinor, p.BillingEnvironment, p.Provider, p.Status, p.EntitlementPeriodStart, p.EntitlementPeriodEnd, p.ProviderReference, p.CheckoutURL, p.CheckoutRequestVersion, p.CreatedAt, p.UpdatedAt, p.PaidAt, p.FailedAt, p.ExpiredAt)
 	if e != nil {
@@ -260,7 +315,7 @@ func (s *Store) ApplyBillingProviderEvent(c context.Context, event BillingProvid
 		}
 		_, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='paid',paid_at=?,updated_at=?,entitlement_period_start=?,entitlement_period_end=? WHERE id=? AND status='pending'`, paidAt, paidAt, entitlementStart, entitlementEnd, purchaseID)
 		if e == nil {
-			res, ue := tx.ExecContext(c, `UPDATE account_entitlements SET started_at=?,updated_at=?,source='purchase',purchase_id=? WHERE account_id=?`, entitlementStart, paidAt, purchaseID, p.AccountID)
+			res, ue := tx.ExecContext(c, `UPDATE account_entitlements SET started_at=?,valid_from=?,valid_until=?,updated_at=?,source='purchase',purchase_id=? WHERE account_id=?`, entitlementStart, entitlementStart, entitlementEnd, paidAt, purchaseID, p.AccountID)
 			if ue != nil {
 				e = ue
 			} else {
@@ -318,16 +373,22 @@ func (s *Store) RepositoryEgress(c context.Context, repositoryID, period string)
 	return total, e
 }
 func (s *Store) CreateAccount(c context.Context, a Account) error {
-	_, e := s.db.ExecContext(c, "INSERT INTO accounts VALUES(?,?,?,?,?)", a.ID, a.Email, a.PasswordHash, a.Status, a.CreatedAt)
+	tx, e := s.db.BeginTx(c, nil)
 	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if _, e = tx.ExecContext(c, "INSERT INTO accounts VALUES(?,?,?,?,?)", a.ID, a.Email, a.PasswordHash, a.Status, a.CreatedAt); e != nil {
 		return e
 	}
 	anchor := a.CreatedAt
 	if _, err := time.Parse(time.RFC3339Nano, anchor); err != nil {
 		anchor = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_, e = s.db.ExecContext(c, `INSERT OR IGNORE INTO account_entitlements(account_id,plan_code,started_at,created_at,updated_at) VALUES(?,?,?,?,?)`, a.ID, "nano", anchor, a.CreatedAt, a.CreatedAt)
-	return e
+	if _, e = tx.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, a.ID, "nano", anchor, anchor, "", a.CreatedAt, a.CreatedAt); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 func (s *Store) AccountByID(c context.Context, id string) (Account, error) {
 	var a Account
@@ -339,13 +400,22 @@ func (s *Store) AccountByEmail(c context.Context, email string) (Account, error)
 	e := s.db.QueryRowContext(c, "SELECT id,email,password_hash,status,created_at FROM accounts WHERE email=?", email).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt)
 	return a, e
 }
+func (s *Store) ActiveAccountByEmail(c context.Context, email string) (Account, error) {
+	var a Account
+	e := s.db.QueryRowContext(c, "SELECT id,email,password_hash,status,created_at FROM accounts WHERE email=? AND status=?", email, AccountStatusActive).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt)
+	return a, e
+}
+func (s *Store) SetAccountStatus(c context.Context, id, status string) error {
+	_, e := s.db.ExecContext(c, `UPDATE accounts SET status=? WHERE id=?`, status, id)
+	return e
+}
 func (s *Store) CreateSession(c context.Context, x Session, hash string) error {
 	_, e := s.db.ExecContext(c, "INSERT INTO sessions(id,account_id,token_prefix,token_hash,created_at) VALUES(?,?,?,?,?)", x.ID, x.AccountID, x.TokenPrefix, hash, time.Now().UTC().Format(time.RFC3339Nano))
 	return e
 }
 func (s *Store) AccountByToken(c context.Context, hash string) (string, error) {
 	var id string
-	e := s.db.QueryRowContext(c, "SELECT account_id FROM sessions WHERE token_hash=? AND revoked_at IS NULL", hash).Scan(&id)
+	e := s.db.QueryRowContext(c, `SELECT s.account_id FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND a.status=?`, hash, AccountStatusActive).Scan(&id)
 	if e == nil {
 		_, _ = s.db.ExecContext(c, "UPDATE sessions SET last_used_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash)
 	}

@@ -385,7 +385,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	if used, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
 		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
 	} else {
-		limited = used >= NanoEgressBytes
+		limited = egressLimited(used)
 	}
 	counted := &repositoryCountingWriter{ResponseWriter: w}
 	var output http.ResponseWriter = counted
