@@ -80,6 +80,20 @@ func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	}
 }
 
+func TestPublicationJobSuccessRequiresActiveGeneration(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "bound-repo", AccountID: "a", Name: "bound-repo", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetActiveGeneration(ctx, "bound-repo", "other-job", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.finishPublishedJob(store.Job{ID: "job-1", RepositoryID: "bound-repo"}); err == nil {
+		t.Fatal("job with non-active generation was marked successful")
+	}
+}
+
 func TestSuspendedAccountCannotRunQueuedPublication(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()

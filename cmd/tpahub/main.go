@@ -550,7 +550,10 @@ func (s *server) process(j store.Job) {
 	if e := s.observeAccountStorage(context.Background(), j.RepositoryID, s.currentTime()); e != nil {
 		log.Printf("storage high-water update: repository=%s: %v", j.RepositoryID, e)
 	}
-	_ = s.db.Finish(context.Background(), j.ID, "succeeded", "")
+	if e := s.finishPublishedJob(j); e != nil {
+		s.fail(j, e)
+		return
+	}
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
@@ -589,6 +592,20 @@ func (s *server) activeRepositoryRoot(root string) string {
 		return filepath.Join(root, "current")
 	}
 	return root
+}
+
+func (s *server) finishPublishedJob(j store.Job) error {
+	generation, err := s.db.ActiveGeneration(context.Background(), j.RepositoryID)
+	if err != nil {
+		return fmt.Errorf("active publication generation lookup: %w", err)
+	}
+	if generation != j.ID {
+		return fmt.Errorf("publication generation mismatch: job=%s active=%s", j.ID, generation)
+	}
+	if err = s.db.Finish(context.Background(), j.ID, "succeeded", ""); err != nil {
+		return fmt.Errorf("finish publication job: %w", err)
+	}
+	return nil
 }
 
 func (s *server) ensurePublishAccountActive(repositoryID string) error {
