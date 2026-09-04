@@ -28,6 +28,9 @@ func TestEgressAccountingFailureIsObservable(t *testing.T) {
 	if !strings.Contains(output.String(), "repository egress accounting") {
 		t.Fatalf("accounting failure was not logged: %q", output.String())
 	}
+	if _, _, err := s.accountEgress("a", time.Now()); err == nil {
+		t.Fatal("accounting failure did not degrade subsequent authority checks")
+	}
 }
 
 func TestEgressEnforcementUsesGrantLimit(t *testing.T) {

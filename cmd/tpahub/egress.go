@@ -57,8 +57,20 @@ func (s *server) recordRepositoryEgress(repositoryID, usageDate string, bytes in
 	}
 	now := s.currentTime().UTC()
 	if err := s.db.AddRepositoryEgressDaily(context.Background(), repositoryID, usageDate, bytes, now.Format(time.RFC3339Nano)); err != nil {
+		s.egressMu.Lock()
+		if s.egressDegraded == nil {
+			s.egressDegraded = make(map[string]bool)
+		}
+		s.egressDegraded["*"] = true
+		s.egressMu.Unlock()
 		log.Printf("repository egress accounting: repository=%s bytes=%d date=%s: %v", repositoryID, bytes, usageDate, err)
 	}
+}
+
+func (s *server) egressAccountingDegraded(accountID string) bool {
+	s.egressMu.RLock()
+	defer s.egressMu.RUnlock()
+	return s.egressDegraded["*"] || s.egressDegraded[accountID]
 }
 
 func (s *server) currentTime() time.Time {
@@ -69,6 +81,9 @@ func (s *server) currentTime() time.Time {
 }
 
 func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, error) {
+	if s.egressAccountingDegraded(accountID) {
+		return 0, 0, fmt.Errorf("egress accounting authority degraded")
+	}
 	if s.egressLookup != nil {
 		return s.egressLookup(accountID, now)
 	}
