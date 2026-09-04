@@ -81,10 +81,67 @@ func TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant(t *testing.T) {
 			if from2 != fromText || until2 != untilText {
 				t.Fatalf("migration clock extended %s/%s -> %s/%s", fromText, untilText, from2, until2)
 			}
+			if err = s.SetAccountStatus(ctx, "historical", "suspended"); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.SetAccountStatus(ctx, "historical", AccountStatusActive); err != nil {
+				t.Fatal(err)
+			}
+			var afterReactivation string
+			if err = s.db.QueryRow(`SELECT valid_until FROM product_grants WHERE customer_id='historical' AND source='migration' LIMIT 1`).Scan(&afterReactivation); err != nil || afterReactivation != untilText {
+				t.Fatalf("reactivation changed migration expiry %q -> %q: %v", untilText, afterReactivation, err)
+			}
 			if _, err = s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, until); !errors.Is(err, commerce.ErrGrantInactive) {
 				t.Fatalf("expired migration err=%v", err)
 			}
 		})
+	}
+}
+
+func TestPurchaseBeforeBoundedMigrationRemainsIndependent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2033, 4, 5, 6, 7, 8, 0, time.UTC)
+	legacy := tpahubproduct.DefaultGrants(now.Add(-time.Hour))
+	for i := range legacy {
+		legacy[i].Source = "legacy"
+		legacy[i].OfferID = "standard"
+	}
+	if err = s.CreateAccount(ctx, Account{ID: "purchase-first", Email: "purchase-first@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: now.Format(time.RFC3339Nano)}, legacy...); err != nil {
+		t.Fatal(err)
+	}
+	purchaseEnd := now.AddDate(1, 0, 0)
+	purchase := BillingPurchase{ID: "purchase-before-migration", AccountID: "purchase-first", ProductID: "tpa-hub", PlanCode: "paid", RateCardID: "paid", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: purchaseEnd.Format(time.RFC3339Nano), ProviderReference: "purchase-first-reference", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 9_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/purchase-first", purchase.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "purchase-first-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: 1, Currency: "EUR", OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	migrationNow = func() time.Time { return now }
+	defer func() { migrationNow = time.Now }()
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	grant, err := s.GetGrant(ctx, "purchase-first", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, now.Add(time.Hour))
+	if err != nil || grant.Effective == nil || len(grant.Effective.Contributors) != 2 || grant.Limits.StorageBytes != 9_000_000 {
+		t.Fatalf("purchase-before-migration effective grant=%+v err=%v", grant, err)
+	}
+	if _, err = s.GetGrant(ctx, "purchase-first", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, now.AddDate(0, 6, 0)); err != nil {
+		t.Fatalf("purchase did not survive migration expiry: %v", err)
 	}
 }
 
