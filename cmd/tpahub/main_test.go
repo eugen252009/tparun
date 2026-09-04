@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,18 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestPublicationFaultInjectionCheckpoints(t *testing.T) {
+	s, _ := testServer(t)
+	seen := ""
+	s.publicationFault = func(stage string) error {
+		seen = stage
+		return errors.New("injected publication interruption")
+	}
+	if err := s.publicationCheckpoint("before-live-swap"); err == nil || seen != "before-live-swap" {
+		t.Fatalf("fault checkpoint err=%v stage=%q", err, seen)
+	}
+}
+
 func TestDiskHeadroomGuardFailsClosed(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MinDiskFreeBytes = 1 << 60

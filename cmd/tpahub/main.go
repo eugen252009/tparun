@@ -45,6 +45,7 @@ type server struct {
 	purchaseMu       sync.Mutex
 	stagingMu        sync.Mutex
 	egressLookup     func(string, time.Time) (int64, int64, error)
+	publicationFault func(string) error
 }
 
 func main() {
@@ -533,6 +534,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.publicationCheckpoint("candidate-built"); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.checkStorageCapacity(j.RepositoryID, candidate); e != nil {
 		s.fail(j, e)
 		return
@@ -555,12 +560,25 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.publicationCheckpoint("before-live-swap"); e != nil {
+		_ = os.Remove(temporaryPointer)
+		s.fail(j, e)
+		return
+	}
 	if e := atomicReplaceSymlink(temporaryPointer, pointer); e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
 	}
+	if e := s.publicationCheckpoint("after-live-swap"); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.db.SetActiveGeneration(context.Background(), j.RepositoryID, j.ID, s.currentTime().UTC().Format(time.RFC3339Nano)); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := s.publicationCheckpoint("after-durable-record"); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -585,6 +603,13 @@ func (s *server) process(j store.Job) {
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func (s *server) publicationCheckpoint(stage string) error {
+	if s.publicationFault == nil {
+		return nil
+	}
+	return s.publicationFault(stage)
+}
+
 func atomicReplaceSymlink(next, current string) error {
 	if _, err := os.Lstat(current); os.IsNotExist(err) {
 		return os.Rename(next, current)
