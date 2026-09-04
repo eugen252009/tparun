@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -171,6 +173,73 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxUpload = 10
+	s.cfg.MaxStagingBytes = 20
+	s.cfg.MinDiskFreeBytes = 0
+	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "b@invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, account string }{{"repo-a", "a"}, {"repo-b", "b"}} {
+		if err := s.db.CreateRepository(context.Background(), store.Repository{ID: item.id, AccountID: item.account, Name: item.id, CreatedAt: "now"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results := make(chan int, 3)
+	var wg sync.WaitGroup
+	for _, item := range []struct{ account, repo string }{{"a", "repo-a"}, {"a", "repo-a"}, {"b", "repo-b"}} {
+		wg.Add(1)
+		go func(account, repo string) {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/?filename=package.deb", bytes.NewReader([]byte("1234567890")))
+			r.ContentLength = 10
+			r = r.WithContext(context.WithValue(r.Context(), accountKey, account))
+			w := httptest.NewRecorder()
+			s.upload(w, r, repo)
+			results <- w.Code
+		}(item.account, item.repo)
+	}
+	wg.Wait()
+	close(results)
+	accepted, rejected := 0, 0
+	codes := []int{}
+	for code := range results {
+		codes = append(codes, code)
+		if code == http.StatusAccepted {
+			accepted++
+		} else if code == http.StatusRequestEntityTooLarge || code == http.StatusInsufficientStorage {
+			rejected++
+		}
+	}
+	if accepted != 2 || rejected != 1 {
+		t.Fatalf("concurrent upload results accepted=%d rejected=%d codes=%v", accepted, rejected, codes)
+	}
+	if count := countJobs(t, s); count != 2 {
+		t.Fatalf("rejected upload created a job: %d", count)
+	}
+}
+
+func countJobs(t *testing.T, s *server) int {
+	t.Helper()
+	j, err := s.db.Claim(context.Background())
+	if err != nil {
+		return 0
+	}
+	if err = s.db.Finish(context.Background(), j.ID, "failed", "test"); err != nil {
+		t.Fatal(err)
+	}
+	return 1 + countJobsIfAny(s)
+}
+func countJobsIfAny(s *server) int {
+	j, err := s.db.Claim(context.Background())
+	if err != nil {
+		return 0
+	}
+	_ = s.db.Finish(context.Background(), j.ID, "failed", "test")
+	return 1
 }
 
 func TestCapacityReservationDiskBoundariesAndCandidatePolicy(t *testing.T) {
@@ -390,6 +459,50 @@ func TestRenameFailurePreservesPreviousGeneration(t *testing.T) {
 	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
 	if err != nil || filepath.Base(target) != "job-1" {
 		t.Fatalf("previous generation target=%q err=%v", target, err)
+	}
+}
+
+func TestCapacityDenialNeverReclaimsProtectedGenerations(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxStagingBytes = 1
+	s.cfg.MinDiskFreeBytes = 0
+	ctx := context.Background()
+	repositoryID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: repositoryID, AccountID: "a", Name: "protected", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations")
+	for _, generation := range []string{"active", "previous", "protected"} {
+		if err := os.MkdirAll(filepath.Join(root, generation), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, generation, "package.deb"), []byte("kept"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("generations", "active"), filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetActiveGeneration(ctx, repositoryID, "active", "now"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateJob(ctx, store.Job{ID: "protected", RepositoryID: repositoryID, State: "queued", IncomingPath: "incoming/protected", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	s.stagingMu.Lock()
+	err := s.reserveCapacity(ctx, "", repositoryID, "denied", "candidate", 2)
+	s.stagingMu.Unlock()
+	if err == nil {
+		t.Fatal("capacity reservation unexpectedly succeeded")
+	}
+	for _, generation := range []string{"active", "previous", "protected"} {
+		if _, statErr := os.Stat(filepath.Join(root, generation)); statErr != nil {
+			t.Fatalf("protected generation %s disappeared: %v", generation, statErr)
+		}
+	}
+	target, err := os.Readlink(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current"))
+	if err != nil || target != filepath.Join("generations", "active") {
+		t.Fatalf("active pointer changed: %q %v", target, err)
 	}
 }
 
