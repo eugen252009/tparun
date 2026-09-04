@@ -254,6 +254,27 @@ func TestStartupReconcilesPublicationPointerFromDurableState(t *testing.T) {
 	if err != nil || filepath.Base(target) != "job-1" {
 		t.Fatalf("reconciled target=%q err=%v", target, err)
 	}
+	if err = os.Remove(filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.reconcilePublicationState(); err != nil {
+		t.Fatal(err)
+	}
+	if target, err = filepath.EvalSymlinks(filepath.Join(root, "current")); err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("missing pointer target=%q err=%v", target, err)
+	}
+	if err = os.Remove(filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(filepath.Join("generations", "missing"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.reconcilePublicationState(); err != nil {
+		t.Fatal(err)
+	}
+	if target, err = filepath.EvalSymlinks(filepath.Join(root, "current")); err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("broken pointer target=%q err=%v", target, err)
+	}
 }
 
 func TestPublicationJobSuccessRequiresActiveGeneration(t *testing.T) {
