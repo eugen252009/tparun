@@ -305,7 +305,9 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	jobID := newID()
 	reserveBytes := r.ContentLength
-	if reserveBytes <= 0 || strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+	if reserveBytes <= 0 {
+		// Multipart requests with a known Content-Length use that bound too; an
+		// unknown-length body is conservatively bounded by MaxUpload.
 		reserveBytes = s.cfg.MaxUpload
 	}
 	if err := s.reserveCapacity(r.Context(), accountID(r), id, jobID, "incoming", reserveBytes); err != nil {
