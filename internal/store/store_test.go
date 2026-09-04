@@ -153,6 +153,11 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 		if err != nil || purchase.ProductID != string(commerce.ProductTPAHub) {
 			t.Fatalf("restart %d purchase=%+v err=%v", restart, purchase, err)
 		}
+		if restart == 0 {
+			if _, err = s.db.Exec(`DELETE FROM account_entitlements WHERE account_id='paid'`); err != nil {
+				t.Fatal(err)
+			}
+		}
 		grant, err := s.GetGrant(context.Background(), "paid", commerce.ProductTPAHub, "repository.download", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 		if err != nil || grant.Limits.EgressBytes != 12_000_000_000 || grant.Source != "purchase" || grant.PurchaseID != "p1" {
 			t.Fatalf("restart %d grant=%+v err=%v", restart, grant, err)

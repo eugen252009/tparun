@@ -79,6 +79,10 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		db.Close()
 		return nil, e
 	}
+	if e = rebuildCompatibilityProjection(db); e != nil {
+		db.Close()
+		return nil, fmt.Errorf("rebuild compatibility projection: %w", e)
+	}
 	var hasOwner, hasVisibility bool
 	rows, pe := db.Query(`PRAGMA table_info(repositories)`)
 	if pe == nil {
@@ -204,6 +208,32 @@ INSERT INTO schema_migrations(name,applied_at) VALUES('commerce-product-grants-v
 		return fmt.Errorf("migrate legacy TPA grants: %w", err)
 	}
 	if err = migrationCheckpoint("before-commit"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func rebuildCompatibilityProjection(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT p.account_id,p.plan_code,p.entitlement_period_start,p.entitlement_period_end,p.paid_at,p.id FROM billing_purchases p WHERE p.product_id=? AND p.status='paid' AND p.paid_at=(SELECT MAX(p2.paid_at) FROM billing_purchases p2 WHERE p2.account_id=p.account_id AND p2.product_id=? AND p2.status='paid')`, string(commerce.ProductTPAHub), string(commerce.ProductTPAHub))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var accountID, plan, from, until, paidAt, purchaseID string
+		if err = rows.Scan(&accountID, &plan, &from, &until, &paidAt, &purchaseID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source='purchase',purchase_id=excluded.purchase_id`, accountID, plan, from, from, until, paidAt, paidAt, "purchase", purchaseID); err != nil {
+			return err
+		}
+	}
+	if err = rows.Err(); err != nil {
 		return err
 	}
 	return tx.Commit()
