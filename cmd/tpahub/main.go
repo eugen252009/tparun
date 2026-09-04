@@ -857,7 +857,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		}
 		accountStaged += treeSize
 		jobID := filepath.Base(path)
-		for _, workPath := range []string{filepath.Join(s.cfg.DataDir, "work", jobID), filepath.Join(s.cfg.DataDir, "work", jobID+"-published")} {
+		for _, workPath := range []string{filepath.Join(s.cfg.DataDir, "work", jobID)} {
 			treeSize, sizeErr = fileTreeSize(workPath)
 			if sizeErr != nil {
 				return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
