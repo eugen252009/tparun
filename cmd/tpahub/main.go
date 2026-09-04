@@ -720,17 +720,18 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		return fmt.Errorf("staging usage unavailable: %w", err)
 	}
 	var staged int64
-	root := filepath.Join(s.cfg.DataDir, "incoming")
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.IsDir() {
+	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() {
+				return nil
+			}
+			info, statErr := entry.Info()
+			if statErr == nil {
+				staged += info.Size()
+			}
 			return nil
-		}
-		info, statErr := entry.Info()
-		if statErr == nil {
-			staged += info.Size()
-		}
-		return nil
-	})
+		})
+	}
 	if usage.StoredBytes+staged+incoming > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
 	}
@@ -803,6 +804,7 @@ func copyDebs(src, dst string, replace bool) error {
 }
 func (s *server) fail(j store.Job, e error) {
 	msg := e.Error()
+	_ = os.RemoveAll(j.IncomingPath)
 	_ = s.db.Finish(context.Background(), j.ID, "failed", msg)
 	log.Printf("publish job failed id=%s error=%s", j.ID, msg)
 }
