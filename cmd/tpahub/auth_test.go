@@ -139,6 +139,15 @@ func TestAccountStatusEnforcedAcrossAuthenticationPaths(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
 		t.Fatalf("suspended cookie session=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
+	if err = s.db.SetAccountStatus(context.Background(), "status-account", store.AccountStatusActive); err != nil {
+		t.Fatal(err)
+	}
+	if got := apiLogin(); got != http.StatusOK {
+		t.Fatalf("reactivated API login=%d", got)
+	}
+	if got := websiteLogin(); got != http.StatusSeeOther {
+		t.Fatalf("reactivated website login=%d", got)
+	}
 }
 
 func TestAuthenticationAndPrivateReader(t *testing.T) {

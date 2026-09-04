@@ -120,7 +120,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.5.5 | VERIFIED | Reader authorization must verify repository ownership       | Validate ownership/customer relationship         | Test                  | `internal/store/store.go`: reader lookup joins credential to its repository and account; credential management uses ownership-scoped queries; `go test ./...` PASS |
 | P0.5.6 | VERIFIED | Reader authorization must verify required grant             | Check active private/read grant                  | Test                  | `cmd/tpahub/main.go`/`cmd/tpahub/credentials.go`: private delivery and credential management require the active `repository.read.private` grant; existing private-reader integration coverage; `go test ./...` PASS |
 | P0.5.7 | VERIFIED | Queued jobs must not publish after account suspension       | Recheck account immediately before publication   | Worker test           | `cmd/tpahub/main.go`: publication checks account status at job start and immediately before live publication; `cmd/tpahub/main_test.go`: `TestSuspendedAccountCannotRunQueuedPublication`; `go test ./...` PASS |
-| P0.5.8 | TODO   | Re-activating account must follow explicit policy           | Verify reader/worker behavior after reactivation | Test                  |          |
+| P0.5.8 | VERIFIED | Re-activating account must follow explicit policy           | Verify reader/worker behavior after reactivation | Test                  | Policy: reactivation restores normal authentication while existing grants/session policy remains authoritative; `cmd/tpahub/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths` verifies API and browser login after reactivation; `go test ./...` PASS |
 
 ---
 
