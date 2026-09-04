@@ -145,6 +145,53 @@ func TestRenameFailurePreservesPreviousGeneration(t *testing.T) {
 	}
 }
 
+func TestGenerationRetentionPreservesActiveAndRecentHistory(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxGenerations = 2
+	ctx := context.Background()
+	repositoryID := "cccccccccccccccccccccccccccccccc"
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: repositoryID, AccountID: "a", Name: "retention", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations")
+	for i, generation := range []string{"job-1", "job-2", "job-3"} {
+		if err := os.MkdirAll(filepath.Join(root, generation), 0755); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(filepath.Join(root, generation), stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.db.SetActiveGeneration(ctx, repositoryID, "job-3", "now"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.collectOldGenerations(repositoryID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "job-3")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "job-2")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "job-1")); !os.IsNotExist(err) {
+		t.Fatalf("old generation retained: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "job-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateJob(ctx, store.Job{ID: "job-1", RepositoryID: repositoryID, State: "queued", IncomingPath: "incoming", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.collectOldGenerations(repositoryID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "job-1")); err != nil {
+		t.Fatalf("nonterminal generation collected: %v", err)
+	}
+}
+
 func TestNextGenerationRetainsPreviousArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "repo")
