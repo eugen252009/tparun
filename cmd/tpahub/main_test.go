@@ -173,6 +173,63 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 	}
 }
 
+func TestCapacityReservationDiskBoundariesAndCandidatePolicy(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxStagingBytes = 1 << 20
+	s.cfg.MinDiskFreeBytes = 1000
+	free := int64(1100)
+	s.diskFree = func() (int64, error) { return free, nil }
+	s.stagingMu.Lock()
+	if err := s.reserveCapacity(context.Background(), "a", "repo", "job-in", "incoming", 100); err != nil {
+		t.Fatal(err)
+	}
+	s.releaseCapacity("job-in")
+	if err := s.reserveCapacity(context.Background(), "", "repo", "job-candidate", "candidate", 100); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.reservations["job-candidate"].AccountID; got != "" {
+		t.Fatalf("candidate was unexpectedly account-attributed to %q", got)
+	}
+	s.releaseCapacity("job-candidate")
+	free = 1099
+	if err := s.reserveCapacity(context.Background(), "a", "repo", "job-short", "work", 100); err == nil {
+		t.Fatal("one-byte-short disk reservation accepted")
+	}
+	s.stagingMu.Unlock()
+}
+
+func TestCapacityReservationReconstructsFromFilesystemAfterRestart(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MinDiskFreeBytes = 0
+	path := filepath.Join(s.cfg.DataDir, "incoming", "queued-job")
+	if err := os.MkdirAll(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "package.deb"), []byte("payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: "repo-restart", AccountID: "a", Name: "restart", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateJob(context.Background(), store.Job{ID: "queued-job", RepositoryID: "repo-restart", State: "queued", IncomingPath: path, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	s.reservations = map[string]capacityReservation{"queued-job": {AccountID: "a", JobID: "queued-job", Bytes: 999}}
+	s.reservations = nil // process death loses identity; filesystem is authoritative
+	if err := s.checkStagingCapacity(context.Background(), "a", 0, true); err != nil {
+		t.Fatalf("surviving incoming was not reconstructed from filesystem: %v", err)
+	}
+	if err := s.db.Finish(context.Background(), "queued-job", "failed", "test interruption"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileStagingState(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("terminal incoming survived reconciliation: %v", err)
+	}
+}
+
 func TestCapacityReservationsAreAccountScopedAndReleased(t *testing.T) {
 	s, _ := testServer(t)
 	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {

@@ -54,6 +54,7 @@ type server struct {
 	egressMu         sync.RWMutex
 	egressDegraded   map[string]bool
 	publicationFault func(string) error
+	diskFree         func() (int64, error)
 	reservations     map[string]capacityReservation
 }
 
@@ -676,6 +677,9 @@ func (s *server) process(j store.Job) {
 	}
 	pointer := filepath.Join(repositoryRoot, "current")
 	temporaryPointer := pointer + "." + j.ID
+	// The temporary pointer is a fixed-size directory entry (no file data is
+	// duplicated); it is classified as negligible metadata and is removed on
+	// every failure path.
 	if e := os.Symlink(filepath.Join("generations", j.ID), temporaryPointer); e != nil {
 		s.fail(j, e)
 		return
@@ -1011,11 +1015,20 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 	if s.cfg.MinDiskFreeBytes <= 0 {
 		return nil
 	}
-	var stat unix.Statfs_t
-	if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
-		return fmt.Errorf("disk headroom unavailable: %w", err)
+	var free int64
+	if s.diskFree != nil {
+		var err error
+		free, err = s.diskFree()
+		if err != nil {
+			return fmt.Errorf("disk headroom unavailable: %w", err)
+		}
+	} else {
+		var stat unix.Statfs_t
+		if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
+			return fmt.Errorf("disk headroom unavailable: %w", err)
+		}
+		free = int64(stat.Bavail) * int64(stat.Bsize)
 	}
-	free := int64(stat.Bavail) * int64(stat.Bsize)
 	if free-additional < s.cfg.MinDiskFreeBytes {
 		return fmt.Errorf("minimum disk headroom unavailable")
 	}
