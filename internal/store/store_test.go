@@ -233,8 +233,9 @@ func TestPurchasePreservesGrandfatheredGrant(t *testing.T) {
 	if err != nil || legacy.Source != "legacy" || legacy.PurchaseID != "" {
 		t.Fatalf("grandfathered grant changed after purchase: %+v err=%v", legacy, err)
 	}
-	if _, err = s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.download", now); err != nil {
-		t.Fatalf("purchased grant missing: %v", err)
+	purchased, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.download", now)
+	if err != nil || purchased.Source != "purchase" || purchased.PurchaseID != purchase.ID || purchased.ValidUntil == nil || !purchased.ValidUntil.Equal(until) {
+		t.Fatalf("purchased grant validity/provenance=%+v err=%v", purchased, err)
 	}
 }
 
