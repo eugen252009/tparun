@@ -29,6 +29,21 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestSuspendedAccountCannotRunQueuedPublication(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	repositoryID := "suspended-publish"
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: repositoryID, AccountID: "a", Name: "suspended-publish", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetAccountStatus(ctx, "a", "suspended"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ensurePublishAccountActive(repositoryID); err == nil {
+		t.Fatal("suspended account was allowed to publish")
+	}
+}
+
 func TestHTTPRepositoryAndServing(t *testing.T) {
 	s, h := testServer(t)
 	req, _ := http.NewRequest("POST", h.URL+"/v1/repositories", strings.NewReader(`{"name":"demo","visibility":"public"}`))

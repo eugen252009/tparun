@@ -470,6 +470,10 @@ func (s *server) worker() {
 }
 func (s *server) process(j store.Job) {
 	log.Printf("publish job started id=%s", j.ID)
+	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
+		s.fail(j, e)
+		return
+	}
 	work := filepath.Join(s.cfg.DataDir, "work", j.ID)
 	candidate := work + "-published"
 	defer os.RemoveAll(work)
@@ -498,6 +502,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: out}); e != nil {
 		s.fail(j, e)
 		return
@@ -520,6 +528,21 @@ func (s *server) process(j store.Job) {
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func (s *server) ensurePublishAccountActive(repositoryID string) error {
+	repository, err := s.db.Repository(context.Background(), repositoryID)
+	if err != nil {
+		return fmt.Errorf("publication repository lookup: %w", err)
+	}
+	account, err := s.db.AccountByID(context.Background(), repository.AccountID)
+	if err != nil {
+		return fmt.Errorf("publication account lookup: %w", err)
+	}
+	if account.Status != store.AccountStatusActive {
+		return fmt.Errorf("publication account is not active")
+	}
+	return nil
+}
+
 func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	repository, err := s.db.Repository(context.Background(), repositoryID)
 	if err != nil {

@@ -119,7 +119,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.5.4 | TODO   | Reader authorization must verify token is not revoked       | Preserve token revocation validation             | Test                  |          |
 | P0.5.5 | TODO   | Reader authorization must verify repository ownership       | Validate ownership/customer relationship         | Test                  |          |
 | P0.5.6 | TODO   | Reader authorization must verify required grant             | Check active private/read grant                  | Test                  |          |
-| P0.5.7 | TODO   | Queued jobs must not publish after account suspension       | Recheck account immediately before publication   | Worker test           |          |
+| P0.5.7 | VERIFIED | Queued jobs must not publish after account suspension       | Recheck account immediately before publication   | Worker test           | `cmd/tpahub/main.go`: publication checks account status at job start and immediately before live publication; `cmd/tpahub/main_test.go`: `TestSuspendedAccountCannotRunQueuedPublication`; `go test ./...` PASS |
 | P0.5.8 | TODO   | Re-activating account must follow explicit policy           | Verify reader/worker behavior after reactivation | Test                  |          |
 
 ---
