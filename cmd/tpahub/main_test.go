@@ -209,6 +209,9 @@ func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
 func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
 	s, _ := testServer(t)
 	s.ctx = context.Background()
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return clock }
+	expires := clock.Add(time.Hour)
 	repositoryID := "adadadadadadadadadadadadadadadad"
 	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "revoked", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
@@ -224,13 +227,12 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 	if err := s.db.CreateJob(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	grant := commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: time.Now().Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
+	grant := commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: clock.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
 	calls := 0
 	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
 		calls++
-		if calls >= 3 {
-			grant.Enabled = false
-			return commerce.Grant{}, commerce.ErrGrantDisabled
+		if calls >= 3 && !clock.Before(expires) {
+			return commerce.Grant{}, commerce.ErrGrantInactive
 		}
 		return grant, nil
 	})
@@ -239,6 +241,7 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 	done := make(chan struct{})
 	go func() { s.process(job); close(done) }()
 	<-runner.started
+	clock = expires.Add(time.Nanosecond)
 	close(runner.release)
 	<-done
 	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
