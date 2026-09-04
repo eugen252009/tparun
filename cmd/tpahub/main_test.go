@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
@@ -29,6 +31,24 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestUploadStagingRespectsStorageGrant(t *testing.T) {
+	s, _ := testServer(t)
+	now := time.Now().UTC()
+	until := now.AddDate(1, 0, 0)
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Minute), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 3}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, "incoming", "queued"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.cfg.DataDir, "incoming", "queued", "payload.deb"), []byte("123"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checkStagingCapacity(context.Background(), "a", 1); err == nil {
+		t.Fatal("staging overage was accepted")
+	}
+}
+
 func TestPublicationCandidateMustBeComplete(t *testing.T) {
 	dir := t.TempDir()
 	if err := verifyPublicationCandidate(filepath.Join(dir, "missing")); err == nil {

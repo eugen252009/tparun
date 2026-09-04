@@ -43,6 +43,7 @@ type server struct {
 	paymentWebhook   payments.WebhookParser
 	grants           commerce.GrantService
 	purchaseMu       sync.Mutex
+	stagingMu        sync.Mutex
 }
 
 func main() {
@@ -265,6 +266,8 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 	bad(w, 404, "not found")
 }
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
 	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
 		bad(w, http.StatusForbidden, "repository publishing grant unavailable")
 		return
@@ -342,6 +345,11 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	if total == 0 {
 		_ = os.RemoveAll(dir)
 		bad(w, 400, "at least one .deb is required")
+		return
+	}
+	if err := s.checkStagingCapacity(r.Context(), accountID(r), total); err != nil {
+		_ = os.RemoveAll(dir)
+		bad(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -695,6 +703,36 @@ func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	}
 	if account.Status != store.AccountStatusActive {
 		return fmt.Errorf("publication account is not active")
+	}
+	return nil
+}
+
+func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64) error {
+	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		return fmt.Errorf("staging grant unavailable: %w", err)
+	}
+	if grant.Limits.StorageBytes <= 0 {
+		return fmt.Errorf("staging grant has no capacity")
+	}
+	usage, err := s.accountUsage(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("staging usage unavailable: %w", err)
+	}
+	var staged int64
+	root := filepath.Join(s.cfg.DataDir, "incoming")
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr == nil {
+			staged += info.Size()
+		}
+		return nil
+	})
+	if usage.StoredBytes+staged+incoming > grant.Limits.StorageBytes {
+		return fmt.Errorf("staging storage limit exceeded")
 	}
 	return nil
 }

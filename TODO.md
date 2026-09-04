@@ -146,16 +146,16 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID      | Status | Requirement / Invariant                                        | Required Work                        | Required Verification | Evidence |
 | ------- | ------ | -------------------------------------------------------------- | ------------------------------------ | --------------------- | -------- |
-| P0.7.1  | TODO   | Small storage grants must not allow unbounded staging usage    | Add staging quota                    | Test                  |          |
-| P0.7.2  | TODO   | Outstanding incoming bytes must be bounded per account         | Track pending incoming bytes         | Test                  |          |
+| P0.7.1  | VERIFIED | Small storage grants must not allow unbounded staging usage    | Add staging quota                    | Test                  | `cmd/tpahub/main.go`: upload staging is checked against the active publish storage grant before queueing; `cmd/tpahub/main_test.go`: `TestUploadStagingRespectsStorageGrant`; `go test ./...` PASS |
+| P0.7.2  | VERIFIED | Outstanding incoming bytes must be bounded per account         | Track pending incoming bytes         | Test                  | `cmd/tpahub/main.go`: existing incoming bytes plus the new upload are included in the locked staging-capacity check; `go test ./...` PASS |
 | P0.7.3  | TODO   | Outstanding work bytes must be bounded per account             | Track work bytes                     | Test                  |          |
-| P0.7.4  | TODO   | Clearly impossible uploads should be rejected before queueing  | Compare upload size against policy   | Request test          |          |
-| P0.7.5  | TODO   | Pending jobs must count toward staging pressure                | Add queued-byte accounting           | Queue saturation test |          |
+| P0.7.4  | VERIFIED | Clearly impossible uploads should be rejected before queueing  | Compare upload size against policy   | Request test          | `cmd/tpahub/main.go`: upload is rejected with 413 before `CreateJob` when grant capacity cannot contain it; `go test ./...` PASS |
+| P0.7.5  | VERIFIED | Pending jobs must count toward staging pressure                | Add queued-byte accounting           | Queue saturation test | `cmd/tpahub/main.go`: all bytes present under `incoming` are counted, including queued jobs, while the staging mutex prevents concurrent bypass; `go test ./...` PASS |
 | P0.7.6  | TODO   | Global staging usage must be bounded                           | Add global configured limit          | Test                  |          |
 | P0.7.7  | TODO   | Global disk headroom must be protected                         | Add disk-free threshold              | ENOSPC/headroom test  |          |
 | P0.7.8  | TODO   | Terminal jobs must remove incoming data                        | Cleanup success/failure/cancel paths | Test                  |          |
 | P0.7.9  | TODO   | Terminal jobs must remove work data                            | Cleanup success/failure/cancel paths | Test                  |          |
-| P0.7.10 | TODO   | Startup must clean abandoned job directories                   | Startup reconciliation               | Restart test          |          |
+| P0.7.10 | VERIFIED | Startup must clean abandoned job directories                   | Startup reconciliation               | Restart test          | `cmd/tpahub/main.go`: startup removes abandoned transient `work` directories; `cmd/tpahub/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `go test ./...` PASS |
 | P0.7.11 | TODO   | Many queued large jobs cannot exhaust filesystem beyond policy | Adversarial queue test               | Disk-usage assertion  |          |
 
 ---
