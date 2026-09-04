@@ -144,6 +144,26 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect legacy plans: %w", err)
 	}
 	rows.Close()
+	sources, err := tx.Query(`SELECT DISTINCT source FROM account_entitlements`)
+	if err != nil {
+		return fmt.Errorf("inspect entitlement sources: %w", err)
+	}
+	for sources.Next() {
+		var source string
+		if err = sources.Scan(&source); err != nil {
+			sources.Close()
+			return fmt.Errorf("read entitlement source: %w", err)
+		}
+		if source != "legacy" && source != "purchase" {
+			sources.Close()
+			return fmt.Errorf("unknown entitlement source: %s", source)
+		}
+	}
+	if err = sources.Err(); err != nil {
+		sources.Close()
+		return fmt.Errorf("inspect entitlement sources: %w", err)
+	}
+	sources.Close()
 	purchaseRows, err := tx.Query(`SELECT e.account_id,e.purchase_id,COALESCE(p.account_id,''),COALESCE(p.product_id,''),COALESCE(p.status,''),e.valid_from,e.valid_until FROM account_entitlements e LEFT JOIN billing_purchases p ON p.id=e.purchase_id WHERE e.source='purchase'`)
 	if err != nil {
 		return fmt.Errorf("inspect purchase-backed grants: %w", err)
