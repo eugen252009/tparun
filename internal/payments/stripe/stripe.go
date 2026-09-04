@@ -37,7 +37,7 @@ func New(mappings payments.CustomerMappingStore, secret string, environment paym
 	if !strings.HasPrefix(secret, "sk_test_") {
 		return nil, payments.Error{Code: "provider-configuration-invalid", Cause: fmt.Errorf("Stripe test secret is required")}
 	}
-	return &Adapter{Mappings: mappings, SecretKey: secret, Environment: environment, BaseURL: "https://api.stripe.com", Client: http.DefaultClient, Now: time.Now}, nil
+	return &Adapter{Mappings: mappings, SecretKey: secret, Environment: environment, BaseURL: "https://api.stripe.com", Client: &http.Client{Timeout: 30 * time.Second}, Now: time.Now}, nil
 }
 
 func (a *Adapter) CreateCheckout(ctx context.Context, operation payments.Operation) (payments.CheckoutSession, error) {
