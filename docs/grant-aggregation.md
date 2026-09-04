@@ -1,22 +1,27 @@
 # Effective grant aggregation
 
-Runtime authorization derives one effective grant per customer, product, and
-capability from independently persisted active grant instances.
+Runtime authorization uses only enabled grant rows active at the evaluation
+time. Historical `legacy` rows are audit-only after the bounded migration and
+never authorize TPA Hub access. `migration`, `purchase`, and explicit `local`
+grants use the same activity rule.
 
-* A boolean capability is enabled when any applicable active instance enables
-  it.
-* Storage and egress limits use the component-wise maximum across applicable
-  active instances. They are not summed.
-* Operation counts use the maximum. The operation metric comes from the
-  instance that supplies that maximum count.
-* Expired or disabled purchase instances do not contribute.
-* An open-ended grandfathered `nano`, `standard`, or `pro` grant participates
-  without losing its independent `legacy` provenance. A weaker purchase can
-  therefore never reduce a grandfathered limit.
-* Offer identity, cadence, validity, and purchase linkage remain properties of
-  each authoritative instance. The derived effective grant does not replace or
-  erase those rows.
+For one customer/product/capability:
 
-Payment arrival order and SQL row order do not alter these combination rules.
-There is currently no product operation that revokes or disables a paid grant;
-expiry is the supported lifecycle transition.
+* Boolean permission is available when at least one active contributor exists.
+* Storage and egress limits are the component-wise maximum, not a sum.
+* Non-zero operation counts may combine only when their metric IDs are equal.
+  Incompatible metrics fail closed with
+  `ErrIncompatibleGrantMetrics`; unrelated metric namespaces are never compared.
+* Expiry or disabling one contributor removes only that contribution.
+
+A single-row result preserves that row's commercial metadata. A multi-row
+result uses `source=effective`, clears offer, purchase, cadence, validity, and
+creation metadata, and carries an explicit `EffectiveGrant` containing every
+unaggregated authoritative contributor. It therefore cannot masquerade as one
+purchased grant.
+
+`PeriodAt` delegates to the contributor supplying the effective egress limit,
+then the operation limit, then the storage limit. Equal limits use a stable
+source/purchase/offer ordering, so SQL row order cannot change the result. This
+period-basis index is explicit in `EffectiveGrant`; no contributor's commercial
+identity is copied onto the aggregate object.

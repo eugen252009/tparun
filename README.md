@@ -32,6 +32,13 @@ go build -o tpahub ./cmd/tpahub
 TPA_BIN=/tmp/tpa TPAHUB_DATA_DIR=./data ./tpahub serve
 ```
 
+Hosted publication currently requires Linux, the util-linux `unshare`, `mount`,
+and `prlimit` commands, and enabled unprivileged user namespaces. TPA Hub runs
+each TPA publication in a private user/mount namespace with a fixed-size
+`tmpfs`; publication fails closed if that sandbox cannot be created. The data
+directory and its work/candidate paths must remain on the same filesystem so a
+verified candidate can become an immutable generation by rename.
+
 Configuration uses environment variables:
 
 ```text
@@ -42,6 +49,9 @@ GNUPGHOME                     optional GPG home
 TPAHUB_GPG_FINGERPRINT        full signing fingerprint
 TPAHUB_PUBLISH_TIMEOUT        10m
 TPAHUB_MAX_UPLOAD_BYTES       512 MiB
+TPAHUB_MAX_STAGING_BYTES      4 GiB
+TPAHUB_MIN_DISK_FREE_BYTES    100 MiB
+TPAHUB_MAX_GENERATIONS        5
 TPAHUB_REGISTRATION_ENABLED   true (set false to disable)
 ```
 
@@ -117,7 +127,7 @@ data/{tpahub.db,incoming/<job>,work/<job>,artifacts/<repo-id>,repos/<repo-id>}
 
 ## Security and deployment status
 
-This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. There is no email verification, password reset, billing, OAuth, or web UI yet. HTTP local development is supported; production deployment should use TLS.
+This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. Nano checkout and the account web UI are available; there is no email verification, password reset, OAuth, or administrative recovery UI yet. HTTP local development is supported; production deployment should use TLS.
 
 ## VServer deployment
 
