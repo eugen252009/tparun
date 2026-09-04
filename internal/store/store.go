@@ -127,6 +127,28 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect legacy plans: %w", err)
 	}
 	rows.Close()
+	purchaseRows, err := tx.Query(`SELECT g.purchase_id,COALESCE(p.status,''),g.valid_from,g.valid_until FROM product_grants g LEFT JOIN billing_purchases p ON p.id=g.purchase_id WHERE g.source='purchase'`)
+	if err != nil {
+		return fmt.Errorf("inspect purchase-backed grants: %w", err)
+	}
+	for purchaseRows.Next() {
+		var purchaseID, status, validFrom, validUntil string
+		if err = purchaseRows.Scan(&purchaseID, &status, &validFrom, &validUntil); err != nil {
+			purchaseRows.Close()
+			return fmt.Errorf("read purchase-backed grant: %w", err)
+		}
+		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
+		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
+		if purchaseID == "" || status != "paid" || fromErr != nil || untilErr != nil || !until.After(from) {
+			purchaseRows.Close()
+			return fmt.Errorf("invalid purchase-backed grant: purchase=%s status=%s", purchaseID, status)
+		}
+	}
+	if err = purchaseRows.Err(); err != nil {
+		purchaseRows.Close()
+		return fmt.Errorf("inspect purchase-backed grants: %w", err)
+	}
+	purchaseRows.Close()
 	var exists int
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='commerce-product-grants-v1'`).Scan(&exists); err != nil {
 		return err

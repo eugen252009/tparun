@@ -83,6 +83,24 @@ func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
 	}
 }
 
+func TestOrphanedPurchaseGrantFailsClosedDuringMigration(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`INSERT INTO accounts VALUES('orphan-grant','orphan@example.invalid','x','active','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`INSERT INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,source,purchase_id,created_at,updated_at) VALUES('orphan-grant','tpa-hub','repository.publish','offer',1,'2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','annual','purchase','missing-purchase','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if _, err = Open(dir); err == nil {
+		t.Fatal("orphaned purchase grant migrated successfully")
+	}
+}
+
 func TestEntitlementValidityMigrationAndRestart(t *testing.T) {
 	d := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(d, "tpahub.db"))
