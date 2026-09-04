@@ -50,6 +50,8 @@ type server struct {
 	purchaseMu       sync.Mutex
 	stagingMu        sync.Mutex
 	egressLookup     func(string, time.Time) (int64, int64, error)
+	egressMu         sync.RWMutex
+	egressDegraded   map[string]bool
 	publicationFault func(string) error
 }
 
