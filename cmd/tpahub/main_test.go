@@ -16,6 +16,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
+	"golang.org/x/sys/unix"
 )
 
 func testServer(t *testing.T) (*server, *httptest.Server) {
@@ -32,6 +33,48 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestDiskFullPublicationCheckpointPreservesPreviousGeneration(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "generations", "job-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t)
+	s.publicationFault = func(string) error { return unix.ENOSPC }
+	if err := s.publicationCheckpoint("before-live-swap"); err != unix.ENOSPC {
+		t.Fatalf("disk-full checkpoint error=%v", err)
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("previous generation target=%q err=%v", target, err)
+	}
+}
+
+func TestSigningFailurePreservesPreviousGeneration(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "failing-tpa")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "generations", "job-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := (tpa.Runner{Bin: bin}).Publish(context.Background(), tpa.PublishRequest{Input: "input", Output: filepath.Join(root, "generations", "job-2")}); err == nil {
+		t.Fatal("signing failure was accepted")
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("previous generation target=%q err=%v", target, err)
+	}
+}
+
 func TestRenameFailurePreservesPreviousGeneration(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "repo")
