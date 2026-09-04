@@ -392,6 +392,13 @@ func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T
 	if _, err = s.GetGrant(ctx, commerce.CustomerID(purchase.AccountID), commerce.ProductID(purchase.ProductID), "execute", now); err != nil {
 		t.Fatalf("late success did not activate grant: %v", err)
 	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-after-paid", OperationID: purchase.ID, Type: commerce.PaymentFailed, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: purchase.Provider, Environment: purchase.BillingEnvironment, Kind: "failed", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}); err != nil {
+		t.Fatalf("terminal event after paid was rejected: %v", err)
+	}
+	stillPaid, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || stillPaid.Status != "paid" {
+		t.Fatalf("terminal event revoked paid purchase: %+v err=%v", stillPaid, err)
+	}
 
 	expiredPurchase := purchase
 	expiredPurchase.ID = "late-expired-purchase"
