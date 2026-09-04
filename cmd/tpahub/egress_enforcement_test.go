@@ -79,6 +79,30 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected usage authority failure status=%d", response.StatusCode)
 	}
+	privateID := "edededededededededededededededed"
+	if err = s.db.CreateRepository(context.Background(), store.Repository{ID: privateID, AccountID: "a", Name: "private-egress", Visibility: "private", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	privateRoot := filepath.Join(s.cfg.DataDir, "repos", privateID)
+	if err = os.MkdirAll(privateRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(privateRoot, "package.deb"), []byte("private"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.CreateCredential(context.Background(), store.ReaderCredential{ID: "private-reader", RepositoryID: privateID, Name: "reader", TokenPrefix: "tok", CreatedAt: "now"}, store.HashToken("reader-token")); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequest(http.MethodGet, h.URL+"/r/"+privateID+"/package.deb", nil)
+	request.SetBasicAuth("reader", "reader-token")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("private authority failure status=%d", response.StatusCode)
+	}
 }
 
 func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {

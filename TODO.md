@@ -171,7 +171,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.8.5 | VERIFIED | Disabled grant behavior must be explicit                                 | Document deny/throttle policy     | Test                  | Policy: disabled grant is conservatively rate-limited; `cmd/tpahub/egress_enforcement_test.go`: `ErrGrantInactive` coverage; `go test ./...` PASS |
 | P0.8.6 | VERIFIED | Expired grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Expired/inactive grants follow the same conservative limited path through `grantDenied`; `cmd/tpahub/egress_enforcement_test.go`; `go test ./...` PASS |
 | P0.8.7 | VERIFIED | Malformed period must fail conservatively                                | Validate period                   | Test                  | `cmd/tpahub/egress.go`: `PeriodAt` errors are treated as unexpected egress-authority failures and return 503; existing malformed-grant coverage exercises invalid validity data; `go test ./...` PASS |
-| P0.8.8 | TODO   | Private repository behavior on egress-authority failure must be explicit | Decide deny vs throttle           | Test                  |          |
+| P0.8.8 | VERIFIED | Private repository behavior on egress-authority failure must be explicit | Decide deny vs throttle           | Test                  | Policy: private repository delivery returns 503 when egress authority is unavailable; `cmd/tpahub/egress_enforcement_test.go` verifies this with valid private credentials; `go test ./...` PASS |
 
 ---
 
