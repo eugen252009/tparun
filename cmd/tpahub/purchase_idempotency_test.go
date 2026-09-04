@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
@@ -75,7 +76,7 @@ func TestStalePreTaxPurchaseGetsNewCheckoutOperation(t *testing.T) {
 	ctx := context.Background()
 	now := "2026-09-15T00:00:00Z"
 	old := store.BillingPurchase{ID: "old-purchase", AccountID: "a", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: string(TaxSaaSPersonal), Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now, CheckoutRequestVersion: "v1"}
-	if _, e := s.db.CreatePendingPurchase(ctx, old, now); e != nil {
+	if _, e := s.db.CreatePendingPurchase(ctx, old, now, commerce.GrantTemplate{CapabilityID: CapabilityRepositoryPublish}); e != nil {
 		t.Fatal(e)
 	}
 	fresh, _, e := s.startNanoPurchase(ctx, "a", false)

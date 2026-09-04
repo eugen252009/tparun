@@ -197,10 +197,10 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "shared", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.Add(time.Hour).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", commerce.ProductTPAHub), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", commerce.ProductTPAHub), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("test-pending", testProduct), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("test-pending", testProduct), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
 		t.Fatalf("cross-product pending collision: %v", err)
 	}
 }
@@ -223,11 +223,54 @@ func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "paid-products", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", commerce.ProductTPAHub), now.Format(time.RFC3339Nano)); err == nil || err.Error() != "purchase-already-active" {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", commerce.ProductTPAHub), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active product purchase error=%v", err)
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("other", "test-product"), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("other", "test-product"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
 		t.Fatalf("active TPA grant blocked other product: %v", err)
+	}
+}
+
+func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(ctx, Account{ID: "snapshot", Email: "snapshot@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	until := now.AddDate(1, 0, 0)
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "old-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999, EgressBytes: 999, OperationMetric: "old_metric", OperationCount: 99}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "snapshot-purchase", AccountID: "snapshot", ProductID: "test-product", PlanCode: "test-offer-v2", RateCardID: "test-rate-v2", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 725, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_snapshot", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	template := commerce.GrantTemplate{CapabilityID: "test.execute", Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 123, EgressBytes: 456, OperationMetric: "test_operations", OperationCount: 7}}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), template); err != nil {
+		t.Fatal(err)
+	}
+	var snapshotCount int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_snapshots WHERE purchase_id=?`, purchase.ID).Scan(&snapshotCount); err != nil || snapshotCount != 1 {
+		t.Fatalf("snapshot count=%d err=%v", snapshotCount, err)
+	}
+	if _, err = s.db.Exec(`UPDATE purchase_grant_snapshots SET operation_limit=999 WHERE purchase_id=?`, purchase.ID); err == nil {
+		t.Fatal("purchase grant snapshot was mutable")
+	}
+	// A same-product unrelated capability must not be activated by this purchase.
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "unrelated", OfferID: "old", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt_snapshot", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := s.GetGrant(ctx, "snapshot", "test-product", "test.execute", now)
+	if err != nil || grant.OfferID != purchase.PlanCode || grant.Period != template.Period || grant.Limits != template.Limits || grant.PurchaseID != purchase.ID {
+		t.Fatalf("activated grant=%+v err=%v", grant, err)
+	}
+	if _, err = s.GetGrant(ctx, "snapshot", "test-product", "unrelated", now); err != nil {
+		t.Fatalf("unrelated grant changed: %v", err)
 	}
 }
 
@@ -280,7 +323,7 @@ func TestCreatePendingPurchasePropagatesEntitlementQueryError(t *testing.T) {
 	}
 	now := "2026-09-15T00:00:00Z"
 	purchase := BillingPurchase{ID: "guard-purchase", AccountID: "guard", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now}
-	if _, err = s.CreatePendingPurchase(ctx, purchase, now); err == nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now, commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil {
 		t.Fatal("grant query error was discarded")
 	}
 	if _, lookupErr := s.Purchase(ctx, purchase.ID); lookupErr != sql.ErrNoRows {
