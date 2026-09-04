@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,58 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
 	if err != nil || purchase.ID == "" || checkout.URL == "" {
 		t.Fatalf("expired entitlement purchase=%+v checkout=%+v err=%v", purchase, checkout, err)
+	}
+}
+
+type synchronizedCheckoutTransport struct {
+	mu    sync.Mutex
+	inner checkoutTransport
+}
+
+func (t *synchronizedCheckoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.inner.RoundTrip(r)
+}
+
+func TestConcurrentChangedIntentLeavesDeterministicPurchaseStates(t *testing.T) {
+	s := configuredPurchaseTestServer(t)
+	s.now = func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) }
+	transport := &synchronizedCheckoutTransport{}
+	provider, err := NewStripeBillingProvider(s.db, "sk_test_example", BillingEnvironmentTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.BaseURL = "https://stripe.test"
+	provider.Client = &http.Client{Transport: transport}
+	s.purchaseProvider = provider
+	ctx := context.Background()
+	type result struct {
+		purchase store.BillingPurchase
+		err      error
+	}
+	results := make(chan result, 2)
+	for _, businessUse := range []bool{false, true} {
+		go func(businessUse bool) {
+			purchase, _, err := s.startNanoPurchase(ctx, "a", businessUse)
+			results <- result{purchase: purchase, err: err}
+		}(businessUse)
+	}
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil {
+		t.Fatalf("concurrent purchases failed: first=%v second=%v", first.err, second.err)
+	}
+	if first.purchase.ID == second.purchase.ID {
+		t.Fatalf("concurrent intents reused one purchase: %s", first.purchase.ID)
+	}
+	firstSaved, firstErr := s.db.Purchase(ctx, first.purchase.ID)
+	secondSaved, secondErr := s.db.Purchase(ctx, second.purchase.ID)
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("concurrent purchases were not persisted: first=%v second=%v", firstErr, secondErr)
+	}
+	states := []string{firstSaved.Status, secondSaved.Status}
+	if !(states[0] == "pending" && states[1] == "superseded" || states[0] == "superseded" && states[1] == "pending") {
+		t.Fatalf("unexpected concurrent purchase states: %v", states)
 	}
 }
 

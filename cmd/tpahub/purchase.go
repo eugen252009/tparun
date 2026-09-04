@@ -19,6 +19,8 @@ func (s *server) nanoPurchaseAvailable() bool {
 	return s.cfg.BillingPurchasesEnabled && ValidateBillingConfiguration(s.cfg) == nil
 }
 func (s *server) startNanoPurchase(ctx context.Context, account string, businessUse bool) (store.BillingPurchase, CheckoutResult, error) {
+	s.purchaseMu.Lock()
+	defer s.purchaseMu.Unlock()
 	if !s.nanoPurchaseAvailable() {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("purchase flow unavailable")
 	}

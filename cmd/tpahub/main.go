@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -40,6 +41,7 @@ type server struct {
 	purchaseProvider PurchaseProvider
 	paymentWebhook   payments.WebhookParser
 	grants           commerce.GrantService
+	purchaseMu       sync.Mutex
 }
 
 func main() {
