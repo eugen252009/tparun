@@ -194,6 +194,12 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if state, stateErr := s.db.PurchasePaymentState(r.Context(), paymentEvent.OperationID); stateErr == nil && state.ProviderReference == "" {
+		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
+			bad(w, http.StatusBadRequest, recoverErr.Error())
+			return
+		}
+	}
 	// Provider events prove payment state; the store activates the immutable
 	// commercial validity finalized with the checkout.
 	paymentService := commerce.PaymentService{Repository: s.db}

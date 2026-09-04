@@ -16,6 +16,7 @@ type Config struct {
 	MaxUpload               int64
 	MaxStagingBytes         int64
 	MinDiskFreeBytes        int64
+	MinFreeInodes           int64
 	MaxGenerations          int64
 	RegistrationEnabled     bool
 	BillingProvider         string
@@ -37,6 +38,7 @@ func Load() Config {
 		MaxUpload:               integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		MaxStagingBytes:         integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
 		MinDiskFreeBytes:        integer("TPAHUB_MIN_DISK_FREE_BYTES", 100<<20),
+		MinFreeInodes:           integer("TPAHUB_MIN_FREE_INODES", 1024),
 		MaxGenerations:          integer("TPAHUB_MAX_GENERATIONS", 5),
 		RegistrationEnabled:     os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
 		BillingProvider:         env("TPAHUB_BILLING_PROVIDER", "mock"),

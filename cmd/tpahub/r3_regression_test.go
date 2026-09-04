@@ -619,7 +619,9 @@ func TestEgressUncertaintySurvivesRestartUntilExplicitRecovery(t *testing.T) {
 	root := filepath.Join(s.cfg.DataDir, "repos", repo)
 	os.MkdirAll(root, 0755)
 	os.WriteFile(filepath.Join(root, "package.deb"), []byte("payload"), 0644)
-	s.completeEgressDelivery = func(context.Context, string, string, string, int64, string) error {
+	var deliveryID string
+	s.completeEgressDelivery = func(_ context.Context, id, _ string, _ string, _ int64, _ string) error {
+		deliveryID = id
 		return errors.New("injected accounting commit failure")
 	}
 	res, err := http.Get(h.URL + "/r/" + repo + "/package.deb")
@@ -653,7 +655,10 @@ func TestEgressUncertaintySurvivesRestartUntilExplicitRecovery(t *testing.T) {
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("uncertain restart status=%d", res.StatusCode)
 	}
-	if err = db.ClearAccountEgressUncertainty(context.Background(), "a"); err != nil {
+	if deliveryID == "" {
+		t.Fatal("delivery marker was not captured")
+	}
+	if err = db.CompleteEgressDelivery(context.Background(), deliveryID, repo, "2026-09-04", 7, "now"); err != nil {
 		t.Fatal(err)
 	}
 	res, err = http.Get(h2.URL + "/r/" + repo + "/package.deb")

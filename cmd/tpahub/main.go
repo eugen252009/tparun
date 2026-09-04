@@ -67,17 +67,19 @@ type server struct {
 	egressDegraded          map[string]bool
 	publicationFault        func(string) error
 	diskFree                func() (int64, error)
+	freeInodes              func() (int64, error)
 	reservations            map[string]capacityReservation
 	verifyCandidate         func(candidate, work string) error
 	pointerSwap             func(next, current string) error
 	durablePublicationFault func() error
 	beginEgressDelivery     func(context.Context, string, string, string) error
+	reserveEgressDelivery   func(context.Context, string, string, string, string, int64, int64, string) (bool, error)
 	completeEgressDelivery  func(context.Context, string, string, string, int64, string) error
 }
 
 type capacityReservation struct {
 	AccountID, RepositoryID, JobID, Kind string
-	Bytes                                int64
+	Bytes, Inodes                        int64
 }
 
 func main() {
@@ -96,6 +98,14 @@ func run(cfg config.Config) error {
 	if e := ValidateBillingConfiguration(cfg); e != nil {
 		return e
 	}
+	lock, e := lockDataDirectory(cfg.DataDir)
+	if e != nil {
+		return e
+	}
+	defer func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		_ = lock.Close()
+	}()
 	db, e := store.Open(cfg.DataDir)
 	if e != nil {
 		return e
@@ -131,6 +141,22 @@ func run(cfg config.Config) error {
 	}
 	return e
 }
+
+func lockDataDirectory(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, ".tpahub.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open data directory lock: %w", err)
+	}
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("another TPA Hub process already owns data directory %s: %w", dir, err)
+	}
+	return lock, nil
+}
+
 func (s *server) routes() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/install.sh", s.install)
@@ -346,7 +372,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	if err := s.reserveCapacity(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve); err != nil {
+	if err := s.reserveCapacityWithResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, maxUploadFiles+1); err != nil {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
@@ -526,6 +552,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	startedAt := s.currentTime().UTC()
 	period := startedAt.Format("2006-01-02")
 	limited := false
+	egressLimit := int64(0)
 	if uncertain, err := s.db.RepositoryEgressUncertain(r.Context(), repo.ID); err != nil || uncertain {
 		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
 		return
@@ -538,6 +565,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		egressLimit = limit
 		limited = egressLimited(used, limit)
 	}
 	deliveryID := newID()
@@ -549,6 +577,31 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
 		return
 	}
+	periodStart, periodEnd, periodErr := s.egressPeriod(repo.AccountID, startedAt)
+	if periodErr != nil {
+		if !grantDenied(periodErr) {
+			_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, periodErr.Error())
+			bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
+			return
+		}
+		periodStart = time.Date(startedAt.Year(), time.January, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		periodEnd = time.Date(startedAt.Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+	}
+	reserve := s.reserveEgressDelivery
+	if reserve == nil {
+		reserve = s.db.ReserveEgressDelivery
+	}
+	reservationLimited := false
+	if egressLimit > 0 {
+		var reserveErr error
+		reservationLimited, reserveErr = reserve(r.Context(), deliveryID, repo.ID, periodStart, periodEnd, info.Size(), egressLimit, startedAt.Format(time.RFC3339Nano))
+		if reserveErr != nil {
+			_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, reserveErr.Error())
+			bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
+			return
+		}
+	}
+	limited = limited || reservationLimited
 	counted := &repositoryCountingWriter{ResponseWriter: w}
 	var output http.ResponseWriter = counted
 	if limited && strings.HasSuffix(strings.ToLower(path), ".deb") {
@@ -622,6 +675,17 @@ func (s *server) process(j store.Job) {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
 	defer s.releaseCapacity(j.ID)
+	defer func() {
+		if cleanupErr := s.cleanupPublishJob(j); cleanupErr != nil {
+			if stateErr := s.db.SetCleanupResult(context.Background(), j.ID, cleanupErr); stateErr != nil {
+				log.Printf("publish cleanup state: job=%s cleanup=%v state=%v", j.ID, cleanupErr, stateErr)
+			}
+			return
+		}
+		if stateErr := s.db.SetCleanupResult(context.Background(), j.ID, nil); stateErr != nil {
+			log.Printf("publish cleanup state: job=%s: %v", j.ID, stateErr)
+		}
+	}()
 	log.Printf("publish job started id=%s", j.ID)
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
 		s.fail(j, e)
@@ -638,8 +702,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	defer os.RemoveAll(work)
-	defer os.RemoveAll(candidate)
+	defer func() {
+		_ = os.RemoveAll(work)
+		_ = os.RemoveAll(candidate)
+	}()
 	art := filepath.Join(s.cfg.DataDir, "artifacts", j.RepositoryID)
 	baseline := s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID))
 	if _, statErr := os.Stat(baseline); statErr != nil {
@@ -655,6 +721,16 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("incoming allocation accounting: %w", e))
 		return
 	}
+	baselineInodes, e := copiedDebInodes(baseline)
+	if e != nil {
+		s.fail(j, fmt.Errorf("baseline inode accounting: %w", e))
+		return
+	}
+	incomingInodes, e := copiedDebInodes(j.IncomingPath)
+	if e != nil {
+		s.fail(j, fmt.Errorf("incoming inode accounting: %w", e))
+		return
+	}
 	allocationBlock, e := filesystemAllocationBlock(s.cfg.DataDir)
 	if e != nil {
 		s.fail(j, fmt.Errorf("work metadata accounting: %w", e))
@@ -667,7 +743,12 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("work capacity overflow"))
 		return
 	}
-	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", workBound); e != nil {
+	workInodes, overflow := addCapacity(baselineInodes, incomingInodes, 1)
+	if overflow {
+		s.fail(j, fmt.Errorf("work inode accounting overflow"))
+		return
+	}
+	if e = s.reserveCapacityWithResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", workBound, workInodes); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -730,7 +811,7 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
 	}
-	if e = s.reserveCapacity(context.Background(), "", j.RepositoryID, j.ID, "candidate", candidateReservation); e != nil {
+	if e = s.reserveCapacityWithResources(context.Background(), "", j.RepositoryID, j.ID, "candidate", candidateReservation, candidateInodes+1); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -1052,7 +1133,7 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("publication candidate is not a directory")
 	}
-	indexedPayloads := map[string]candidateChecksum{}
+	indexedPayloads := map[string]candidatePackage{}
 	candidatePayloads := map[string]bool{}
 	err = filepath.WalkDir(candidate, func(path string, entry os.DirEntry, err error) error {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -1184,14 +1265,18 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("work package is a symlink: %s", path)
 		}
+		identity, identityErr := debIdentity(ctx, path)
+		if identityErr != nil {
+			return fmt.Errorf("read work package identity %s: %w", entry.Name(), identityErr)
+		}
 		var candidateName string
-		var expected candidateChecksum
-		for name, checksum := range indexedPayloads {
-			if filepath.Base(name) == entry.Name() {
+		var expected candidatePackage
+		for name, candidate := range indexedPayloads {
+			if candidate.identity == identity {
 				if candidateName != "" {
-					return fmt.Errorf("ambiguous candidate package basename: %s", entry.Name())
+					return fmt.Errorf("ambiguous candidate package identity: %s", identity)
 				}
-				candidateName, expected = name, checksum
+				candidateName, expected = name, candidate
 			}
 		}
 		if candidateName == "" {
@@ -1215,6 +1300,11 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 type candidateChecksum struct {
 	sha256 string
 	size   int64
+}
+
+type candidatePackage struct {
+	candidateChecksum
+	identity string
 }
 
 func parseCandidateRelease(data []byte) (map[string]candidateChecksum, map[string]string, error) {
@@ -1284,7 +1374,7 @@ func verifyCandidateSignature(ctx context.Context, inRelease string, release []b
 			continue
 		}
 		fields := strings.Fields(line[position+len(marker):])
-		if len(fields) > 0 && strings.ToUpper(fields[0]) == want {
+		if len(fields) > 0 && (strings.ToUpper(fields[0]) == want || (len(fields) > 9 && strings.ToUpper(fields[len(fields)-1]) == want)) {
 			valid = true
 		}
 	}
@@ -1357,13 +1447,13 @@ func digestReader(ctx context.Context, reader io.Reader, maximum int64) (int64, 
 	}
 }
 
-func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (map[string]candidateChecksum, error) {
+func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (map[string]candidatePackage, error) {
 	f, err := os.Open(packagesPath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	indexed := map[string]candidateChecksum{}
+	indexed := map[string]candidatePackage{}
 	fields := map[string]string{}
 	verifyStanza := func() error {
 		if len(fields) == 0 {
@@ -1394,7 +1484,15 @@ func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (ma
 		if _, duplicate := indexed[name]; duplicate {
 			return fmt.Errorf("duplicate package payload: %s", name)
 		}
-		indexed[name] = candidateChecksum{size: sz, sha256: digest}
+		identity, identityErr := debIdentity(ctx, path)
+		if identityErr != nil {
+			return fmt.Errorf("read candidate package identity: %w", identityErr)
+		}
+		declaredIdentity := strings.Join([]string{fields["Package"], fields["Version"], fields["Architecture"]}, "\x00")
+		if identity != declaredIdentity {
+			return fmt.Errorf("Packages identity does not match package control metadata")
+		}
+		indexed[name] = candidatePackage{candidateChecksum: candidateChecksum{size: sz, sha256: digest}, identity: identity}
 		return nil
 	}
 	scanner := bufio.NewScanner(f)
@@ -1435,7 +1533,34 @@ func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (ma
 	return indexed, nil
 }
 
+func debIdentity(ctx context.Context, path string) (string, error) {
+	cmd := exec.CommandContext(ctx, "dpkg-deb", "--show", "--showformat=${Package}\n${Version}\n${Architecture}\n", path)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("dpkg-deb: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
+		return "", fmt.Errorf("invalid .deb control identity")
+	}
+	return strings.Join(fields, "\x00"), nil
+}
+
 func (s *server) reconcileStagingState() error {
+	pending, err := s.db.PendingCleanupJobs(context.Background())
+	if err != nil {
+		return fmt.Errorf("load pending publication cleanup: %w", err)
+	}
+	for _, job := range pending {
+		if err = s.cleanupPublishJob(store.Job{ID: job.ID, IncomingPath: job.IncomingPath}); err != nil {
+			_ = s.db.SetCleanupResult(context.Background(), job.ID, err)
+			return fmt.Errorf("cleanup publication job %s: %w", job.ID, err)
+		}
+		if err = s.db.SetCleanupResult(context.Background(), job.ID, nil); err != nil {
+			return fmt.Errorf("record publication cleanup %s: %w", job.ID, err)
+		}
+	}
 	paths, err := s.db.TerminalJobIncomingPaths(context.Background())
 	if err != nil {
 		return fmt.Errorf("scan terminal staging state: %w", err)
@@ -1446,6 +1571,33 @@ func (s *server) reconcileStagingState() error {
 		}
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove terminal incoming workspace: %w", err)
+		}
+	}
+	activePaths, err := s.db.ActiveStagingPaths(context.Background())
+	if err != nil {
+		return fmt.Errorf("scan active incoming state: %w", err)
+	}
+	active := make(map[string]struct{}, len(activePaths))
+	for _, path := range activePaths {
+		active[filepath.Clean(path)] = struct{}{}
+	}
+	incoming := filepath.Join(s.cfg.DataDir, "incoming")
+	incomingEntries, err := os.ReadDir(incoming)
+	if os.IsNotExist(err) {
+		incomingEntries = nil
+	} else if err != nil {
+		return fmt.Errorf("scan incoming state: %w", err)
+	}
+	for _, entry := range incomingEntries {
+		path := filepath.Join(incoming, entry.Name())
+		if _, ok := active[filepath.Clean(path)]; ok {
+			continue
+		}
+		if err = s.publicationCheckpoint("cleanup-orphaned-incoming"); err != nil {
+			return fmt.Errorf("cleanup orphaned incoming: %w", err)
+		}
+		if err = os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove orphaned incoming workspace: %w", err)
 		}
 	}
 	work := filepath.Join(s.cfg.DataDir, "work")
@@ -1462,6 +1614,19 @@ func (s *server) reconcileStagingState() error {
 		}
 		if err = os.RemoveAll(filepath.Join(work, entry.Name())); err != nil {
 			return fmt.Errorf("remove abandoned staging workspace: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *server) cleanupPublishJob(j store.Job) error {
+	paths := []string{j.IncomingPath, filepath.Join(s.cfg.DataDir, "work", j.ID), filepath.Join(s.cfg.DataDir, "work", j.ID+"-published")}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1646,18 +1811,28 @@ func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	return nil
 }
 
-// reserveCapacity is called while stagingMu is held. Reservations are process-local;
-// restart reconciliation deliberately treats durable filesystem state as actual bytes.
+// reserveCapacity is kept as a compatibility helper for narrow unit tests.
 func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes int64) error {
+	return s.reserveCapacityWithResources(ctx, accountID, repositoryID, jobID, kind, bytes, 1)
+}
+
+// reserveCapacityWithResources is called while stagingMu is held. Reservations
+// are process-local; restart reconciliation treats durable filesystem state as
+// actual bytes and the statfs result as actual inode usage.
+func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes, inodes int64) error {
 	if bytes < 0 {
 		return fmt.Errorf("negative capacity reservation")
+	}
+	if inodes < 0 {
+		return fmt.Errorf("negative inode reservation")
 	}
 	if s.reservations == nil {
 		s.reservations = make(map[string]capacityReservation)
 	}
-	oldBytes := int64(0)
+	oldBytes, oldInodes := int64(0), int64(0)
 	if old, ok := s.reservations[jobID]; ok {
 		oldBytes = old.Bytes
+		oldInodes = old.Inodes
 	}
 	if accountID != "" {
 		if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
@@ -1665,11 +1840,16 @@ func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, j
 		}
 	}
 	var reserved int64
+	var reservedInodes int64
 	var overflow bool
 	for _, r := range s.reservations {
 		reserved, overflow = addCapacity(reserved, r.Bytes)
 		if overflow {
 			return fmt.Errorf("capacity reservation overflow")
+		}
+		reservedInodes, overflow = addCapacity(reservedInodes, r.Inodes)
+		if overflow {
+			return fmt.Errorf("inode reservation overflow")
 		}
 	}
 	var actual int64
@@ -1695,11 +1875,22 @@ func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, j
 	if err = s.checkDiskHeadroomFor(additional); err != nil {
 		return err
 	}
+	additionalInodes, overflow := addCapacity(reservedInodes-oldInodes, inodes)
+	if overflow {
+		return fmt.Errorf("inode reservation overflow")
+	}
+	if err = s.checkInodeHeadroomFor(additionalInodes); err != nil {
+		return err
+	}
 	newBytes, overflow := addCapacity(oldBytes, bytes)
 	if overflow {
 		return fmt.Errorf("capacity reservation overflow")
 	}
-	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes}
+	newInodes, overflow := addCapacity(oldInodes, inodes)
+	if overflow {
+		return fmt.Errorf("inode reservation overflow")
+	}
+	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes, Inodes: newInodes}
 	return nil
 }
 func (s *server) resizeCapacity(jobID string, bytes int64) error {
@@ -1757,6 +1948,36 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 	}
 	if free < s.cfg.MinDiskFreeBytes || additional > free-s.cfg.MinDiskFreeBytes {
 		return fmt.Errorf("minimum disk headroom unavailable")
+	}
+	return nil
+}
+
+func (s *server) checkInodeHeadroomFor(additional int64) error {
+	if additional < 0 {
+		return fmt.Errorf("invalid inode reservation")
+	}
+	if s.cfg.MinFreeInodes <= 0 {
+		return nil
+	}
+	var free int64
+	if s.freeInodes != nil {
+		var err error
+		free, err = s.freeInodes()
+		if err != nil {
+			return fmt.Errorf("inode headroom unavailable: %w", err)
+		}
+	} else {
+		var stat unix.Statfs_t
+		if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
+			return fmt.Errorf("inode headroom unavailable: %w", err)
+		}
+		if stat.Ffree > math.MaxInt64 {
+			return fmt.Errorf("inode headroom unavailable: inode count overflow")
+		}
+		free = int64(stat.Ffree)
+	}
+	if free < s.cfg.MinFreeInodes || additional > free-s.cfg.MinFreeInodes {
+		return fmt.Errorf("minimum inode headroom unavailable")
 	}
 	return nil
 }
@@ -1992,6 +2213,37 @@ func copiedDebAllocation(root, destinationFilesystem string) (int64, error) {
 	return total, err
 }
 
+func copiedDebInodes(root string) (int64, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var count int64
+	err = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".deb") {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("package input is a symlink: %s", path)
+		}
+		if _, err := entry.Info(); err != nil {
+			return err
+		}
+		if count == math.MaxInt64 {
+			return fmt.Errorf("inode accounting overflow")
+		}
+		count++
+		return nil
+	})
+	return count, err
+}
+
 func addCapacity(values ...int64) (int64, bool) {
 	var total int64
 	for _, value := range values {
@@ -2038,7 +2290,28 @@ func copyDebs(src, dst string, replace bool) error {
 			return e
 		}
 		if replace {
-			_ = os.Remove(out)
+			if _, statErr := os.Stat(out); statErr == nil {
+				equal, compareErr := filesEqual(in, out)
+				if compareErr != nil {
+					a.Close()
+					return compareErr
+				}
+				if equal {
+					a.Close()
+					return nil
+				}
+				digest, digestErr := fileDigest(a, info.Size())
+				if digestErr != nil {
+					a.Close()
+					return digestErr
+				}
+				if _, seekErr := a.Seek(0, io.SeekStart); seekErr != nil {
+					a.Close()
+					return seekErr
+				}
+				stem := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+				out = filepath.Join(dst, stem+"-"+digest[:16]+filepath.Ext(entry.Name()))
+			}
 		}
 		b, e := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e == nil {
@@ -2052,9 +2325,47 @@ func copyDebs(src, dst string, replace bool) error {
 		return nil
 	})
 }
+
+func fileDigest(file *os.File, size int64) (string, error) {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, io.LimitReader(file, size)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func filesEqual(left, right string) (bool, error) {
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		return false, err
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		return false, err
+	}
+	if leftInfo.Size() != rightInfo.Size() {
+		return false, nil
+	}
+	leftFile, err := os.Open(left)
+	if err != nil {
+		return false, err
+	}
+	defer leftFile.Close()
+	rightFile, err := os.Open(right)
+	if err != nil {
+		return false, err
+	}
+	defer rightFile.Close()
+	leftDigest, err := fileDigest(leftFile, leftInfo.Size())
+	if err != nil {
+		return false, err
+	}
+	rightDigest, err := fileDigest(rightFile, rightInfo.Size())
+	return leftDigest == rightDigest, err
+}
+
 func (s *server) fail(j store.Job, e error) {
 	msg := e.Error()
-	_ = os.RemoveAll(j.IncomingPath)
 	_ = s.db.Finish(context.Background(), j.ID, "failed", msg)
 	log.Printf("publish job failed id=%s error=%s", j.ID, msg)
 }

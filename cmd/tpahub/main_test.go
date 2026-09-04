@@ -972,9 +972,7 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 	if err := os.Mkdir(work, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "package.deb"), []byte("deb"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	buildSemanticTestDeb(t, filepath.Join(work, "package.deb"))
 	makeCandidate := func(t *testing.T) string {
 		p := filepath.Join(t.TempDir(), "candidate")
 		writeSemanticCandidate(t, p, work, cfg)
@@ -1020,6 +1018,15 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 		{"bad-package-checksum", func(t *testing.T, p string) {
 			os.WriteFile(filepath.Join(p, "pool", "package.deb"), []byte("changed"), 0644)
 		}},
+		{"package-identity-mismatch", func(t *testing.T, p string) {
+			path := filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages")
+			data, _ := os.ReadFile(path)
+			data = bytes.Replace(data, []byte("Package: test"), []byte("Package: other"), 1)
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			signSemanticCandidate(t, p, cfg)
+		}},
 		{"missing-new-package", func(t *testing.T, p string) {
 			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte(""), 0644)
 		}},
@@ -1032,6 +1039,21 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 				t.Fatal("malformed candidate accepted")
 			}
 		})
+	}
+}
+
+func buildSemanticTestDeb(t *testing.T, path string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "semantic-deb")
+	if err := os.MkdirAll(filepath.Join(root, "DEBIAN"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	control := "Package: test\nVersion: 1\nArchitecture: amd64\nMaintainer: TPA Hub test <test@example.invalid>\nDescription: semantic fixture\n"
+	if err := os.WriteFile(filepath.Join(root, "DEBIAN", "control"), []byte(control), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("dpkg-deb", "--build", root, path).CombinedOutput(); err != nil {
+		t.Fatalf("build semantic test deb: %v: %s", err, output)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 // stripeProvider is composition-root compatibility wiring. Product and commerce
 // code depend only on payment ports; the legacy metadata fallback keeps already
 // created Checkout v2 sessions processable during migration.
-type stripeProvider struct{ *stripepayments.Adapter }
+type stripeProvider struct {
+	*stripepayments.Adapter
+	store *store.Store
+}
 
 func (p *stripeProvider) ParseWebhook(body []byte, signature, secret string, now time.Time) (commerce.PaymentEvent, error) {
 	event, err := p.Adapter.ParseWebhook(body, signature, secret, now)
@@ -21,6 +25,12 @@ func (p *stripeProvider) ParseWebhook(body []byte, signature, secret string, now
 	}
 	if event.OperationID == "" {
 		event.OperationID = event.Metadata["tpahub_purchase_id"]
+	}
+	if event.OperationID == "" && p.store != nil {
+		purchase, lookupErr := p.store.PurchaseByProviderReference(context.Background(), stripepayments.ProviderName, string(p.Environment), event.ProviderReference)
+		if lookupErr == nil {
+			event.OperationID = purchase.ID
+		}
 	}
 	if event.OperationID == "" {
 		return commerce.PaymentEvent{}, fmt.Errorf("purchase reference missing")
@@ -33,7 +43,7 @@ func NewStripeBillingProvider(st *store.Store, secret string, environment Billin
 	if err != nil {
 		return nil, err
 	}
-	return &stripeProvider{Adapter: adapter}, nil
+	return &stripeProvider{Adapter: adapter, store: st}, nil
 }
 
 func verifyStripeSignature(header string, body []byte, secret string, now time.Time) error {

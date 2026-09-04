@@ -88,6 +88,11 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, e
 	if uncertain {
 		return 0, 0, fmt.Errorf("egress accounting authority degraded")
 	}
+	// Durable uncertainty is the source of truth. Once an operator has
+	// reconciled all markers for this account, clear the process-local latch.
+	s.egressMu.Lock()
+	delete(s.egressDegraded, accountID)
+	s.egressMu.Unlock()
 	if s.egressAccountingDegraded(accountID) {
 		return 0, 0, fmt.Errorf("egress accounting authority degraded")
 	}
@@ -107,6 +112,22 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, e
 	}
 	used, err := s.db.AccountEgressWindow(context.Background(), accountID, start, end)
 	return used, grant.Limits.EgressBytes, err
+}
+
+func (s *server) egressPeriod(accountID string, now time.Time) (string, string, error) {
+	if s.egressLookup != nil {
+		start := time.Date(now.UTC().Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+		return start.Format("2006-01-02"), start.AddDate(1, 0, 0).Format("2006-01-02"), nil
+	}
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	if err != nil {
+		return "", "", err
+	}
+	start, end, err := grant.PeriodAt(now)
+	if err != nil {
+		return "", "", err
+	}
+	return start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02"), nil
 }
 func egressLimited(used, limit int64) bool { return limit > 0 && used >= limit }
 

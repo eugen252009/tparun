@@ -10,6 +10,11 @@ disabled, expired, or future TPA Hub grants are ineligible. New hosted accounts
 receive no grant; new self-hosted/local accounts use the separate `local`
 source and are not migration-eligible.
 
+Migration validates legacy plan and offer identities and parses validity
+timestamps as timestamps before evaluating eligibility. Accounts without a
+pre-existing legacy entitlement or TPA Hub legacy grant are not manufactured
+during startup.
+
 The first successful migration stores one `migration` grant set using the
 current product-owned Nano offer. Its `valid_from` is the migration commit
 anchor and `valid_until` is exactly six calendar months later. The marker and

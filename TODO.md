@@ -175,6 +175,19 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 ---
 
+# P0-R4 — Remediation Re-evaluation
+
+The following P0 invariants were reopened after the independent R3 audit. They
+are implemented but remain `DONE`, not `VERIFIED`, until the independent
+re-audit confirms the production diff: purchase ownership and instance
+immutability, migration eligibility and timestamp parsing, package identity and
+history preservation, process/inode capacity and incoming-orphan cleanup,
+marker-specific egress recovery, superseded terminal events, commit-boundary
+expiry, and reactivation behavior. Direct evidence is in
+`internal/store/r4_regression_test.go`, `cmd/tpahub/r4_regression_test.go`, the
+package identity case in `cmd/tpahub/main_test.go`, and the updated egress
+recovery test.
+
 # P1 — Architecture Hardening
 
 ## P1.1 — Remove TPA Identity from Shared Commerce
