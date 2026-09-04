@@ -603,12 +603,13 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	if e := s.ensurePublishAuthorized(j.RepositoryID); e != nil {
+	if e := s.publicationCheckpoint("before-live-swap"); e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
 	}
-	if e := s.publicationCheckpoint("before-live-swap"); e != nil {
+	// This is intentionally the last external/DB work before activation.
+	if e := s.ensurePublishAuthorized(j.RepositoryID); e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return

@@ -85,6 +85,46 @@ func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
 	}
 }
 
+func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
+	s, _ := testServer(t)
+	s.ctx = context.Background()
+	repositoryID := "adadadadadadadadadadadadadadadad"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "revoked", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	incoming := filepath.Join(s.cfg.DataDir, "incoming", "job-revoked")
+	if err := os.MkdirAll(incoming, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, "input.deb"), []byte("input"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job := store.Job{ID: "job-revoked", RepositoryID: repositoryID, State: "running", IncomingPath: incoming, CreatedAt: "now"}
+	if err := s.db.CreateJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	grant := commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: time.Now().Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
+	calls := 0
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		calls++
+		if calls >= 3 {
+			grant.Enabled = false
+			return commerce.Grant{}, commerce.ErrGrantDisabled
+		}
+		return grant, nil
+	})
+	runner := &blockingPublicationRunner{started: make(chan struct{}, 1), release: make(chan struct{})}
+	s.runner = runner
+	done := make(chan struct{})
+	go func() { s.process(job); close(done) }()
+	<-runner.started
+	close(runner.release)
+	<-done
+	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
+		t.Fatalf("revoked grant changed pointer: %v", err)
+	}
+}
+
 func TestDiskFullPublicationCheckpointPreservesPreviousGeneration(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "repo")
