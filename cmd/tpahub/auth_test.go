@@ -178,6 +178,7 @@ func TestAuthenticationAndPrivateReader(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	res, _ = http.DefaultClient.Do(req)
 	var cr struct {
+		ID    string `json:"id"`
 		Token string `json:"token"`
 	}
 	json.NewDecoder(res.Body).Decode(&cr)
@@ -196,6 +197,20 @@ func TestAuthenticationAndPrivateReader(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("reader status %d", res.StatusCode)
 	}
+	deleteRequest, _ := http.NewRequest(http.MethodDelete, h.URL+"/v1/repositories/"+repo.ID+"/reader-credentials/"+cr.ID, nil)
+	deleteRequest.Header.Set("Authorization", "Bearer "+tok)
+	deleted, _ := http.DefaultClient.Do(deleteRequest)
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("credential revoke status %d", deleted.StatusCode)
+	}
+	deleted.Body.Close()
+	req, _ = http.NewRequest("GET", h.URL+"/r/"+repo.ID+"/x", nil)
+	req.SetBasicAuth("reader", cr.Token)
+	res, _ = http.DefaultClient.Do(req)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked reader status %d", res.StatusCode)
+	}
+	res.Body.Close()
 	account, err := s.db.AccountByEmail(context.Background(), "new@example.invalid")
 	if err != nil {
 		t.Fatal(err)
