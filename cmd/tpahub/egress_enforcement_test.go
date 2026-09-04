@@ -9,8 +9,53 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
+	s, h := testServer(t)
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryDownload, OfferID: "custom", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: 1000}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	id := "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: id, AccountID: "a", Name: "grant-limited", Visibility: "public", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(s.cfg.DataDir, "repos", id)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.deb"), make([]byte, 10), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", 1000, "now"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.Get(h.URL + "/r/" + id + "/package.deb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
+		t.Fatal("custom grant egress limit was not enforced")
+	}
+	for _, grantErr := range []error{commerce.ErrGrantNotFound, commerce.ErrGrantInactive} {
+		s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+			return commerce.Grant{}, grantErr
+		})
+		response, err = http.Get(h.URL + "/r/" + id + "/package.deb")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
+			t.Fatalf("grant error %v did not fail closed", grantErr)
+		}
+	}
+}
 
 func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {
 	s, h := testServer(t)

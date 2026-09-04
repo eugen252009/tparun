@@ -41,7 +41,7 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
-	if err != nil || purchase.ID == "" || checkout.CheckoutURL == "" {
+	if err != nil || purchase.ID == "" || checkout.URL == "" {
 		t.Fatalf("expired entitlement purchase=%+v checkout=%+v err=%v", purchase, checkout, err)
 	}
 }

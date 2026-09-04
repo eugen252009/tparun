@@ -1,16 +1,25 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 const (
-	NanoStorageBytes          int64 = 5_000_000
-	NanoEgressBytes           int64 = 12_000_000_000
-	NanoOverageBytesPerSecond int64 = 128_000
+	TPAHubProductID                 = tpahubproduct.ProductID
+	CapabilityRepositoryCreate      = tpahubproduct.CapabilityRepositoryCreate
+	CapabilityRepositoryPublish     = tpahubproduct.CapabilityRepositoryPublish
+	CapabilityRepositoryDownload    = tpahubproduct.CapabilityRepositoryDownload
+	CapabilityRepositoryReadPrivate = tpahubproduct.CapabilityRepositoryReadPrivate
+
+	NanoStorageBytes          int64 = tpahubproduct.NanoStorageBytes
+	NanoEgressBytes           int64 = tpahubproduct.NanoEgressBytes
+	NanoOverageBytesPerSecond int64 = tpahubproduct.NanoOverageBytesPerSecond
 )
 
 type ProductTaxClassification string
@@ -52,6 +61,26 @@ type PlanDefinition struct {
 	TaxClassification    ProductTaxClassification
 	StorageBlockBytes    int64
 	EgressBlockBytes     int64
+}
+
+func tpaNanoOffer() commerce.Offer { return tpahubproduct.NanoOffer() }
+func defaultTPAGrants(createdAt string) []commerce.Grant {
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		created = time.Now().UTC()
+	}
+	return tpahubproduct.DefaultGrants(created)
+}
+
+func grantDenied(err error) bool {
+	return errors.Is(err, commerce.ErrGrantNotFound) || errors.Is(err, commerce.ErrGrantDisabled) || errors.Is(err, commerce.ErrGrantInactive)
+}
+
+func (s *server) grantService() commerce.GrantService {
+	if s.grants != nil {
+		return s.grants
+	}
+	return s.db
 }
 
 func effectiveEntitlementPeriod(entitlement store.AccountEntitlement, now time.Time) (EntitlementPeriod, error) {
@@ -108,5 +137,5 @@ type StorageCapacityError struct {
 }
 
 func (e StorageCapacityError) Error() string {
-	return fmt.Sprintf("storage-capacity-exceeded: Storage capacity exceeded. Current usage: %s (current_bytes=%d); resulting usage: %s (resulting_bytes=%d); Nano capacity: %s (capacity_bytes=%d)", formatBytes(e.CurrentBytes), e.CurrentBytes, formatBytes(e.ResultingBytes), e.ResultingBytes, formatBytes(e.CapacityBytes), e.CapacityBytes)
+	return fmt.Sprintf("storage-capacity-exceeded: Storage capacity exceeded. Current usage: %s (current_bytes=%d); resulting usage: %s (resulting_bytes=%d); capacity: %s (capacity_bytes=%d)", formatBytes(e.CurrentBytes), e.CurrentBytes, formatBytes(e.ResultingBytes), e.ResultingBytes, formatBytes(e.CapacityBytes), e.CapacityBytes)
 }

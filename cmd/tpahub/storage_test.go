@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
@@ -33,6 +35,41 @@ func candidateWithSize(t *testing.T, s *server, name string, size int) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+type grantServiceFunc func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error)
+
+func (f grantServiceFunc) GetGrant(ctx context.Context, customer commerce.CustomerID, product commerce.ProductID, capability commerce.CapabilityID, at time.Time) (commerce.Grant, error) {
+	return f(ctx, customer, product, capability, at)
+}
+
+func TestStorageCapacityUsesGrantLimitAndFailsClosed(t *testing.T) {
+	s, _ := testServer(t)
+	root := storageTestRepository(t, s, "abababababababababababababababab")
+	if err := os.WriteFile(filepath.Join(root, "current.deb"), make([]byte, 99), 0644); err != nil {
+		t.Fatal(err)
+	}
+	candidate := candidateWithSize(t, s, "grant-limit", 101)
+	now := s.currentTime().UTC()
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "custom", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var capacityErr StorageCapacityError
+	if err := s.checkStorageCapacity("abababababababababababababababab", candidate); !errors.As(err, &capacityErr) || capacityErr.CapacityBytes != 100 {
+		t.Fatalf("custom grant limit not enforced: %+v err=%v", capacityErr, err)
+	}
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return commerce.Grant{}, commerce.ErrGrantNotFound
+	})
+	if err := s.checkStorageCapacity("abababababababababababababababab", candidate); !errors.Is(err, commerce.ErrGrantNotFound) {
+		t.Fatalf("missing grant did not fail closed: %v", err)
+	}
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return commerce.Grant{}, commerce.ErrGrantInactive
+	})
+	if err := s.checkStorageCapacity("abababababababababababababababab", candidate); !errors.Is(err, commerce.ErrGrantInactive) {
+		t.Fatalf("expired grant did not fail closed: %v", err)
+	}
 }
 
 func TestStorageCapacityAllowsExactLimitAndRejectsOneByteOver(t *testing.T) {

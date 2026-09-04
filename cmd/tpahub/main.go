@@ -18,7 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/config"
+	"github.com/eugen252009/tpahub/internal/payments"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
 	appversion "github.com/eugen252009/tpahub/internal/version"
@@ -36,6 +38,8 @@ type server struct {
 	startedAt        time.Time
 	now              func() time.Time
 	purchaseProvider PurchaseProvider
+	paymentWebhook   payments.WebhookParser
+	grants           commerce.GrantService
 }
 
 func main() {
@@ -60,6 +64,13 @@ func run(cfg config.Config) error {
 	}
 	defer db.Close()
 	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC()}
+	if cfg.BillingPurchasesEnabled {
+		paymentProvider, providerErr := NewStripeBillingProvider(db, cfg.StripeTestSecret, BillingEnvironment(cfg.BillingEnvironment))
+		if providerErr != nil {
+			return providerErr
+		}
+		s.purchaseProvider, s.paymentWebhook = paymentProvider, paymentProvider
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if e = s.runner.Check(ctx); e != nil {
@@ -173,6 +184,10 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "name is required")
 		return
 	}
+	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryCreate, s.currentTime()); err != nil {
+		bad(w, http.StatusForbidden, "repository creation grant unavailable")
+		return
+	}
 	id := newID()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if e := os.MkdirAll(filepath.Join(s.cfg.DataDir, "repos", id), 0755); e != nil {
@@ -241,6 +256,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 	bad(w, 404, "not found")
 }
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
+	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
+		bad(w, http.StatusForbidden, "repository publishing grant unavailable")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
 	jobID := newID()
 	dir := filepath.Join(s.cfg.DataDir, "incoming", jobID)
@@ -364,6 +383,10 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repo.Visibility == "private" {
+		if _, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(repo.AccountID), commerce.ProductTPAHub, CapabilityRepositoryReadPrivate, s.currentTime()); grantErr != nil {
+			bad(w, http.StatusForbidden, "private repository grant unavailable")
+			return
+		}
 		_, pw, ok := r.BasicAuth()
 		allowed, err := s.db.ReaderRepository(r.Context(), repo.ID, store.HashToken(pw))
 		if !ok || err != nil || !allowed {
@@ -382,10 +405,11 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	startedAt := s.currentTime().UTC()
 	period := startedAt.Format("2006-01-02")
 	limited := false
-	if used, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
+	if used, limit, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
+		limited = grantDenied(err)
 		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
 	} else {
-		limited = egressLimited(used)
+		limited = egressLimited(used, limit)
 	}
 	counted := &repositoryCountingWriter{ResponseWriter: w}
 	var output http.ResponseWriter = counted
@@ -511,9 +535,17 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	if err != nil {
 		return fmt.Errorf("candidate storage usage unavailable: %w", err)
 	}
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		return fmt.Errorf("storage grant unavailable: %w", err)
+	}
+	capacity := grant.Limits.StorageBytes
+	if capacity <= 0 {
+		return fmt.Errorf("storage grant has no capacity")
+	}
 	resulting := account.StoredBytes - currentRepo.StoredBytes + prospective.StoredBytes
-	if resulting > planCatalog["nano"].StorageCapacityBytes && resulting > account.StoredBytes {
-		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: planCatalog["nano"].StorageCapacityBytes}
+	if resulting > capacity && resulting > account.StoredBytes {
+		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: capacity}
 	}
 	return nil
 }

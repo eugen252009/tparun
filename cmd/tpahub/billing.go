@@ -9,6 +9,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
@@ -16,6 +17,7 @@ type BillingPeriod string
 
 type BillingUsageSnapshot struct {
 	AccountID             string        `json:"account_id"`
+	ProductID             string        `json:"product_id"`
 	PlanCode              string        `json:"plan_code"`
 	Period                BillingPeriod `json:"period"`
 	CurrentStorageBytes   int64         `json:"current_storage_bytes"`
@@ -55,6 +57,7 @@ type BillingLineItem struct {
 
 type BillingPreview struct {
 	AccountID             string            `json:"account_id"`
+	ProductID             string            `json:"product_id"`
 	PlanCode              string            `json:"plan_code"`
 	Period                BillingPeriod     `json:"period"`
 	RateCardID            string            `json:"rate_card_id"`
@@ -116,7 +119,7 @@ func finalizeBillingWithRateCard(snapshot BillingUsageSnapshot, card RateCard, n
 	if e != nil {
 		return FinalizedBillingPeriod{}, e
 	}
-	return FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now.UTC(), IdempotencyKey: fmt.Sprintf("tpahub:%s:%s:final", snapshot.AccountID, snapshot.Period)}, nil
+	return FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now.UTC(), IdempotencyKey: fmt.Sprintf("commerce:%s:%s:%s:final", result.ProductID, snapshot.AccountID, snapshot.Period)}, nil
 }
 
 func (m MockBillingProvider) card() RateCard {
@@ -135,7 +138,10 @@ func (m MockBillingProvider) Preview(ctx context.Context, snapshot BillingUsageS
 }
 func (m MockBillingProvider) Finalize(ctx context.Context, snapshot BillingUsageSnapshot) (BillingPreview, error) {
 	card := m.card()
-	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
+	if snapshot.ProductID == "" {
+		snapshot.ProductID = string(TPAHubProductID)
+	}
+	if payload, e := m.Store.ProductMockBillingEventPayload(ctx, snapshot.AccountID, snapshot.ProductID, string(snapshot.Period), "period-finalized"); e == nil {
 		var stable FinalizedBillingPeriod
 		if json.Unmarshal([]byte(payload), &stable) == nil && stable.RateCardID != "" {
 			return stable.BillingPreview, nil
@@ -149,11 +155,11 @@ func (m MockBillingProvider) Finalize(ctx context.Context, snapshot BillingUsage
 	if m.Now != nil {
 		now = m.Now().UTC()
 	}
-	finalized := FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now, IdempotencyKey: fmt.Sprintf("tpahub:%s:%s:final", snapshot.AccountID, snapshot.Period)}
+	finalized := FinalizedBillingPeriod{BillingPreview: result, RateCardMode: card.Mode, FinalizedAt: now, IdempotencyKey: fmt.Sprintf("commerce:%s:%s:%s:final", result.ProductID, snapshot.AccountID, snapshot.Period)}
 	if e = m.recordFinalized(ctx, snapshot, finalized); e != nil {
 		return BillingPreview{}, e
 	}
-	if payload, e := m.Store.MockBillingEventPayload(ctx, snapshot.AccountID, string(snapshot.Period), "period-finalized"); e == nil {
+	if payload, e := m.Store.ProductMockBillingEventPayload(ctx, snapshot.AccountID, snapshot.ProductID, string(snapshot.Period), "period-finalized"); e == nil {
 		var stable FinalizedBillingPeriod
 		if json.Unmarshal([]byte(payload), &stable) == nil {
 			return stable.BillingPreview, nil
@@ -180,12 +186,12 @@ func (m MockBillingProvider) recordFinalized(ctx context.Context, s BillingUsage
 	if e != nil {
 		return e
 	}
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:period-finalized", s.AccountID, s.Period)))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:period-finalized", s.ProductID, s.AccountID, s.Period)))
 	now := time.Now().UTC()
 	if m.Now != nil {
 		now = m.Now().UTC()
 	}
-	return m.Store.RecordMockBillingEvent(ctx, hex.EncodeToString(h[:]), s.AccountID, string(s.Period), "period-finalized", string(payload), now.Format(time.RFC3339Nano))
+	return m.Store.RecordProductMockBillingEvent(ctx, hex.EncodeToString(h[:]), s.AccountID, s.ProductID, string(s.Period), "period-finalized", string(payload), now.Format(time.RFC3339Nano))
 }
 func (m MockBillingProvider) record(ctx context.Context, s BillingUsageSnapshot, event string, result BillingPreview) error {
 	if m.Store == nil {
@@ -199,8 +205,8 @@ func (m MockBillingProvider) record(ctx context.Context, s BillingUsageSnapshot,
 	if m.Now != nil {
 		now = m.Now().UTC()
 	}
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", s.AccountID, s.Period, event)))
-	return m.Store.RecordMockBillingEvent(ctx, hex.EncodeToString(h[:]), s.AccountID, string(s.Period), event, string(payload), now.Format(time.RFC3339Nano))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s", s.ProductID, s.AccountID, s.Period, event)))
+	return m.Store.RecordProductMockBillingEvent(ctx, hex.EncodeToString(h[:]), s.AccountID, s.ProductID, string(s.Period), event, string(payload), now.Format(time.RFC3339Nano))
 }
 
 func rateBilling(s BillingUsageSnapshot) BillingPreview {
@@ -208,6 +214,9 @@ func rateBilling(s BillingUsageSnapshot) BillingPreview {
 	return result
 }
 func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPreview, error) {
+	if s.ProductID == "" {
+		s.ProductID = string(TPAHubProductID)
+	}
 	if err := validateRateCard(card); err != nil {
 		return BillingPreview{}, err
 	}
@@ -219,7 +228,7 @@ func rateBillingWithRateCard(s BillingUsageSnapshot, card RateCard) (BillingPrev
 	if s.EgressBytes != 0 || (p.EgressCadence == CadenceAnnual && s.MonthlyEgressBytes == 0) {
 		egressBytes = s.EgressBytes
 	}
-	result := BillingPreview{AccountID: s.AccountID, PlanCode: s.PlanCode, Period: s.Period, RateCardID: card.ID, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: egressBytes, Currency: card.Currency, IsVirtual: true}
+	result := BillingPreview{AccountID: s.AccountID, ProductID: s.ProductID, PlanCode: s.PlanCode, Period: s.Period, RateCardID: card.ID, StorageHighWaterBytes: s.StorageHighWaterBytes, EgressBytes: egressBytes, Currency: card.Currency, IsVirtual: true}
 	if p.BillingMode == BillingFixed {
 		amount, ok := card.FixedPlanAmountsMinor[s.PlanCode]
 		if !ok {
@@ -300,45 +309,40 @@ func ceilBlocks(value, block int64) int64 {
 }
 
 func (s *server) billingSnapshot(ctx context.Context, accountID string, now time.Time) (BillingUsageSnapshot, error) {
-	entitlement, e := s.db.Entitlement(ctx, accountID)
-	if e != nil {
-		return BillingUsageSnapshot{}, e
+	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	if err != nil {
+		return BillingUsageSnapshot{}, err
+	}
+	periodStart, periodEnd, err := grant.PeriodAt(now)
+	if err != nil {
+		return BillingUsageSnapshot{}, err
 	}
 	period := BillingPeriod(now.UTC().Format("2006-01"))
-	resourcePeriod, pe := effectiveEntitlementPeriod(entitlement, now)
-	if pe != nil {
-		return BillingUsageSnapshot{}, pe
+	if grant.Period == commerce.PeriodAnnual {
+		period = BillingPeriod(periodStart.Format("2006-01-02") + "/" + periodEnd.Format("2006-01-02"))
 	}
-	if entitlement.PlanCode == "nano" {
-		period = BillingPeriod(resourcePeriod.Start.Format("2006-01-02") + "/" + resourcePeriod.End.Format("2006-01-02"))
+	usage, err := s.accountUsage(ctx, accountID)
+	if err != nil {
+		return BillingUsageSnapshot{}, err
 	}
-	usage, e := s.accountUsage(ctx, accountID)
-	if e != nil {
-		return BillingUsageSnapshot{}, e
-	}
-	// Nano's fixed annual price does not depend on high-water, so retain the
-	// existing monthly operational observation semantics for future monthly PAYG.
+	// Fixed annual offers do not depend on high-water, so retain the existing
+	// monthly operational observation used by future monthly usage pricing.
 	highWaterPeriod := string(period)
-	if entitlement.PlanCode == "nano" {
+	if grant.Period == commerce.PeriodAnnual {
 		highWaterPeriod = now.UTC().Format("2006-01")
 	}
-	if e = s.db.ObserveStorageHighWater(ctx, accountID, highWaterPeriod, usage.StoredBytes, now.UTC().Format(time.RFC3339Nano)); e != nil {
-		return BillingUsageSnapshot{}, e
+	if err = s.db.ObserveStorageHighWater(ctx, accountID, highWaterPeriod, usage.StoredBytes, now.UTC().Format(time.RFC3339Nano)); err != nil {
+		return BillingUsageSnapshot{}, err
 	}
-	high, e := s.db.StorageHighWater(ctx, accountID, highWaterPeriod)
-	if e != nil {
-		return BillingUsageSnapshot{}, e
+	high, err := s.db.StorageHighWater(ctx, accountID, highWaterPeriod)
+	if err != nil {
+		return BillingUsageSnapshot{}, err
 	}
-	var egress int64
-	if entitlement.PlanCode == "nano" {
-		egress, e = s.db.AccountEgressWindow(ctx, accountID, resourcePeriod.Start, resourcePeriod.End)
-	} else {
-		egress, e = s.db.AccountEgress(ctx, accountID, string(period))
+	egress, err := s.db.AccountEgressWindow(ctx, accountID, periodStart, periodEnd)
+	if err != nil {
+		return BillingUsageSnapshot{}, err
 	}
-	if e != nil {
-		return BillingUsageSnapshot{}, e
-	}
-	return BillingUsageSnapshot{AccountID: accountID, PlanCode: entitlement.PlanCode, Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress, EgressBytes: egress}, nil
+	return BillingUsageSnapshot{AccountID: accountID, ProductID: string(commerce.ProductTPAHub), PlanCode: grant.OfferID, Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress, EgressBytes: egress}, nil
 }
 func (s *server) observeAccountStorage(ctx context.Context, repositoryID string, now time.Time) error {
 	repo, e := s.db.Repository(ctx, repositoryID)

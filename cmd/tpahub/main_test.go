@@ -22,7 +22,7 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_ = db.CreateAccount(context.Background(), store.Account{ID: "a", Email: "a@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"})
+	_ = db.CreateAccount(context.Background(), store.Account{ID: "a", Email: "a@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"}, defaultTPAGrants("2024-01-01T00:00:00Z")...)
 	_ = db.CreateSession(context.Background(), store.Session{ID: "s", AccountID: "a", TokenPrefix: "tph_s_test"}, store.HashToken("tph_s_test"))
 	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true}, db: db, runner: tpa.Runner{}}
 	h := httptest.NewServer(s.routes())

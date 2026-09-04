@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -90,11 +91,12 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	}
 	var accountUsage AccountUsage
 	var usageErr error
-	var egressBytes int64
-	var egressErr error
+	var egressBytes, egressLimit, storageLimit int64
+	var egressErr, storageGrantErr error
 	var billingSnapshot BillingUsageSnapshot
 	var billingPreview BillingPreview
 	var billingErr error
+	var billingMode BillingMode
 	showSandboxPurchase := false
 	if name == "account" && id != "" {
 		showSandboxPurchase = s.nanoPurchaseAvailable()
@@ -103,12 +105,20 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		if usageErr != nil {
 			log.Printf("account storage usage: %v", usageErr)
 		}
-		egressBytes, egressErr = s.accountEgress(id, s.currentTime())
+		storageGrant, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(id), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+		storageGrantErr = grantErr
+		if grantErr == nil {
+			storageLimit = storageGrant.Limits.StorageBytes
+		}
+		egressBytes, egressLimit, egressErr = s.accountEgress(id, s.currentTime())
 		if egressErr != nil {
 			log.Printf("account egress usage: %v", egressErr)
 		}
 		billingSnapshot, billingErr = s.billingSnapshot(r.Context(), id, s.currentTime())
 		if billingErr == nil {
+			if plan, ok := planCatalog[billingSnapshot.PlanCode]; ok {
+				billingMode = plan.BillingMode
+			}
 			billingPreview, billingErr = s.billingProvider().Preview(r.Context(), billingSnapshot)
 		}
 		if billingErr != nil {
@@ -125,7 +135,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil, StorageCapacity: formatBytes(planCatalog["nano"].StorageCapacityBytes), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(NanoEgressBytes), EgressStatus: egressCapacityMessage(egressBytes), HasEgressUsage: egressErr == nil, BillingMode: string(planCatalog["nano"].BillingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(egressLimit), EgressStatus: egressCapacityMessage(egressBytes, egressLimit), HasEgressUsage: egressErr == nil, BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/static/site.css" {
@@ -174,7 +184,7 @@ func (s *server) createAccount(r *http.Request, email, password string) (store.A
 		return store.Account{}, e
 	}
 	a := store.Account{ID: newID(), Email: email, PasswordHash: string(h), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if e = s.db.CreateAccount(r.Context(), a); e != nil {
+	if e = s.db.CreateAccount(r.Context(), a, defaultTPAGrants(a.CreatedAt)...); e != nil {
 		return store.Account{}, e
 	}
 	return a, nil

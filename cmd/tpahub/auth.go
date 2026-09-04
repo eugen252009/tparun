@@ -53,7 +53,7 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if e = s.db.CreateAccount(r.Context(), a); e != nil {
+	if e = s.db.CreateAccount(r.Context(), a, defaultTPAGrants(a.CreatedAt)...); e != nil {
 		bad(w, 409, "account already exists")
 		return
 	}

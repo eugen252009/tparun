@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/payments"
 )
 
 func TestPlanTaxClassifications(t *testing.T) {
 	if planCatalog["nano"].TaxClassification != TaxSaaSPersonal || planCatalog["standard"].TaxClassification != TaxSaaSPersonal || planCatalog["pro"].TaxClassification != TaxSaaSBusiness {
 		t.Fatalf("unexpected classifications: %+v", planCatalog)
-	}
-	if stripeTaxCode(TaxSaaSPersonal) != "txcd_10103000" || stripeTaxCode(TaxSaaSBusiness) != "txcd_10103001" || stripeTaxCode("unknown") != "" {
-		t.Fatal("invalid Stripe tax mapping")
 	}
 }
 func TestCheckoutCarriesFrozenTaxClassificationWithoutManagedPaymentsDisable(t *testing.T) {
@@ -25,7 +25,7 @@ func TestCheckoutCarriesFrozenTaxClassificationWithoutManagedPaymentsDisable(t *
 		class ProductTaxClassification
 		code  string
 	}{{TaxSaaSPersonal, "txcd_10103000"}, {TaxSaaSBusiness, "txcd_10103001"}} {
-		_, e := p.CreateCheckout(context.Background(), FinalizedPurchase{PurchaseID: "purchase-" + tc.code, AccountID: "a", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: RateCardProduction, TaxClassification: tc.class, Currency: "EUR", AmountMinor: 500, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "key-" + tc.code})
+		_, e := p.CreateCheckout(context.Background(), payments.Operation{OperationID: "purchase-" + tc.code, IdempotencyKey: "key-" + tc.code, CustomerID: "a", ProductID: commerce.ProductID("neutral-product"), Description: "Neutral SaaS service", Currency: "EUR", AmountMinor: 500, TaxClass: payments.TaxClass(tc.class), SuccessURL: "https://example.invalid/success", CancelURL: "https://example.invalid/cancel", Environment: payments.EnvironmentTest})
 		if e != nil {
 			t.Fatal(e)
 		}

@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/eugen252009/tpahub/internal/store"
 	"net/http"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/store"
 )
 
 func (s *server) credentials(w http.ResponseWriter, r *http.Request, repo string, tail []string) {
@@ -16,6 +18,10 @@ func (s *server) credentials(w http.ResponseWriter, r *http.Request, repo string
 	owned, e := s.db.OwnedRepository(r.Context(), accountID(r), repo)
 	if e != nil {
 		bad(w, 404, "repository not found")
+		return
+	}
+	if _, e = s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryReadPrivate, s.currentTime()); e != nil {
+		bad(w, http.StatusForbidden, "private repository grant unavailable")
 		return
 	}
 	if len(tail) == 0 && r.Method == "GET" {

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/commerce"
 )
 
 type checkoutTransport struct {
@@ -58,7 +60,7 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	provider, _ := NewStripeBillingProvider(s.db, "sk_test_example", BillingEnvironmentTest)
 	provider.Client = &http.Client{Transport: transport}
 	provider.BaseURL = "https://stripe.test"
-	s.purchaseProvider = provider
+	s.purchaseProvider, s.paymentWebhook = provider, provider
 	req, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/purchases/nano", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer tph_s_test")
 	resp, err := http.DefaultClient.Do(req)
@@ -75,6 +77,10 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	}
 	if json.Unmarshal(body, &created) != nil || created.PurchaseID == "" {
 		t.Fatalf("purchase response=%s", body)
+	}
+	wantKey := "tpahub:purchase:" + created.PurchaseID + ":stripe:test:checkout:v2"
+	if len(transport.keys) != 2 || transport.keys[1] != wantKey || !strings.Contains(transport.bodies[1], "metadata%5Btpahub_purchase_id%5D="+created.PurchaseID) || strings.Contains(transport.bodies[1], "commerce_product_id") {
+		t.Fatalf("v2 checkout compatibility keys=%v body=%s", transport.keys, transport.bodies[1])
 	}
 	purchase, _ := s.db.Purchase(context.Background(), created.PurchaseID)
 	if purchase.Status != "pending" {
@@ -104,6 +110,11 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if activeErr != nil || !active {
 		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
 	}
+	grant, grantErr := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now)
+	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil {
+		t.Fatalf("activated grant=%+v err=%v", grant, grantErr)
+	}
+	grantBeforeDuplicate := grant
 	entBeforeDuplicate := ent
 	web2, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web2.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", now))
@@ -118,6 +129,10 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	entAfterDuplicate, _ := s.db.Entitlement(context.Background(), "a")
 	if !reflect.DeepEqual(entBeforeDuplicate, entAfterDuplicate) {
 		t.Fatalf("duplicate webhook mutated entitlement: before=%+v after=%+v", entBeforeDuplicate, entAfterDuplicate)
+	}
+	grantAfterDuplicate, _ := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now)
+	if !reflect.DeepEqual(grantBeforeDuplicate, grantAfterDuplicate) {
+		t.Fatalf("duplicate webhook mutated grant: before=%+v after=%+v", grantBeforeDuplicate, grantAfterDuplicate)
 	}
 }
 func TestStripeWebhookSignatureVerifier(t *testing.T) {

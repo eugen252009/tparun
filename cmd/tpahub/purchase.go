@@ -2,34 +2,18 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/payments"
 	"github.com/eugen252009/tpahub/internal/store"
 )
-
-type stripeCheckoutEvent struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Data struct {
-		Object struct {
-			ID            string            `json:"id"`
-			PaymentStatus string            `json:"payment_status"`
-			AmountTotal   int64             `json:"amount_total"`
-			Currency      string            `json:"currency"`
-			Metadata      map[string]string `json:"metadata"`
-		} `json:"object"`
-	} `json:"data"`
-}
 
 func (s *server) nanoPurchaseAvailable() bool {
 	return s.cfg.BillingPurchasesEnabled && ValidateBillingConfiguration(s.cfg) == nil
@@ -43,6 +27,7 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("entitlement period unavailable")
 	}
+	offer := tpaNanoOffer()
 	card, err := rateCardByID(s.cfg.BillingRateCard)
 	if err != nil || validateRateCard(card) != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("Nano pricing unavailable")
@@ -53,25 +38,23 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if businessUse {
 		classification = TaxSaaSBusiness
 	}
-	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, PlanCode: "nano", RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, CheckoutRequestVersion: "v2", AmountMinor: card.FixedPlanAmountsMinor["nano"], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, ProductID: string(offer.ProductID), PlanCode: offer.ID, RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, CheckoutRequestVersion: "v2", AmountMinor: card.FixedPlanAmountsMinor[offer.ID], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
 	purchase, err = s.db.CreatePendingPurchase(ctx, purchase, created)
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
 	if purchase.ProviderReference != "" {
-		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ExternalReference: purchase.ProviderReference, CheckoutURL: purchase.CheckoutURL}, nil
+		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ProviderReference: purchase.ProviderReference, URL: purchase.CheckoutURL}, nil
 	}
-	var purchaseProvider PurchaseProvider = s.purchaseProvider
+	purchaseProvider := s.purchaseProvider
 	if purchaseProvider == nil {
-		provider, pe := NewStripeBillingProvider(s.db, s.cfg.StripeTestSecret, BillingEnvironmentTest)
-		if pe != nil {
-			return store.BillingPurchase{}, CheckoutResult{}, pe
-		}
-		provider.SuccessURL = "https://tpa.lupricht.net/"
-		provider.CancelURL = "https://tpa.lupricht.net/"
-		purchaseProvider = provider
+		return purchase, CheckoutResult{}, fmt.Errorf("payment provider unavailable")
 	}
-	checkout, err := purchaseProvider.CreateCheckout(ctx, FinalizedPurchase{PurchaseID: purchase.ID, AccountID: purchase.AccountID, PlanCode: purchase.PlanCode, RateCardID: purchase.RateCardID, RateCardMode: RateCardProduction, TaxClassification: ProductTaxClassification(purchase.TaxClassification), Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2", FinalizedAt: now})
+	idempotencyKey := "commerce:" + purchase.ProductID + ":purchase:" + purchase.ID + ":stripe:test:checkout:v2"
+	if purchase.ProductID == string(commerce.ProductTPAHub) {
+		idempotencyKey = "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2"
+	}
+	checkout, err := purchaseProvider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: idempotencyKey, CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: payments.EnvironmentTest})
 	if err != nil {
 		var pe providerError
 		if errors.As(err, &pe) && pe.Code == "provider-rejected-4xx" {
@@ -79,10 +62,10 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 		}
 		return purchase, CheckoutResult{}, err
 	}
-	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ExternalReference, checkout.CheckoutURL, now.Format(time.RFC3339Nano)); err != nil {
+	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ProviderReference, checkout.URL, now.Format(time.RFC3339Nano)); err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
-	purchase.ProviderReference = checkout.ExternalReference
+	purchase.ProviderReference = checkout.ProviderReference
 	return purchase, checkout, nil
 }
 
@@ -106,10 +89,10 @@ func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"purchase_id": purchase.ID, "status": purchase.Status, "provider": "stripe", "environment": "test"}
-	if checkout.CheckoutURL != "" {
-		out["checkout_url"] = checkout.CheckoutURL
+	if checkout.URL != "" {
+		out["checkout_url"] = checkout.URL
 	} else {
-		out["checkout_reference"] = checkout.ExternalReference
+		out["checkout_reference"] = checkout.ProviderReference
 	}
 	jsonOut(w, out)
 }
@@ -136,11 +119,11 @@ func (s *server) accountNanoPurchase(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if checkout.CheckoutURL == "" {
+	if checkout.URL == "" {
 		bad(w, http.StatusBadGateway, "Sandbox checkout unavailable")
 		return
 	}
-	http.Redirect(w, r, checkout.CheckoutURL, http.StatusSeeOther)
+	http.Redirect(w, r, checkout.URL, http.StatusSeeOther)
 }
 
 func parseBusinessUseJSON(r *http.Request) (bool, error) {
@@ -196,94 +179,28 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusRequestEntityTooLarge, "webhook body too large")
 		return
 	}
-	if err = verifyStripeSignature(r.Header.Get("Stripe-Signature"), body, s.cfg.StripeWebhookSecret, s.currentTime()); err != nil {
+	if s.paymentWebhook == nil {
+		bad(w, http.StatusNotFound, "webhook unavailable")
+		return
+	}
+	paymentEvent, err := s.paymentWebhook.ParseWebhook(body, r.Header.Get("Stripe-Signature"), s.cfg.StripeWebhookSecret, s.currentTime())
+	if err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var event stripeCheckoutEvent
-	if json.Unmarshal(body, &event) != nil || event.ID == "" || event.Data.Object.ID == "" {
-		bad(w, http.StatusBadRequest, "invalid provider event")
-		return
-	}
-	obj := event.Data.Object
-	purchaseID := obj.Metadata["tpahub_purchase_id"]
-	if purchaseID == "" {
-		bad(w, http.StatusBadRequest, "purchase reference missing")
-		return
-	}
-	purchase, err := s.db.Purchase(r.Context(), purchaseID)
-	if err != nil || purchase.Provider != "stripe" || purchase.BillingEnvironment != "test" || purchase.ProviderReference != obj.ID {
-		bad(w, http.StatusBadRequest, "provider reference mismatch")
-		return
-	}
-	kind := ""
-	switch event.Type {
-	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
-		if obj.PaymentStatus != "paid" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if obj.AmountTotal != purchase.AmountMinor || strings.ToUpper(obj.Currency) != strings.ToUpper(purchase.Currency) {
-			bad(w, http.StatusBadRequest, "payment verification failed")
-			return
-		}
-		kind = "success"
-	case "checkout.session.async_payment_failed":
-		kind = "failed"
-	case "checkout.session.expired":
-		kind = "expired"
-	default:
+	if paymentEvent.Type == commerce.PaymentIgnored {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	activationPeriod, perr := entitlementPeriod(s.currentTime().UTC().Format("2006-01-02"), s.currentTime())
-	if perr != nil {
-		bad(w, http.StatusInternalServerError, "entitlement activation unavailable")
+	activationPeriod, periodErr := entitlementPeriod(s.currentTime().UTC().Format("2006-01-02"), s.currentTime())
+	if periodErr != nil {
+		bad(w, http.StatusInternalServerError, "grant activation unavailable")
 		return
 	}
-	received := s.currentTime().UTC().Format(time.RFC3339Nano)
-	amount, currency := purchase.AmountMinor, purchase.Currency
-	if kind == "success" {
-		amount, currency = obj.AmountTotal, strings.ToUpper(obj.Currency)
-	}
-	eventRecord := store.BillingProviderEvent{Provider: "stripe", Environment: "test", ProviderEventID: event.ID, EventType: event.Type, ReceivedAt: received}
-	if err = s.db.ApplyBillingProviderEvent(r.Context(), eventRecord, purchase.ID, obj.ID, kind, amount, currency, received, activationPeriod.Start.Format(time.RFC3339Nano), activationPeriod.End.Format(time.RFC3339Nano)); err != nil {
+	paymentService := commerce.PaymentService{Repository: s.db}
+	if err = paymentService.Process(r.Context(), "stripe", string(payments.EnvironmentTest), paymentEvent, activationPeriod.Start, activationPeriod.End); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-}
-
-func verifyStripeSignature(header string, body []byte, secret string, now time.Time) error {
-	var timestamp string
-	var signatures []string
-	for _, part := range strings.Split(header, ",") {
-		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		switch kv[0] {
-		case "t":
-			timestamp = kv[1]
-		case "v1":
-			signatures = append(signatures, kv[1])
-		}
-	}
-	unix, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil || timestamp == "" {
-		return fmt.Errorf("invalid webhook signature")
-	}
-	if delta := now.Unix() - unix; delta > 300 || delta < -300 {
-		return fmt.Errorf("expired webhook signature")
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp + "."))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	for _, sig := range signatures {
-		if hmac.Equal([]byte(expected), []byte(sig)) {
-			return nil
-		}
-	}
-	return fmt.Errorf("invalid webhook signature")
 }

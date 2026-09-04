@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/commerce"
 )
 
 type repositoryCountingWriter struct {
@@ -66,25 +68,29 @@ func (s *server) currentTime() time.Time {
 	return time.Now().UTC()
 }
 
-func (s *server) accountEgress(accountID string, now time.Time) (int64, error) {
-	entitlement, err := s.db.Entitlement(context.Background(), accountID)
+func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, error) {
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	period, err := effectiveEntitlementPeriod(entitlement, now)
+	if grant.Limits.EgressBytes <= 0 {
+		return 0, 0, fmt.Errorf("egress grant has no allowance")
+	}
+	start, end, err := grant.PeriodAt(now)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return s.db.AccountEgressWindow(context.Background(), accountID, period.Start, period.End)
+	used, err := s.db.AccountEgressWindow(context.Background(), accountID, start, end)
+	return used, grant.Limits.EgressBytes, err
 }
-func egressLimited(used int64) bool { return used >= NanoEgressBytes }
+func egressLimited(used, limit int64) bool { return limit > 0 && used >= limit }
 
-func egressCapacityMessage(used int64) string {
-	if used == NanoEgressBytes {
+func egressCapacityMessage(used, limit int64) string {
+	if used == limit {
 		return "Annual egress allowance reached. New package downloads are currently rate-limited until the next entitlement period."
 	}
-	if used > NanoEgressBytes {
-		return fmt.Sprintf("Annual egress allowance exceeded by %s. New package downloads are currently rate-limited until the next entitlement period.", formatBytes(used-NanoEgressBytes))
+	if used > limit {
+		return fmt.Sprintf("Annual egress allowance exceeded by %s. New package downloads are currently rate-limited until the next entitlement period.", formatBytes(used-limit))
 	}
 	return "Package delivery is currently unrestricted by the annual egress allowance."
 }

@@ -12,11 +12,11 @@ func TestIdenticalFrozenCheckoutUsesStableIdentityAndRequest(t *testing.T) {
 	provider, _ := NewStripeBillingProvider(s.db, "sk_test_example", BillingEnvironmentTest)
 	provider.BaseURL = "https://stripe.test"
 	provider.Client = &http.Client{Transport: transport}
-	purchase := FinalizedPurchase{PurchaseID: "p-exact", AccountID: "a", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: RateCardProduction, TaxClassification: TaxSaaSPersonal, Currency: "EUR", AmountMinor: 500, BillingEnvironment: BillingEnvironmentTest, IdempotencyKey: "tpahub:purchase:p-exact:stripe:test:checkout:v2"}
-	if _, err := provider.CreateCheckout(context.Background(), purchase); err != nil {
+	operation := testPaymentOperation("p-exact", "saas-personal")
+	if _, err := provider.CreateCheckout(context.Background(), operation); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.CreateCheckout(context.Background(), purchase); err != nil {
+	if _, err := provider.CreateCheckout(context.Background(), operation); err != nil {
 		t.Fatal(err)
 	}
 	if len(transport.bodies) != 3 || transport.bodies[1] != transport.bodies[2] || transport.keys[1] != transport.keys[2] {

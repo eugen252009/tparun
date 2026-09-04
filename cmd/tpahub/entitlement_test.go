@@ -5,8 +5,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func TestNanoOfferProducesCapabilityGrants(t *testing.T) {
+	offer := tpaNanoOffer()
+	if offer.ProductID != commerce.ProductTPAHub || offer.ID != "nano" || offer.AmountMinor != 500 || len(offer.Grants) != 4 {
+		t.Fatalf("offer=%+v", offer)
+	}
+	grants := defaultTPAGrants("2026-01-01T00:00:00Z")
+	limits := map[commerce.CapabilityID]commerce.Limits{}
+	for _, grant := range grants {
+		limits[grant.CapabilityID] = grant.Limits
+	}
+	if limits[CapabilityRepositoryPublish].StorageBytes != NanoStorageBytes || limits[CapabilityRepositoryDownload].EgressBytes != NanoEgressBytes {
+		t.Fatalf("limits=%+v", limits)
+	}
+}
 
 func TestAnnualEntitlementPeriodIsAnniversaryAndDayAligned(t *testing.T) {
 	p, err := entitlementPeriod("2026-09-15T10:00:00Z", time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC))
