@@ -14,6 +14,7 @@ type Config struct {
 	GPGFingerprint          string
 	PublishTimeout          time.Duration
 	MaxUpload               int64
+	MaxStagingBytes         int64
 	RegistrationEnabled     bool
 	BillingProvider         string
 	BillingEnvironment      string
@@ -32,6 +33,7 @@ func Load() Config {
 		GPGFingerprint:          os.Getenv("TPAHUB_GPG_FINGERPRINT"),
 		PublishTimeout:          duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
 		MaxUpload:               integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
+		MaxStagingBytes:         integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
 		RegistrationEnabled:     os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
 		BillingProvider:         env("TPAHUB_BILLING_PROVIDER", "mock"),
 		BillingEnvironment:      env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
