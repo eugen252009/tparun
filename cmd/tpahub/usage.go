@@ -45,7 +45,7 @@ func publishedUsage(root string) (PublishedUsage, error) {
 }
 
 func (s *server) repositoryUsage(repositoryID string) (PublishedUsage, error) {
-	return publishedUsage(filepath.Join(s.cfg.DataDir, "repos", repositoryID))
+	return publishedUsage(s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", repositoryID)))
 }
 
 func (s *server) accountUsage(ctx context.Context, accountID string) (AccountUsage, error) {

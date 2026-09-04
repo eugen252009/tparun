@@ -87,7 +87,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID      | Status | Requirement / Invariant                                                    | Required Work                              | Required Verification | Evidence |
 | ------- | ------ | -------------------------------------------------------------------------- | ------------------------------------------ | --------------------- | -------- |
-| P0.4.1  | TODO   | Publication artifacts must be immutable per generation                     | Introduce versioned artifact generations   | Source inspection     |          |
+| P0.4.1  | VERIFIED | Publication artifacts must be immutable per generation                     | Introduce versioned artifact generations   | Source inspection     | `cmd/tpahub/main.go`: successful publication writes to `repos/<id>/generations/<job-id>` and readers resolve the active generation through `current`; prior generations are retained; `cmd/tpahub/main_test.go`: `TestRepositoryGenerationsUseActivePointer`; `go test ./...` PASS |
 | P0.4.2  | TODO   | Candidate generation must be complete before publication                   | Build full candidate generation first      | Publish test          |          |
 | P0.4.3  | TODO   | Candidate repository must be verified before live swap                     | Add explicit verification boundary         | Failure test          |          |
 | P0.4.4  | TODO   | Live repository switch must remain atomic                                  | Preserve atomic directory exchange         | Qualification test    |          |

@@ -29,6 +29,28 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
+	s, _ := testServer(t)
+	root := filepath.Join(s.cfg.DataDir, "repos", "generation-test")
+	generation := filepath.Join(root, "generations", "job-1")
+	if err := os.MkdirAll(generation, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generation, "Packages"), []byte("generation-1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.activeRepositoryRoot(root); got != filepath.Join(root, "current") {
+		t.Fatalf("active root=%q", got)
+	}
+	data, err := os.ReadFile(filepath.Join(s.activeRepositoryRoot(root), "Packages"))
+	if err != nil || string(data) != "generation-1" {
+		t.Fatalf("active generation data=%q err=%v", data, err)
+	}
+}
+
 func TestSuspendedAccountCannotRunQueuedPublication(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()

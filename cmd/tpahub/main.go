@@ -397,7 +397,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	root := filepath.Join(s.cfg.DataDir, "repos", parts[0])
+	root := s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", parts[0]))
 	path := filepath.Join(root, rel)
 	info, e := os.Stat(path)
 	if e != nil || !info.Mode().IsRegular() {
@@ -491,7 +491,13 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	out := filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID)
+	repositoryRoot := filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID)
+	generations := filepath.Join(repositoryRoot, "generations")
+	if e := os.MkdirAll(generations, 0755); e != nil {
+		s.fail(j, e)
+		return
+	}
+	out := filepath.Join(generations, j.ID)
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PublishTimeout)
 	defer cancel()
 	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: candidate}); e != nil {
@@ -507,6 +513,22 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: out}); e != nil {
+		s.fail(j, e)
+		return
+	}
+	pointer := filepath.Join(repositoryRoot, "current")
+	temporaryPointer := pointer + "." + j.ID
+	if e := os.Symlink(filepath.Join("generations", j.ID), temporaryPointer); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := os.Remove(pointer); e != nil && !os.IsNotExist(e) {
+		_ = os.Remove(temporaryPointer)
+		s.fail(j, e)
+		return
+	}
+	if e := os.Rename(temporaryPointer, pointer); e != nil {
+		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
 	}
@@ -528,6 +550,13 @@ func (s *server) process(j store.Job) {
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func (s *server) activeRepositoryRoot(root string) string {
+	if _, err := os.Stat(filepath.Join(root, "current")); err == nil {
+		return filepath.Join(root, "current")
+	}
+	return root
+}
+
 func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	repository, err := s.db.Repository(context.Background(), repositoryID)
 	if err != nil {
