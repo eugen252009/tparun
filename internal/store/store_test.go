@@ -356,6 +356,44 @@ func TestPaymentGrantActivationRollsBackPartialGrantSet(t *testing.T) {
 	}
 }
 
+func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(ctx, Account{ID: "late-success", Email: "late-success@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	until := now.AddDate(1, 0, 0)
+	purchase := BillingPurchase{ID: "late-success-purchase", AccountID: "late-success", ProductID: "late-product", PlanCode: "late-offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_late_success", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodMonthly}); err != nil {
+		t.Fatal(err)
+	}
+	base := func(id string, kind commerce.PaymentEventType) commerce.PaymentTransition {
+		return commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: id, OperationID: purchase.ID, Type: kind, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: purchase.Provider, Environment: purchase.BillingEnvironment, Kind: map[commerce.PaymentEventType]string{commerce.PaymentFailed: "failed", commerce.PaymentSucceeded: "success"}[kind], AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}
+	}
+	if err = s.ApplyPaymentTransition(ctx, base("evt-late-failed", commerce.PaymentFailed)); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || failed.Status != "failed" {
+		t.Fatalf("failed state=%+v err=%v", failed, err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, base("evt-late-success", commerce.PaymentSucceeded)); err != nil {
+		t.Fatalf("payable late success rejected: %v", err)
+	}
+	paid, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || paid.Status != "paid" {
+		t.Fatalf("paid state=%+v err=%v", paid, err)
+	}
+	if _, err = s.GetGrant(ctx, commerce.CustomerID(purchase.AccountID), commerce.ProductID(purchase.ProductID), "execute", now); err != nil {
+		t.Fatalf("late success did not activate grant: %v", err)
+	}
+}
+
 func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

@@ -523,7 +523,8 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 			}
 			return tx.Commit()
 		}
-		if (p.Status != "pending" && p.Status != "superseded") || p.AmountMinor != amount || p.Currency != currency {
+		payableTerminal := (p.Status == "failed" || p.Status == "expired") && p.ProviderReference != ""
+		if (p.Status != "pending" && p.Status != "superseded" && !payableTerminal) || p.AmountMinor != amount || p.Currency != currency {
 			return fmt.Errorf("payment-verification-failed")
 		}
 		var snapshotCount int
@@ -533,7 +534,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		if snapshotCount == 0 {
 			return fmt.Errorf("grant activation unavailable: purchase grant snapshot missing")
 		}
-		_, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='paid',paid_at=?,updated_at=?,entitlement_period_start=?,entitlement_period_end=? WHERE id=? AND status='pending'`, paidAt, paidAt, entitlementStart, entitlementEnd, purchaseID)
+		_, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='paid',paid_at=?,updated_at=?,entitlement_period_start=?,entitlement_period_end=? WHERE id=? AND status IN ('pending','superseded','failed','expired')`, paidAt, paidAt, entitlementStart, entitlementEnd, purchaseID)
 		if e == nil {
 			rows, queryErr := tx.QueryContext(c, `SELECT capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit FROM purchase_grant_snapshots WHERE purchase_id=? ORDER BY capability_id`, purchaseID)
 			if queryErr != nil {
