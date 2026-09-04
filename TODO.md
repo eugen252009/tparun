@@ -536,7 +536,7 @@ Commercial shape:
 | P9.19 | TODO   | Original full audit prompt rerun from scratch                 | No unresolved production blocker |          |
 | P9.20 | DONE   | Each original Critical finding C1–C8 individually rechecked   | RESOLVED                         | Closure table below; independent re-audit remains required before `VERIFIED`. |
 | P9.21 | TODO   | Each original Important finding I1–I19 individually rechecked | RESOLVED / explicitly accepted   |          |
-| P9.22 | TODO   | Working tree clean after final verification                   | CLEAN                            |          |
+| P9.22 | DONE   | Working tree clean after final verification                   | CLEAN                            | P0-R3 implementation `2cec6d8`; evidence documentation `d8de5fb`; final status checked after commit. |
 
 ---
 
