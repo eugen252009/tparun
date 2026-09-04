@@ -347,6 +347,9 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	if _, err = s.db.Exec(`INSERT INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence) VALUES(?,?,?)`, purchase.ID, "late-capability", "monthly"); err == nil {
 		t.Fatal("finalized purchase snapshot accepted a late capability")
 	}
+	if _, err = s.db.Exec(`UPDATE billing_purchases SET plan_code='drifted' WHERE id=?`, purchase.ID); err == nil {
+		t.Fatal("finalized purchase terms were mutable")
+	}
 	// Webhook-time grants are deliberately changed; activation must use the
 	// immutable purchase snapshot instead of this mutable live state.
 	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "webhook-time-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1, EgressBytes: 2, OperationMetric: "wrong_metric", OperationCount: 3}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
