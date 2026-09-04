@@ -29,6 +29,26 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestPublicationCandidateMustBeComplete(t *testing.T) {
+	dir := t.TempDir()
+	if err := verifyPublicationCandidate(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing candidate accepted")
+	}
+	empty := filepath.Join(dir, "empty")
+	if err := os.Mkdir(empty, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPublicationCandidate(empty); err == nil {
+		t.Fatal("empty candidate accepted")
+	}
+	if err := os.WriteFile(filepath.Join(empty, "Packages"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPublicationCandidate(empty); err != nil {
+		t.Fatalf("complete candidate rejected: %v", err)
+	}
+}
+
 func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	s, _ := testServer(t)
 	root := filepath.Join(s.cfg.DataDir, "repos", "generation-test")

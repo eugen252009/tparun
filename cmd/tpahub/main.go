@@ -508,6 +508,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := verifyPublicationCandidate(candidate); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
 		s.fail(j, e)
 		return
@@ -550,6 +554,24 @@ func (s *server) process(j store.Job) {
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func verifyPublicationCandidate(candidate string) error {
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return fmt.Errorf("publication candidate missing: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("publication candidate is not a directory")
+	}
+	entries, err := os.ReadDir(candidate)
+	if err != nil {
+		return fmt.Errorf("publication candidate unreadable: %w", err)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("publication candidate is empty")
+	}
+	return nil
+}
+
 func (s *server) activeRepositoryRoot(root string) string {
 	if _, err := os.Stat(filepath.Join(root, "current")); err == nil {
 		return filepath.Join(root, "current")
