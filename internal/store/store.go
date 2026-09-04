@@ -791,6 +791,6 @@ func (s *Store) RevokeCredential(c context.Context, account, repo, cid string) e
 }
 func (s *Store) ReaderRepository(c context.Context, repo, hash string) (bool, error) {
 	var n int
-	e := s.db.QueryRowContext(c, "SELECT 1 FROM reader_credentials WHERE repository_id=? AND token_hash=? AND revoked_at IS NULL", repo, hash).Scan(&n)
+	e := s.db.QueryRowContext(c, "SELECT 1 FROM reader_credentials rc JOIN repositories r ON r.id=rc.repository_id JOIN accounts a ON a.id=r.account_id WHERE rc.repository_id=? AND rc.token_hash=? AND rc.revoked_at IS NULL AND a.status=?", repo, hash, AccountStatusActive).Scan(&n)
 	return e == nil, e
 }

@@ -196,4 +196,17 @@ func TestAuthenticationAndPrivateReader(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("reader status %d", res.StatusCode)
 	}
+	account, err := s.db.AccountByEmail(context.Background(), "new@example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.SetAccountStatus(context.Background(), account.ID, "suspended"); err != nil {
+		t.Fatal(err)
+	}
+	req, _ = http.NewRequest("GET", h.URL+"/r/"+repo.ID+"/x", nil)
+	req.SetBasicAuth("reader", cr.Token)
+	res, _ = http.DefaultClient.Do(req)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("suspended reader status %d", res.StatusCode)
+	}
 }
