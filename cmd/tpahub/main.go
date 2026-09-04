@@ -1954,7 +1954,10 @@ func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, re
 		oldBytes = old.Bytes
 		oldInodes = old.Inodes
 	}
-	if accountID != "" {
+	// Incoming reservations are charged against the account at admission. Work
+	// reservations duplicate already-admitted input and the active baseline, so
+	// charging them again would make exact logical storage limits unattainable.
+	if accountID != "" && kind != "work" {
 		if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
 			return err
 		}
@@ -2144,6 +2147,12 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
 			return fmt.Errorf("global staging storage limit exceeded")
 		}
+	} else {
+		// Upload admission already bounded this account's staged input. Work and
+		// candidate copies remain covered by global reservations, disk, and inode
+		// limits; the candidate storage check that follows enforces the account's
+		// logical published-byte limit without charging the active baseline twice.
+		return nil
 	}
 	accountStaged := int64(0)
 	paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
@@ -2204,7 +2213,13 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	if capacity <= 0 {
 		return fmt.Errorf("storage grant has no capacity")
 	}
-	resulting := account.StoredBytes - currentRepo.StoredBytes + prospective.StoredBytes
+	if currentRepo.StoredBytes > account.StoredBytes {
+		return fmt.Errorf("repository storage usage exceeds account usage")
+	}
+	resulting, overflow := addCapacity(account.StoredBytes-currentRepo.StoredBytes, prospective.StoredBytes)
+	if overflow {
+		return fmt.Errorf("resulting storage usage overflow")
+	}
 	if resulting > capacity && resulting > account.StoredBytes {
 		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: capacity}
 	}

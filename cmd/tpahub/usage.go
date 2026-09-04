@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/eugen252009/tpahub/internal/store"
 )
 
 // PublishedUsage describes package payloads in one canonical published repository.
@@ -34,18 +37,121 @@ func publishedUsage(root string) (PublishedUsage, error) {
 		if err != nil {
 			return err
 		}
-		usage.PackageCount++
-		usage.StoredBytes += info.Size()
+		var overflow bool
+		usage.PackageCount, overflow = addCapacity(usage.PackageCount, 1)
+		if overflow {
+			return fmt.Errorf("published package count overflow")
+		}
+		usage.StoredBytes, overflow = addCapacity(usage.StoredBytes, info.Size())
+		if overflow {
+			return fmt.Errorf("published storage usage overflow")
+		}
 		return nil
 	})
-	if os.IsNotExist(err) {
-		return PublishedUsage{}, nil
-	}
 	return usage, err
 }
 
 func (s *server) repositoryUsage(repositoryID string) (PublishedUsage, error) {
-	return publishedUsage(s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", repositoryID)))
+	root, exists, err := s.repositoryUsageRoot(repositoryID)
+	if err != nil {
+		return PublishedUsage{}, err
+	}
+	if !exists {
+		return PublishedUsage{}, nil
+	}
+	return publishedUsage(root)
+}
+
+func (s *server) repositoryUsageRoot(repositoryID string) (string, bool, error) {
+	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID)
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", false, fmt.Errorf("normalize repository root: %w", err)
+	}
+	rootInfo, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		if s.db != nil {
+			if _, generationErr := s.db.ActiveGeneration(context.Background(), repositoryID); generationErr == nil {
+				return "", false, fmt.Errorf("active repository root is missing")
+			} else if !errors.Is(generationErr, store.ErrNotFound) {
+				return "", false, fmt.Errorf("active generation lookup: %w", generationErr)
+			}
+		}
+		return root, false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect repository root: %w", err)
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return "", false, fmt.Errorf("repository root is not a physical directory")
+	}
+	pointer := filepath.Join(root, "current")
+	pointerInfo, err := os.Lstat(pointer)
+	if os.IsNotExist(err) {
+		// Pre-generation repositories stored package payloads directly in root.
+		// Once durable generation authority exists, a missing pointer is broken
+		// publication state and must not be interpreted as zero usage.
+		if s.db != nil {
+			if _, generationErr := s.db.ActiveGeneration(context.Background(), repositoryID); generationErr == nil {
+				return "", false, fmt.Errorf("active repository pointer is missing")
+			} else if !errors.Is(generationErr, store.ErrNotFound) {
+				return "", false, fmt.Errorf("active generation lookup: %w", generationErr)
+			}
+		}
+		return root, true, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect active repository pointer: %w", err)
+	}
+	if pointerInfo.Mode()&os.ModeSymlink == 0 {
+		return "", false, fmt.Errorf("active repository pointer is not a symlink")
+	}
+	if s.db == nil {
+		return "", false, fmt.Errorf("active generation authority is unavailable")
+	}
+	activeGeneration, err := s.db.ActiveGeneration(context.Background(), repositoryID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", false, fmt.Errorf("active repository pointer has no durable generation")
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("active generation lookup: %w", err)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve repository root: %w", err)
+	}
+	generationRoot := filepath.Join(resolvedRoot, "generations")
+	generationRootInfo, err := os.Lstat(generationRoot)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect repository generation root: %w", err)
+	}
+	if generationRootInfo.Mode()&os.ModeSymlink != 0 || !generationRootInfo.IsDir() {
+		return "", false, fmt.Errorf("repository generation root is not a physical directory")
+	}
+
+	resolved, err := filepath.EvalSymlinks(pointer)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve active repository pointer: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", false, fmt.Errorf("normalize active repository target: %w", err)
+	}
+	if filepath.Dir(resolved) != generationRoot {
+		return "", false, fmt.Errorf("active repository pointer escapes generation root")
+	}
+	if filepath.Base(resolved) != activeGeneration {
+		return "", false, fmt.Errorf("active repository pointer disagrees with durable generation")
+	}
+	targetInfo, err := os.Lstat(resolved)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect active repository target: %w", err)
+	}
+	if !targetInfo.IsDir() {
+		return "", false, fmt.Errorf("active repository target is not a physical directory")
+	}
+	return resolved, true, nil
 }
 
 func (s *server) accountUsage(ctx context.Context, accountID string) (AccountUsage, error) {
@@ -59,15 +165,29 @@ func (s *server) accountUsage(ctx context.Context, accountID string) (AccountUsa
 		if err != nil {
 			return AccountUsage{}, err
 		}
-		usage.PackageCount += stats.PackageCount
-		usage.StoredBytes += stats.StoredBytes
+		var overflow bool
+		usage.PackageCount, overflow = addCapacity(usage.PackageCount, stats.PackageCount)
+		if overflow {
+			return AccountUsage{}, fmt.Errorf("account package count overflow")
+		}
+		usage.StoredBytes, overflow = addCapacity(usage.StoredBytes, stats.StoredBytes)
+		if overflow {
+			return AccountUsage{}, fmt.Errorf("account storage usage overflow")
+		}
 	}
 	return usage, nil
 }
 
 func (s *server) publishedPackageCount() (int, error) {
 	stats, err := s.globalPublishedUsage()
-	return int(stats.PackageCount), err
+	if err != nil {
+		return 0, err
+	}
+	count := int(stats.PackageCount)
+	if int64(count) != stats.PackageCount {
+		return 0, fmt.Errorf("published package count exceeds platform integer range")
+	}
+	return count, nil
 }
 
 func (s *server) globalPublishedUsage() (PublishedUsage, error) {
@@ -87,8 +207,15 @@ func (s *server) globalPublishedUsage() (PublishedUsage, error) {
 		if err != nil {
 			return PublishedUsage{}, err
 		}
-		usage.PackageCount += stats.PackageCount
-		usage.StoredBytes += stats.StoredBytes
+		var overflow bool
+		usage.PackageCount, overflow = addCapacity(usage.PackageCount, stats.PackageCount)
+		if overflow {
+			return PublishedUsage{}, fmt.Errorf("global package count overflow")
+		}
+		usage.StoredBytes, overflow = addCapacity(usage.StoredBytes, stats.StoredBytes)
+		if overflow {
+			return PublishedUsage{}, fmt.Errorf("global storage usage overflow")
+		}
 	}
 	return usage, nil
 }
