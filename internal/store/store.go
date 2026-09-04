@@ -71,7 +71,7 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		db.Close()
 		return nil, fmt.Errorf("migrate entitlement validity: %w", e)
 	}
-	if _, e = db.Exec(`CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; CREATE TRIGGER IF NOT EXISTS billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN OLD.snapshot_finalized=1 AND (NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id)`); e != nil {
+	if _, e = db.Exec(`CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; DROP TRIGGER IF EXISTS billing_purchase_terms_immutable; CREATE TRIGGER billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN OLD.snapshot_finalized=1 AND (NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id OR NEW.rate_card_mode<>OLD.rate_card_mode OR NEW.tax_classification<>OLD.tax_classification OR ((NEW.entitlement_period_start<>OLD.entitlement_period_start OR NEW.entitlement_period_end<>OLD.entitlement_period_end) AND NOT (NEW.status='paid' AND OLD.status IN ('pending','superseded','failed','expired'))) OR NEW.provider<>OLD.provider OR NEW.billing_environment<>OLD.billing_environment) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_update BEFORE UPDATE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_delete BEFORE DELETE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id)`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize purchase grant instances: %w", e)
 	}
@@ -218,14 +218,22 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 	if exists != 0 {
 		return tx.Commit()
 	}
+	if err = migrationCheckpoint("before-materialization"); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`INSERT OR IGNORE INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at) SELECT id,'nano',created_at,created_at,'',created_at,created_at FROM accounts;
 INSERT OR IGNORE INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,source,purchase_id,created_at,updated_at) SELECT account_id,'tpa-hub','repository.create',plan_code,1,valid_from,valid_until,CASE WHEN plan_code='nano' THEN 'annual' ELSE 'monthly' END,0,0,source,purchase_id,created_at,updated_at FROM account_entitlements;
 INSERT OR IGNORE INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,source,purchase_id,created_at,updated_at) SELECT account_id,'tpa-hub','repository.publish',plan_code,1,valid_from,valid_until,CASE WHEN plan_code='nano' THEN 'annual' ELSE 'monthly' END,CASE plan_code WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END,0,source,purchase_id,created_at,updated_at FROM account_entitlements;
 INSERT OR IGNORE INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,source,purchase_id,created_at,updated_at) SELECT account_id,'tpa-hub','repository.download',plan_code,1,valid_from,valid_until,CASE WHEN plan_code='nano' THEN 'annual' ELSE 'monthly' END,0,CASE plan_code WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END,source,purchase_id,created_at,updated_at FROM account_entitlements;
 INSERT OR IGNORE INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,source,purchase_id,created_at,updated_at) SELECT account_id,'tpa-hub','repository.read.private',plan_code,1,valid_from,valid_until,CASE WHEN plan_code='nano' THEN 'annual' ELSE 'monthly' END,0,0,source,purchase_id,created_at,updated_at FROM account_entitlements;
-INSERT OR IGNORE INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit) SELECT p.id,g.capability_id,g.period_cadence,g.storage_limit_bytes,g.egress_limit_bytes,g.operation_metric,g.operation_limit FROM billing_purchases p JOIN product_grants g ON g.purchase_id=p.id WHERE p.status='paid' AND g.source='purchase';
-INSERT INTO schema_migrations(name,applied_at) VALUES('commerce-product-grants-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'));`); err != nil {
+INSERT OR IGNORE INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit) SELECT p.id,g.capability_id,g.period_cadence,g.storage_limit_bytes,g.egress_limit_bytes,g.operation_metric,g.operation_limit FROM billing_purchases p JOIN product_grants g ON g.purchase_id=p.id WHERE p.status='paid' AND g.source='purchase';`); err != nil {
 		return fmt.Errorf("migrate legacy TPA grants: %w", err)
+	}
+	if err = migrationCheckpoint("after-materialization-before-marker"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO schema_migrations(name,applied_at) VALUES('commerce-product-grants-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return fmt.Errorf("record legacy TPA migration: %w", err)
 	}
 	if err = migrationCheckpoint("before-commit"); err != nil {
 		return err
@@ -474,20 +482,29 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 		return commerce.Grant{}, purchaseErr
 	}
 	var purchased commerce.Grant
-	purchaseFound := false
+	purchaseFound, purchaseSeen, enabledSeen := false, false, false
 	for rows.Next() {
 		candidate, scanErr := scanGrant(rows)
 		if scanErr != nil {
 			rows.Close()
 			return commerce.Grant{}, scanErr
 		}
+		purchaseSeen = true
+		if !candidate.Enabled {
+			continue
+		}
+		enabledSeen = true
+		if !candidate.ActiveAt(at) {
+			continue
+		}
 		if !purchaseFound {
 			purchased, purchaseFound = candidate, true
 			continue
 		}
-		// Multiple provider-payable purchases are retained independently. The
-		// effective grant is the component-wise maximum, so a later success
-		// cannot reduce rights granted by an earlier success.
+		// Multiple provider-payable purchases are retained independently. Only
+		// active instances contribute, and each limit dimension takes its
+		// component-wise maximum, so expiry and arrival order cannot reduce an
+		// unrelated active right.
 		if candidate.Limits.StorageBytes > purchased.Limits.StorageBytes {
 			purchased.Limits.StorageBytes = candidate.Limits.StorageBytes
 		}
@@ -517,18 +534,15 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 				purchased.Limits.OperationMetric = legacy.Limits.OperationMetric
 			}
 		}
-		if !purchased.Enabled || !purchased.ActiveAt(at) {
-			if legacyErr == nil && legacy.Enabled && legacy.Source == "legacy" && legacy.ValidUntil == nil && (legacy.OfferID == "nano" || legacy.OfferID == "standard" || legacy.OfferID == "pro") && legacy.ActiveAt(at) {
-				return legacy, nil
-			}
-			if !purchased.Enabled {
+		return purchased, nil
+	}
+	if legacyErr == sql.ErrNoRows {
+		if purchaseSeen {
+			if !enabledSeen {
 				return commerce.Grant{}, commerce.ErrGrantDisabled
 			}
 			return commerce.Grant{}, commerce.ErrGrantInactive
 		}
-		return purchased, nil
-	}
-	if legacyErr == sql.ErrNoRows {
 		return commerce.Grant{}, commerce.ErrGrantNotFound
 	}
 	if !legacy.Enabled {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -150,6 +151,48 @@ func TestMalformedHistoricalMigrationCanBeRepairedAfterFailure(t *testing.T) {
 	if err = s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM product_grants WHERE customer_id='customer-a'`).Scan(&n); err != nil || n == 0 {
 		t.Fatalf("repaired migration grants=%d err=%v", n, err)
 	}
+}
+
+func TestMigrationInterruptionReopenMatrix(t *testing.T) {
+	for _, stage := range []string{"after-source-validation", "before-materialization", "after-materialization-before-marker", "before-commit"} {
+		t.Run(stage, func(t *testing.T) {
+			dir := historicalFixture(t, nil)
+			migrationFault = func(found string) error {
+				if found == stage {
+					return errors.New("injected migration interruption")
+				}
+				return nil
+			}
+			if s, err := Open(dir); err == nil {
+				s.Close()
+				t.Fatal("interrupted migration committed")
+			}
+			migrationFault = nil
+			i, g, p, marker := migrationState(t, dir)
+			if i != 0 || g != 1 || p != 1 || marker != 0 {
+				t.Fatalf("partial state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
+			}
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			i, g, p, marker = migrationState(t, dir)
+			if i != 0 || g != 1 || p != 1 || marker != 1 {
+				t.Fatalf("retry state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
+			}
+			s, err = Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			i2, g2, p2, marker2 := migrationState(t, dir)
+			if i2 != i || g2 != g || p2 != p || marker2 != marker {
+				t.Fatalf("non-idempotent reopen: %d/%d/%d/%d -> %d/%d/%d/%d", i, g, p, marker, i2, g2, p2, marker2)
+			}
+		})
+	}
+	migrationFault = nil
 }
 
 func TestHistoricalPurchaseRelationshipsDoNotAttachNearestRow(t *testing.T) {

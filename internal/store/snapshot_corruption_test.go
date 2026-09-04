@@ -42,15 +42,36 @@ func TestCorruptedFinalizedSnapshotCannotActivatePartially(t *testing.T) {
 			_, e := s.db.Exec(`DROP TRIGGER purchase_grant_snapshots_immutable_update; UPDATE purchase_grant_snapshots SET period_cadence='monthly' WHERE capability_id='repository.publish'`)
 			return e
 		}, false},
-		{"expected count mismatch", func(s *Store) error {
+		{"expected metadata immutable", func(s *Store) error {
 			_, e := s.db.Exec(`UPDATE purchase_grant_snapshot_sets SET expected_count=99`)
+			return e
+		}, true},
+		{"expected count mismatch", func(s *Store) error {
+			_, e := s.db.Exec(`DROP TRIGGER purchase_grant_snapshot_sets_immutable_update; UPDATE purchase_grant_snapshot_sets SET expected_count=99`)
 			return e
 		}, false},
 		{"expected digest mismatch", func(s *Store) error {
-			_, e := s.db.Exec(`UPDATE purchase_grant_snapshot_sets SET capability_digest='bad'`)
+			_, e := s.db.Exec(`DROP TRIGGER purchase_grant_snapshot_sets_immutable_update; UPDATE purchase_grant_snapshot_sets SET capability_digest='bad'`)
 			return e
 		}, false},
+		{"purchase linkage finalized", func(s *Store) error { _, e := s.db.Exec(`UPDATE billing_purchases SET id='other-purchase'`); return e }, true},
 		{"offer identity finalized", func(s *Store) error { _, e := s.db.Exec(`UPDATE billing_purchases SET plan_code='other'`); return e }, true},
+		{"product identity finalized", func(s *Store) error {
+			_, e := s.db.Exec(`UPDATE billing_purchases SET product_id='other-product'`)
+			return e
+		}, true},
+		{"validity start finalized", func(s *Store) error {
+			_, e := s.db.Exec(`UPDATE billing_purchases SET entitlement_period_start='2030-01-01T00:00:00Z'`)
+			return e
+		}, true},
+		{"validity end finalized", func(s *Store) error {
+			_, e := s.db.Exec(`UPDATE billing_purchases SET entitlement_period_end='2031-01-01T00:00:00Z'`)
+			return e
+		}, true},
+		{"provider linkage finalized", func(s *Store) error {
+			_, e := s.db.Exec(`UPDATE billing_purchases SET provider='other-provider'`)
+			return e
+		}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +80,7 @@ func TestCorruptedFinalizedSnapshotCannotActivatePartially(t *testing.T) {
 			mutationErr := tc.mutate(s)
 			if tc.blocked {
 				if mutationErr == nil {
-					t.Fatal("finalized commercial identity mutation unexpectedly succeeded")
+					t.Fatal("finalized commercial metadata mutation unexpectedly succeeded")
 				}
 				return
 			}
