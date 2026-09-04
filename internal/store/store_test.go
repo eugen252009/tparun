@@ -90,6 +90,10 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 		if err != nil || legacy.ValidFrom != "2025-01-01T00:00:00Z" || legacy.ValidUntil != "" {
 			t.Fatalf("restart %d legacy=%+v err=%v", restart, legacy, err)
 		}
+		legacyGrant, err := s.GetGrant(context.Background(), "legacy", commerce.ProductTPAHub, "repository.publish", time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil || legacyGrant.Source != "legacy" || legacyGrant.PurchaseID != "" || legacyGrant.ValidUntil != nil {
+			t.Fatalf("restart %d migrated grandfather grant=%+v err=%v", restart, legacyGrant, err)
+		}
 		paid, err := s.Entitlement(context.Background(), "paid")
 		if err != nil || paid.ValidFrom != "2026-09-15T00:00:00Z" || paid.ValidUntil != "2027-09-15T00:00:00Z" {
 			t.Fatalf("restart %d paid=%+v err=%v", restart, paid, err)
