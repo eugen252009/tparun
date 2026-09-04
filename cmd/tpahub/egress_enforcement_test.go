@@ -67,6 +67,18 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected authority failure status=%d", response.StatusCode)
 	}
+	s.grants = nil
+	s.egressLookup = func(string, time.Time) (int64, int64, error) {
+		return 0, 0, errors.New("usage database unavailable")
+	}
+	response, err = http.Get(h.URL + "/r/" + id + "/package.deb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected usage authority failure status=%d", response.StatusCode)
+	}
 }
 
 func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {

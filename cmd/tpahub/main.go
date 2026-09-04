@@ -44,6 +44,7 @@ type server struct {
 	grants           commerce.GrantService
 	purchaseMu       sync.Mutex
 	stagingMu        sync.Mutex
+	egressLookup     func(string, time.Time) (int64, int64, error)
 }
 
 func main() {

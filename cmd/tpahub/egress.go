@@ -69,6 +69,9 @@ func (s *server) currentTime() time.Time {
 }
 
 func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, error) {
+	if s.egressLookup != nil {
+		return s.egressLookup(accountID, now)
+	}
 	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
 	if err != nil {
 		return 0, 0, err
