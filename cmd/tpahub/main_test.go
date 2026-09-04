@@ -173,6 +173,33 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 	}
 }
 
+func TestCapacityReservationsAreAccountScopedAndReleased(t *testing.T) {
+	s, _ := testServer(t)
+	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MaxStagingBytes = 150
+	s.cfg.MinDiskFreeBytes = 0
+	s.stagingMu.Lock()
+	if err := s.reserveCapacity(context.Background(), "a", "repo-a", "job-a", "incoming", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reserveCapacity(context.Background(), "b", "repo-b", "job-b", "incoming", 50); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reserveCapacity(context.Background(), "b", "repo-b", "job-c", "incoming", 1); err == nil {
+		t.Fatal("global reservation oversubscription accepted")
+	}
+	s.releaseCapacity("job-a")
+	if err := s.reserveCapacity(context.Background(), "b", "repo-b", "job-c", "incoming", 1); err != nil {
+		t.Fatalf("released capacity was not reusable: %v", err)
+	}
+	if s.reservations["job-c"].AccountID != "b" || s.reservations["job-a"].Bytes != 0 {
+		t.Fatal("reservation attribution/release corrupted")
+	}
+	s.stagingMu.Unlock()
+}
+
 func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
 	s, _ := testServer(t)
 	s.ctx = context.Background()

@@ -54,6 +54,12 @@ type server struct {
 	egressMu         sync.RWMutex
 	egressDegraded   map[string]bool
 	publicationFault func(string) error
+	reservations     map[string]capacityReservation
+}
+
+type capacityReservation struct {
+	AccountID, RepositoryID, JobID, Kind string
+	Bytes                                int64
 }
 
 func main() {
@@ -298,6 +304,20 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		}
 	}
 	jobID := newID()
+	reserveBytes := r.ContentLength
+	if reserveBytes <= 0 || strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		reserveBytes = s.cfg.MaxUpload
+	}
+	if err := s.reserveCapacity(r.Context(), accountID(r), id, jobID, "incoming", reserveBytes); err != nil {
+		bad(w, http.StatusInsufficientStorage, err.Error())
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.releaseCapacity(jobID)
+		}
+	}()
 	dir := filepath.Join(s.cfg.DataDir, "incoming", jobID)
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		bad(w, 500, e.Error())
@@ -376,7 +396,8 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	if err := s.checkStagingCapacity(r.Context(), accountID(r), total, true); err != nil {
+	// The reservation transitions to actual filesystem bytes once the upload is complete.
+	if err := s.resizeCapacity(jobID, 0); err != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
@@ -387,6 +408,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, 500, e.Error())
 		return
 	}
+	committed = true
 	log.Printf("publish job queued id=%s repository=%s bytes=%d", jobID, id, total)
 	w.WriteHeader(http.StatusAccepted)
 	jsonOut(w, map[string]any{"id": jobID, "state": "queued"})
@@ -519,6 +541,7 @@ func (s *server) worker() {
 func (s *server) process(j store.Job) {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
+	defer s.releaseCapacity(j.ID)
 	log.Printf("publish job started id=%s", j.ID)
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
 		s.fail(j, e)
@@ -530,16 +553,36 @@ func (s *server) process(j store.Job) {
 	}
 	work := filepath.Join(s.cfg.DataDir, "work", j.ID)
 	candidate := work + "-published"
-	defer os.RemoveAll(work)
-	defer os.RemoveAll(candidate)
-	if e := os.MkdirAll(work, 0700); e != nil {
+	repo, e := s.db.Repository(context.Background(), j.RepositoryID)
+	if e != nil {
 		s.fail(j, e)
 		return
 	}
+	incomingBytes, e := fileTreeSize(j.IncomingPath)
+	if e != nil {
+		s.fail(j, fmt.Errorf("incoming capacity accounting: %w", e))
+		return
+	}
+	defer os.RemoveAll(work)
+	defer os.RemoveAll(candidate)
 	art := filepath.Join(s.cfg.DataDir, "artifacts", j.RepositoryID)
 	baseline := s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID))
 	if _, statErr := os.Stat(baseline); statErr != nil {
 		baseline = art
+	}
+	baselineBytes, e := fileTreeSize(baseline)
+	if e != nil {
+		s.fail(j, fmt.Errorf("baseline capacity accounting: %w", e))
+		return
+	}
+	// Reserve work, candidate, and immutable-generation expansion before copying.
+	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", baselineBytes+incomingBytes*2); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := os.MkdirAll(work, 0700); e != nil {
+		s.fail(j, e)
+		return
 	}
 	if e := copyDebs(baseline, work, false); e != nil {
 		s.fail(j, e)
@@ -863,6 +906,66 @@ func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	return nil
 }
 
+// reserveCapacity is called while stagingMu is held. Reservations are process-local;
+// restart reconciliation deliberately treats durable filesystem state as actual bytes.
+func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes int64) error {
+	if bytes < 0 {
+		return fmt.Errorf("negative capacity reservation")
+	}
+	if s.reservations == nil {
+		s.reservations = make(map[string]capacityReservation)
+	}
+	oldBytes := int64(0)
+	if old, ok := s.reservations[jobID]; ok {
+		oldBytes = old.Bytes
+	}
+	if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
+		return err
+	}
+	var reserved int64
+	for _, r := range s.reservations {
+		reserved += r.Bytes
+	}
+	root := filepath.Join(s.cfg.DataDir, "incoming")
+	actual, err := fileTreeSize(root)
+	if err != nil {
+		return fmt.Errorf("capacity accounting: %w", err)
+	}
+	if s.cfg.MaxStagingBytes > 0 && actual+reserved+bytes > s.cfg.MaxStagingBytes {
+		return fmt.Errorf("global staging reservation exceeded")
+	}
+	if err = s.checkDiskHeadroomFor(bytes); err != nil {
+		return err
+	}
+	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: oldBytes + bytes}
+	return nil
+}
+func (s *server) resizeCapacity(jobID string, bytes int64) error {
+	if s.reservations == nil {
+		return fmt.Errorf("missing capacity reservation")
+	}
+	r, ok := s.reservations[jobID]
+	if !ok {
+		return fmt.Errorf("missing capacity reservation")
+	}
+	if bytes < 0 {
+		return fmt.Errorf("negative capacity reservation")
+	}
+	if bytes > r.Bytes {
+		if err := s.checkDiskHeadroomFor(bytes - r.Bytes); err != nil {
+			return err
+		}
+	}
+	r.Bytes = bytes
+	s.reservations[jobID] = r
+	return nil
+}
+func (s *server) releaseCapacity(jobID string) {
+	if s.reservations != nil {
+		delete(s.reservations, jobID)
+	}
+}
+
 func (s *server) checkDiskHeadroom() error { return s.checkDiskHeadroomFor(0) }
 
 func (s *server) checkDiskHeadroomFor(additional int64) error {
@@ -895,7 +998,13 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 	if err != nil {
 		return fmt.Errorf("staging usage unavailable: %w", err)
 	}
-	var staged int64
+	var staged, reservedGlobal, reservedAccount int64
+	for _, reservation := range s.reservations {
+		reservedGlobal += reservation.Bytes
+		if reservation.AccountID == accountID {
+			reservedAccount += reservation.Bytes
+		}
+	}
 	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
 		treeSize, sizeErr := fileTreeSize(root)
 		if sizeErr != nil {
@@ -903,7 +1012,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		}
 		staged += treeSize
 	}
-	if !alreadyWritten && s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
+	if !alreadyWritten && s.cfg.MaxStagingBytes > 0 && staged+reservedGlobal+incoming > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging storage limit exceeded")
 	}
 	accountStaged := int64(0)
@@ -926,7 +1035,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 			accountStaged += treeSize
 		}
 	}
-	if usage.StoredBytes+accountStaged+incoming > grant.Limits.StorageBytes {
+	if usage.StoredBytes+accountStaged+reservedAccount+incoming > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
 	}
 	return nil
