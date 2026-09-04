@@ -513,7 +513,11 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	art := filepath.Join(s.cfg.DataDir, "artifacts", j.RepositoryID)
-	if e := copyDebs(art, work, false); e != nil {
+	baseline := s.activeRepositoryRoot(filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID))
+	if _, statErr := os.Stat(baseline); statErr != nil {
+		baseline = art
+	}
+	if e := copyDebs(baseline, work, false); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -550,13 +554,20 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: out}); e != nil {
+	// The verified candidate is the artifact that becomes the immutable
+	// generation. Never rebuild a second, independently unverified tree.
+	if e := os.Rename(candidate, out); e != nil {
 		s.fail(j, e)
 		return
 	}
 	pointer := filepath.Join(repositoryRoot, "current")
 	temporaryPointer := pointer + "." + j.ID
 	if e := os.Symlink(filepath.Join("generations", j.ID), temporaryPointer); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := s.ensurePublishAuthorized(j.RepositoryID); e != nil {
+		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
 	}
@@ -579,17 +590,6 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	if e := s.publicationCheckpoint("after-durable-record"); e != nil {
-		s.fail(j, e)
-		return
-	}
-	e := os.RemoveAll(art)
-	if e == nil {
-		e = os.MkdirAll(filepath.Dir(art), 0755)
-		if e == nil {
-			e = os.Rename(work, art)
-		}
-	}
-	if e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -641,6 +641,15 @@ func verifyPublicationCandidate(candidate string) error {
 }
 
 func (s *server) reconcileStagingState() error {
+	paths, err := s.db.TerminalJobIncomingPaths(context.Background())
+	if err != nil {
+		return fmt.Errorf("scan terminal staging state: %w", err)
+	}
+	for _, path := range paths {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove terminal incoming workspace: %w", err)
+		}
+	}
 	work := filepath.Join(s.cfg.DataDir, "work")
 	entries, err := os.ReadDir(work)
 	if os.IsNotExist(err) {
@@ -672,11 +681,6 @@ func (s *server) reconcilePublicationState() error {
 		}
 		repositoryRoot := filepath.Join(root, entry.Name())
 		pointer := filepath.Join(repositoryRoot, "current")
-		if _, err = os.Lstat(pointer); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
 		generation, generationErr := s.db.ActiveGeneration(context.Background(), entry.Name())
 		if generationErr != nil {
 			if errors.Is(generationErr, store.ErrNotFound) {
@@ -688,10 +692,11 @@ func (s *server) reconcilePublicationState() error {
 			return fmt.Errorf("read durable publication state: %w", generationErr)
 		}
 		target, err := filepath.EvalSymlinks(pointer)
-		if err != nil {
-			return fmt.Errorf("resolve publication pointer: %w", err)
+		if err != nil && !os.IsNotExist(err) {
+			// A dangling pointer is reconstructed from durable state below.
+			target = ""
 		}
-		if filepath.Base(target) == generation {
+		if target != "" && filepath.Base(target) == generation {
 			continue
 		}
 		generationPath := filepath.Join(repositoryRoot, "generations", generation)
@@ -699,6 +704,7 @@ func (s *server) reconcilePublicationState() error {
 			return fmt.Errorf("durable publication generation missing: %w", err)
 		}
 		temporary := pointer + ".reconcile"
+		_ = os.Remove(pointer)
 		if err = os.Symlink(filepath.Join("generations", generation), temporary); err != nil {
 			return fmt.Errorf("stage publication pointer recovery: %w", err)
 		}
@@ -727,6 +733,20 @@ func (s *server) finishPublishedJob(j store.Job) error {
 	}
 	if err = s.db.Finish(context.Background(), j.ID, "succeeded", ""); err != nil {
 		return fmt.Errorf("finish publication job: %w", err)
+	}
+	return nil
+}
+
+func (s *server) ensurePublishAuthorized(repositoryID string) error {
+	if err := s.ensurePublishAccountActive(repositoryID); err != nil {
+		return err
+	}
+	repository, err := s.db.Repository(context.Background(), repositoryID)
+	if err != nil {
+		return fmt.Errorf("publication repository lookup: %w", err)
+	}
+	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
+		return fmt.Errorf("publication grant unavailable: %w", err)
 	}
 	return nil
 }

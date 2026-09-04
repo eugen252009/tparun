@@ -414,7 +414,7 @@ func TestPaymentGrantActivationRollsBackPartialGrantSet(t *testing.T) {
 	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), templates...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`CREATE TRIGGER reject_partial_grant BEFORE INSERT ON product_grants WHEN NEW.capability_id='reject' BEGIN SELECT RAISE(ABORT,'injected grant failure'); END`); err != nil {
+	if _, err = s.db.Exec(`CREATE TRIGGER reject_partial_grant BEFORE INSERT ON purchase_grant_instances WHEN NEW.capability_id='reject' BEGIN SELECT RAISE(ABORT,'injected grant failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	until := now.AddDate(1, 0, 0)

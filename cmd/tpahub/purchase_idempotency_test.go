@@ -2,7 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,8 +29,72 @@ func configuredPurchaseTestServer(t *testing.T) *server {
 	p.BaseURL = "https://stripe.test"
 	p.Client = &http.Client{Transport: &checkoutTransport{}}
 	s.purchaseProvider = p
+	s.paymentWebhook = p
 	return s
 }
+func TestHostedPurchaseActivatesWithoutCompatibilityEntitlement(t *testing.T) {
+	s := configuredPurchaseTestServer(t)
+	h := httptest.NewServer(s.routes())
+	defer h.Close()
+	response, err := http.Post(h.URL+"/v1/accounts", "application/json", strings.NewReader(`{"email":"hosted-purchase@example.invalid","password":"long-enough-password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var account struct {
+		AccountID string `json:"account_id"`
+		Token     string `json:"token"`
+	}
+	if err = json.NewDecoder(response.Body).Decode(&account); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("registration status=%d", response.StatusCode)
+	}
+	if _, err = s.db.Entitlement(context.Background(), account.AccountID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("hosted entitlement=%v", err)
+	}
+	request, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/purchases/nano", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+account.Token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var purchase struct {
+		PurchaseID string `json:"purchase_id"`
+	}
+	json.NewDecoder(response.Body).Decode(&purchase)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("purchase status=%d", response.StatusCode)
+	}
+	p, err := s.db.Purchase(context.Background(), purchase.PurchaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := fmt.Sprintf(`{"id":"evt_hosted_purchase","type":"checkout.session.completed","data":{"object":{"id":"%s","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, p.ProviderReference, purchase.PurchaseID)
+	web, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
+	web.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", s.currentTime()))
+	response, err = http.DefaultClient.Do(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("webhook status=%d", response.StatusCode)
+	}
+	paid, _ := s.db.Purchase(context.Background(), purchase.PurchaseID)
+	if paid.Status != "paid" {
+		t.Fatalf("status=%s", paid.Status)
+	}
+	for _, capability := range []commerce.CapabilityID{CapabilityRepositoryCreate, CapabilityRepositoryPublish, CapabilityRepositoryDownload, CapabilityRepositoryReadPrivate} {
+		if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(account.AccountID), commerce.ProductTPAHub, capability, s.currentTime()); err != nil {
+			t.Fatalf("grant %s: %v", capability, err)
+		}
+	}
+}
+
 func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	s := configuredPurchaseTestServer(t)
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
