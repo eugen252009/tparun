@@ -122,6 +122,16 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 		t.Fatal(err)
 	}
 	db.Close()
+	migrationFault = func(stage string) error {
+		if stage == "before-commit" {
+			return errors.New("injected migration interruption")
+		}
+		return nil
+	}
+	if _, err = Open(d); err == nil {
+		t.Fatal("migration interruption was accepted")
+	}
+	migrationFault = nil
 	for restart := 0; restart < 2; restart++ {
 		s, err := Open(d)
 		if err != nil {

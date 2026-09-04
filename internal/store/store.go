@@ -28,6 +28,14 @@ type ReaderCredential struct{ ID, RepositoryID, Name, TokenPrefix, CreatedAt str
 type Store struct{ db *sql.DB }
 
 var ErrNotFound = sql.ErrNoRows
+var migrationFault func(string) error
+
+func migrationCheckpoint(stage string) error {
+	if migrationFault != nil {
+		return migrationFault(stage)
+	}
+	return nil
+}
 
 func Open(dir string) (*Store, error) {
 	if e := os.MkdirAll(dir, 0755); e != nil {
@@ -176,6 +184,9 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect purchase-backed grants: %w", err)
 	}
 	purchaseRows.Close()
+	if err = migrationCheckpoint("after-source-validation"); err != nil {
+		return err
+	}
 	var exists int
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='commerce-product-grants-v1'`).Scan(&exists); err != nil {
 		return err
@@ -191,6 +202,9 @@ INSERT OR IGNORE INTO product_grants(customer_id,product_id,capability_id,offer_
 INSERT OR IGNORE INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit) SELECT p.id,g.capability_id,g.period_cadence,g.storage_limit_bytes,g.egress_limit_bytes,g.operation_metric,g.operation_limit FROM billing_purchases p JOIN product_grants g ON g.purchase_id=p.id WHERE p.status='paid' AND g.source='purchase';
 INSERT INTO schema_migrations(name,applied_at) VALUES('commerce-product-grants-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'));`); err != nil {
 		return fmt.Errorf("migrate legacy TPA grants: %w", err)
+	}
+	if err = migrationCheckpoint("before-commit"); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
