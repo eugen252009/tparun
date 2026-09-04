@@ -323,6 +323,39 @@ func TestPurchaseGrantSnapshotsAreScopedToPurchase(t *testing.T) {
 	}
 }
 
+func TestPaymentGrantActivationRollsBackPartialGrantSet(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(ctx, Account{ID: "partial", Email: "partial@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "partial-purchase", AccountID: "partial", ProductID: "partial-product", PlanCode: "partial-offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), ProviderReference: "cs_partial", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	templates := []commerce.GrantTemplate{{CapabilityID: "good", Period: commerce.PeriodMonthly}, {CapabilityID: "reject", Period: commerce.PeriodMonthly}}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), templates...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`CREATE TRIGGER reject_partial_grant BEFORE INSERT ON product_grants WHEN NEW.capability_id='reject' BEGIN SELECT RAISE(ABORT,'injected grant failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	until := now.AddDate(1, 0, 0)
+	err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt_partial", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until})
+	if err == nil {
+		t.Fatal("partial grant activation unexpectedly succeeded")
+	}
+	saved, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || saved.Status != "pending" {
+		t.Fatalf("purchase after rollback=%+v err=%v", saved, err)
+	}
+	if _, err = s.GetGrant(ctx, "partial", "partial-product", "good", now); !errors.Is(err, commerce.ErrGrantNotFound) {
+		t.Fatalf("first grant survived partial activation: %v", err)
+	}
+}
+
 func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
