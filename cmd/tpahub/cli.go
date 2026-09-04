@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/eugen252009/tpahub/internal/config"
@@ -12,7 +13,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/eugen252009/tpahub/internal/store"
 )
 
 type cliConfig struct{ Server, Email, Token string }
@@ -57,8 +62,11 @@ func input(prompt string, secret bool) string {
 }
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub serve | register | login | logout | repo create/list/show/add/remove/token | publish | status")
+		fmt.Println("tpahub serve | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress list-uncertain/inspect/recover")
 		return nil
+	}
+	if args[0] == "admin" {
+		return adminCLI(cfg, args[1:])
 	}
 	c := loadCLI()
 	server := flagValue(args, "--server", c.Server)
@@ -125,6 +133,88 @@ func cli(cfg config.Config, args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func adminCLI(cfg config.Config, args []string) error {
+	if len(args) < 2 || args[0] != "egress" {
+		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-date <YYYY-MM-DD> --bytes <bytes>")
+	}
+	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
+	db, err := store.OpenForAdmin(dataDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	switch args[1] {
+	case "list-uncertain":
+		all, err := db.EgressDeliveries(ctx, "")
+		if err != nil {
+			return fmt.Errorf("list uncertain egress: %w", err)
+		}
+		deliveries := make([]store.EgressDelivery, 0, len(all))
+		for _, delivery := range all {
+			if delivery.State == "uncertain" {
+				deliveries = append(deliveries, delivery)
+			}
+		}
+		return json.NewEncoder(os.Stdout).Encode(deliveries)
+	case "inspect":
+		if len(args) < 3 || args[2] == "" {
+			return fmt.Errorf("delivery id required")
+		}
+		delivery, err := adminEgressDelivery(ctx, db, args[2])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(delivery)
+	case "recover":
+		if len(args) < 3 || args[2] == "" {
+			return fmt.Errorf("delivery id required")
+		}
+		delivery, err := adminEgressDelivery(ctx, db, args[2])
+		if err != nil {
+			return err
+		}
+		version, err := strconv.ParseInt(flagValue(args, "--version", ""), 10, 64)
+		if err != nil || version <= 0 {
+			return fmt.Errorf("positive marker version required")
+		}
+		bytes, err := strconv.ParseInt(flagValue(args, "--bytes", ""), 10, 64)
+		if err != nil || bytes < 0 {
+			return fmt.Errorf("non-negative accounted bytes required")
+		}
+		usageDate := flagValue(args, "--usage-date", "")
+		if parsed, parseErr := time.Parse("2006-01-02", usageDate); parseErr != nil || parsed.Format("2006-01-02") != usageDate {
+			return fmt.Errorf("usage date must be YYYY-MM-DD")
+		}
+		operator := os.Getenv("TPAHUB_OPERATOR")
+		if operator == "" {
+			operator = os.Getenv("USER")
+		}
+		if operator == "" {
+			operator = "cli"
+		}
+		if err = db.RecoverEgressDeliveryWithAudit(ctx, delivery.AccountID, delivery.ID, delivery.RepositoryID, version, usageDate, bytes, time.Now().UTC().Format(time.RFC3339Nano), operator); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"delivery_id": delivery.ID, "result": "recovered"})
+	default:
+		return fmt.Errorf("unknown egress admin command %q", args[1])
+	}
+}
+
+func adminEgressDelivery(ctx context.Context, db *store.Store, id string) (store.EgressDelivery, error) {
+	deliveries, err := db.EgressDeliveries(ctx, "")
+	if err != nil {
+		return store.EgressDelivery{}, fmt.Errorf("inspect uncertain egress: %w", err)
+	}
+	for _, delivery := range deliveries {
+		if delivery.ID == id {
+			return delivery, nil
+		}
+	}
+	return store.EgressDelivery{}, fmt.Errorf("egress delivery %q not found", id)
 }
 func flagValue(a []string, k, d string) string {
 	for i, v := range a {

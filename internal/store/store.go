@@ -19,7 +19,10 @@ import (
 )
 
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
-type Job struct{ ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError string }
+type Job struct {
+	ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError, CleanupNextRetry string
+	CleanupAttempts                                                                                                              int64
+}
 type Account struct{ ID, Email, PasswordHash, Status, CreatedAt string }
 
 const AccountStatusActive = "active"
@@ -39,7 +42,14 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-func Open(dir string) (*Store, error) {
+func Open(dir string) (*Store, error) { return open(dir, true) }
+
+// OpenForAdmin opens the durable store without converting live delivery
+// markers into restart uncertainty. This lets an administrator inspect an
+// active process without changing its ownership state.
+func OpenForAdmin(dir string) (*Store, error) { return open(dir, false) }
+
+func open(dir string, reconcileRunning bool) (*Store, error) {
 	if e := os.MkdirAll(dir, 0755); e != nil {
 		return nil, e
 	}
@@ -58,7 +68,11 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize publication state: %w", e)
 	}
-	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN snapshot_finalized INTEGER NOT NULL DEFAULT 0", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE billing_purchases ADD COLUMN intent_state TEXT NOT NULL DEFAULT 'current'", "ALTER TABLE billing_purchases ADD COLUMN provider_state TEXT NOT NULL DEFAULT 'open'", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_submissions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE mock_billing_events ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN state TEXT NOT NULL DEFAULT 'uncertain'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN version INTEGER NOT NULL DEFAULT 1", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_start TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_end TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'complete'", "ALTER TABLE publish_jobs ADD COLUMN cleanup_error TEXT NOT NULL DEFAULT ''"} {
+	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_log(id TEXT PRIMARY KEY,action TEXT NOT NULL,marker_id TEXT NOT NULL,account_id TEXT NOT NULL,repository_id TEXT NOT NULL,previous_state TEXT NOT NULL,previous_version INTEGER NOT NULL,result TEXT NOT NULL,operator TEXT NOT NULL,created_at TEXT NOT NULL,details TEXT NOT NULL DEFAULT '')`); e != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize administrative audit state: %w", e)
+	}
+	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN snapshot_finalized INTEGER NOT NULL DEFAULT 0", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE billing_purchases ADD COLUMN intent_state TEXT NOT NULL DEFAULT 'current'", "ALTER TABLE billing_purchases ADD COLUMN provider_state TEXT NOT NULL DEFAULT 'open'", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_submissions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE mock_billing_events ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN state TEXT NOT NULL DEFAULT 'uncertain'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN version INTEGER NOT NULL DEFAULT 1", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_start TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_end TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'complete'", "ALTER TABLE publish_jobs ADD COLUMN cleanup_error TEXT NOT NULL DEFAULT ''", "ALTER TABLE publish_jobs ADD COLUMN cleanup_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_next_retry TEXT NOT NULL DEFAULT ''"} {
 		if _, ae := db.Exec(stmt); ae != nil && !strings.Contains(strings.ToLower(ae.Error()), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("migrate entitlements: %w", ae)
@@ -126,9 +140,11 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 			return nil, e
 		}
 	}
-	_, e = db.Exec(`UPDATE publish_jobs SET state='failed',error='interrupted by service restart',finished_at=?,cleanup_state='pending' WHERE state='running'`, time.Now().UTC().Format(time.RFC3339Nano))
-	if e == nil {
-		_, e = db.Exec(`UPDATE egress_accounting_uncertain SET state='uncertain',version=version+1 WHERE state='streaming'`)
+	if reconcileRunning {
+		_, e = db.Exec(`UPDATE publish_jobs SET state='failed',error='interrupted by service restart',finished_at=?,cleanup_state='pending' WHERE state='running'`, time.Now().UTC().Format(time.RFC3339Nano))
+		if e == nil {
+			_, e = db.Exec(`UPDATE egress_accounting_uncertain SET state='uncertain',version=version+1 WHERE state='streaming'`)
+		}
 	}
 	if e != nil {
 		db.Close()
@@ -443,8 +459,17 @@ func (s *Store) AddRepositoryEgress(c context.Context, repositoryID, period stri
 }
 
 type EgressDelivery struct {
-	ID, RepositoryID, State, PeriodStart, PeriodEnd, CreatedAt, Reason string
-	Version, ReservedBytes                                             int64
+	ID             string `json:"delivery_id"`
+	AccountID      string `json:"account_id"`
+	RepositoryID   string `json:"repository_id"`
+	RepositoryName string `json:"repository_name"`
+	State          string `json:"state"`
+	PeriodStart    string `json:"period_start"`
+	PeriodEnd      string `json:"period_end"`
+	CreatedAt      string `json:"created_at"`
+	Reason         string `json:"reason"`
+	Version        int64  `json:"version"`
+	ReservedBytes  int64  `json:"reserved_bytes"`
 }
 
 func (s *Store) BeginEgressDelivery(c context.Context, id, repositoryID, createdAt string) error {
@@ -538,7 +563,14 @@ func (s *Store) MarkEgressDeliveryUncertain(c context.Context, id, repositoryID,
 }
 
 func (s *Store) EgressDeliveries(c context.Context, accountID string) ([]EgressDelivery, error) {
-	rows, err := s.db.QueryContext(c, `SELECT u.id,u.repository_id,u.state,u.version,u.period_start,u.period_end,u.reserved_bytes,u.created_at,u.reason FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? ORDER BY u.created_at,u.id`, accountID)
+	query := `SELECT u.id,r.account_id,u.repository_id,r.name,u.state,u.version,u.period_start,u.period_end,u.reserved_bytes,u.created_at,u.reason FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id`
+	args := []any{}
+	if accountID != "" {
+		query += " WHERE r.account_id=?"
+		args = append(args, accountID)
+	}
+	query += " ORDER BY u.created_at,u.id"
+	rows, err := s.db.QueryContext(c, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +578,7 @@ func (s *Store) EgressDeliveries(c context.Context, accountID string) ([]EgressD
 	var deliveries []EgressDelivery
 	for rows.Next() {
 		var d EgressDelivery
-		if err = rows.Scan(&d.ID, &d.RepositoryID, &d.State, &d.Version, &d.PeriodStart, &d.PeriodEnd, &d.ReservedBytes, &d.CreatedAt, &d.Reason); err != nil {
+		if err = rows.Scan(&d.ID, &d.AccountID, &d.RepositoryID, &d.RepositoryName, &d.State, &d.Version, &d.PeriodStart, &d.PeriodEnd, &d.ReservedBytes, &d.CreatedAt, &d.Reason); err != nil {
 			return nil, err
 		}
 		deliveries = append(deliveries, d)
@@ -555,6 +587,10 @@ func (s *Store) EgressDeliveries(c context.Context, accountID string) ([]EgressD
 }
 
 func (s *Store) RecoverEgressDelivery(c context.Context, accountID, id, repositoryID string, version int64, usageDate string, bytes int64, updatedAt string) error {
+	return s.RecoverEgressDeliveryWithAudit(c, accountID, id, repositoryID, version, usageDate, bytes, updatedAt, "internal")
+}
+
+func (s *Store) RecoverEgressDeliveryWithAudit(c context.Context, accountID, id, repositoryID string, version int64, usageDate string, bytes int64, updatedAt, operator string) error {
 	if version <= 0 || bytes < 0 || usageDate == "" {
 		return fmt.Errorf("invalid egress recovery")
 	}
@@ -565,9 +601,19 @@ func (s *Store) RecoverEgressDelivery(c context.Context, accountID, id, reposito
 	defer tx.Rollback()
 	var state string
 	if err = tx.QueryRowContext(c, `SELECT u.state FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE u.id=? AND u.repository_id=? AND r.account_id=? AND u.version=?`, id, repositoryID, accountID, version).Scan(&state); err != nil {
+		_ = insertAdminAudit(tx, id, accountID, repositoryID, "missing", version, "rejected", operator, updatedAt, err.Error())
+		if commitErr := tx.Commit(); commitErr != nil {
+			return commitErr
+		}
 		return err
 	}
 	if state != "uncertain" {
+		if auditErr := insertAdminAudit(tx, id, accountID, repositoryID, state, version, "rejected", operator, updatedAt, "egress delivery is still active"); auditErr != nil {
+			return auditErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return commitErr
+		}
 		return fmt.Errorf("egress delivery is still active")
 	}
 	if bytes > 0 {
@@ -585,7 +631,21 @@ func (s *Store) RecoverEgressDelivery(c context.Context, accountID, id, reposito
 		}
 		return fmt.Errorf("egress delivery changed during recovery")
 	}
+	if err = insertAdminAudit(tx, id, accountID, repositoryID, "uncertain", version, "recovered", operator, updatedAt, fmt.Sprintf("accounted_bytes=%d usage_date=%s", bytes, usageDate)); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func insertAdminAudit(tx *sql.Tx, markerID, accountID, repositoryID, previousState string, previousVersion int64, result, operator, createdAt, details string) error {
+	if operator == "" {
+		operator = "unknown"
+	}
+	if createdAt == "" {
+		createdAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	_, err := tx.Exec(`INSERT INTO admin_audit_log(id,action,marker_id,account_id,repository_id,previous_state,previous_version,result,operator,created_at,details) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, fmt.Sprintf("egress-recovery:%s:%d:%s", markerID, previousVersion, createdAt), "egress-recovery", markerID, accountID, repositoryID, previousState, previousVersion, result, operator, createdAt, details)
+	return err
 }
 func (s *Store) AccountEgressUncertain(c context.Context, accountID string) (bool, error) {
 	var n int
@@ -1590,7 +1650,7 @@ func (s *Store) TerminalJobIncomingPaths(c context.Context) ([]string, error) {
 
 func (s *Store) Job(c context.Context, id string) (Job, error) {
 	var j Job
-	e := s.db.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError)
+	e := s.db.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry)
 	return j, e
 }
 func (s *Store) Claim(c context.Context) (Job, error) {
@@ -1600,7 +1660,7 @@ func (s *Store) Claim(c context.Context) (Job, error) {
 	}
 	defer tx.Rollback()
 	var j Job
-	e = tx.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError)
+	e = tx.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry)
 	if e != nil {
 		return Job{}, e
 	}
@@ -1617,17 +1677,44 @@ func (s *Store) Claim(c context.Context) (Job, error) {
 }
 func (s *Store) Finish(c context.Context, id, state, msg string) error {
 	cleanup := "complete"
+	nextRetry := ""
 	if state == "succeeded" || state == "failed" {
 		cleanup = "pending"
+		nextRetry = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_, e := s.db.ExecContext(c, "UPDATE publish_jobs SET state=?,error=?,finished_at=?,cleanup_state=?,cleanup_error='' WHERE id=?", state, msg, time.Now().UTC().Format(time.RFC3339Nano), cleanup, id)
+	_, e := s.db.ExecContext(c, "UPDATE publish_jobs SET state=?,error=?,finished_at=?,cleanup_state=?,cleanup_error='',cleanup_attempts=0,cleanup_next_retry=? WHERE id=?", state, msg, time.Now().UTC().Format(time.RFC3339Nano), cleanup, nextRetry, id)
 	return e
 }
 
-type CleanupJob struct{ ID, RepositoryID, IncomingPath, CleanupError string }
+type CleanupJob struct {
+	ID, RepositoryID, IncomingPath, CleanupError, NextRetry string
+	Attempts                                                int64
+}
+
+type AdminAuditEntry struct {
+	ID, Action, MarkerID, AccountID, RepositoryID, PreviousState, Result, Operator, CreatedAt, Details string
+	PreviousVersion                                                                                    int64
+}
+
+func (s *Store) AdminAuditEntries(c context.Context, markerID string) ([]AdminAuditEntry, error) {
+	rows, err := s.db.QueryContext(c, `SELECT id,action,marker_id,account_id,repository_id,previous_state,previous_version,result,operator,created_at,details FROM admin_audit_log WHERE marker_id=? ORDER BY created_at,id`, markerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []AdminAuditEntry
+	for rows.Next() {
+		var entry AdminAuditEntry
+		if err = rows.Scan(&entry.ID, &entry.Action, &entry.MarkerID, &entry.AccountID, &entry.RepositoryID, &entry.PreviousState, &entry.PreviousVersion, &entry.Result, &entry.Operator, &entry.CreatedAt, &entry.Details); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
 
 func (s *Store) PendingCleanupJobs(c context.Context) ([]CleanupJob, error) {
-	rows, err := s.db.QueryContext(c, `SELECT id,repository_id,incoming_path,cleanup_error FROM publish_jobs WHERE state IN ('succeeded','failed') AND cleanup_state='pending' ORDER BY finished_at,id`)
+	rows, err := s.db.QueryContext(c, `SELECT id,repository_id,incoming_path,cleanup_error,cleanup_attempts,cleanup_next_retry FROM publish_jobs WHERE state IN ('succeeded','failed') AND cleanup_state='pending' ORDER BY finished_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1635,7 +1722,7 @@ func (s *Store) PendingCleanupJobs(c context.Context) ([]CleanupJob, error) {
 	var jobs []CleanupJob
 	for rows.Next() {
 		var j CleanupJob
-		if err = rows.Scan(&j.ID, &j.RepositoryID, &j.IncomingPath, &j.CleanupError); err != nil {
+		if err = rows.Scan(&j.ID, &j.RepositoryID, &j.IncomingPath, &j.CleanupError, &j.Attempts, &j.NextRetry); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -1646,9 +1733,17 @@ func (s *Store) PendingCleanupJobs(c context.Context) ([]CleanupJob, error) {
 func (s *Store) SetCleanupResult(c context.Context, id string, cleanupErr error) error {
 	state, message := "complete", ""
 	if cleanupErr != nil {
-		state, message = "pending", cleanupErr.Error()
+		return s.SetCleanupRetry(c, id, cleanupErr, time.Now().UTC().Add(100*time.Millisecond))
 	}
-	_, err := s.db.ExecContext(c, `UPDATE publish_jobs SET cleanup_state=?,cleanup_error=? WHERE id=? AND state IN ('succeeded','failed')`, state, message, id)
+	_, err := s.db.ExecContext(c, `UPDATE publish_jobs SET cleanup_state=?,cleanup_error=?,cleanup_attempts=0,cleanup_next_retry='' WHERE id=? AND state IN ('succeeded','failed')`, state, message, id)
+	return err
+}
+
+func (s *Store) SetCleanupRetry(c context.Context, id string, cleanupErr error, nextRetry time.Time) error {
+	if cleanupErr == nil {
+		return s.SetCleanupResult(c, id, nil)
+	}
+	_, err := s.db.ExecContext(c, `UPDATE publish_jobs SET cleanup_state='pending',cleanup_error=?,cleanup_attempts=cleanup_attempts+1,cleanup_next_retry=? WHERE id=? AND state IN ('succeeded','failed')`, cleanupErr.Error(), nextRetry.UTC().Format(time.RFC3339Nano), id)
 	return err
 }
 func (s *Store) CreateCredential(c context.Context, x ReaderCredential, hash string) error {

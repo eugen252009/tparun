@@ -72,6 +72,9 @@ type server struct {
 	verifyCandidate         func(candidate, work string) error
 	pointerSwap             func(next, current string) error
 	durablePublicationFault func() error
+	cleanupWake             chan struct{}
+	cleanupNow              func() time.Time
+	removeAll               func(string) error
 	beginEgressDelivery     func(context.Context, string, string, string) error
 	reserveEgressDelivery   func(context.Context, string, string, string, string, int64, int64, string) (bool, error)
 	completeEgressDelivery  func(context.Context, string, string, string, int64, string) error
@@ -111,7 +114,7 @@ func run(cfg config.Config) error {
 		return e
 	}
 	defer db.Close()
-	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC()}
+	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), cleanupWake: make(chan struct{}, 1)}
 	if cfg.BillingPurchasesEnabled {
 		paymentProvider, providerErr := NewStripeBillingProvider(db, cfg.StripeTestSecret, BillingEnvironment(cfg.BillingEnvironment))
 		if providerErr != nil {
@@ -132,6 +135,7 @@ func run(cfg config.Config) error {
 	}
 	s.ctx = ctx
 	go s.worker()
+	go s.cleanupRetryLoop()
 	srv := &http.Server{Addr: cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); srv.Shutdown(context.Background()) }()
 	log.Printf("TPA Hub listening on http://%s", cfg.Listen)
@@ -614,6 +618,9 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			complete = s.db.CompleteEgressDelivery
 		}
 		if err := complete(context.Background(), deliveryID, repo.ID, period, counted.bytes, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
+			if markErr := s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, err.Error()); markErr != nil {
+				log.Printf("repository egress uncertainty: repository=%s delivery=%s: %v", repo.ID, deliveryID, markErr)
+			}
 			s.egressMu.Lock()
 			if s.egressDegraded == nil {
 				s.egressDegraded = map[string]bool{}
@@ -674,17 +681,19 @@ func (s *server) worker() {
 func (s *server) process(j store.Job) {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
-	defer s.releaseCapacity(j.ID)
 	defer func() {
 		if cleanupErr := s.cleanupPublishJob(j); cleanupErr != nil {
-			if stateErr := s.db.SetCleanupResult(context.Background(), j.ID, cleanupErr); stateErr != nil {
+			if stateErr := s.db.SetCleanupRetry(context.Background(), j.ID, cleanupErr, s.cleanupRetryAt(s.cleanupCurrentTime(), 1)); stateErr != nil {
 				log.Printf("publish cleanup state: job=%s cleanup=%v state=%v", j.ID, cleanupErr, stateErr)
 			}
+			s.signalCleanupRetry()
 			return
 		}
 		if stateErr := s.db.SetCleanupResult(context.Background(), j.ID, nil); stateErr != nil {
 			log.Printf("publish cleanup state: job=%s: %v", j.ID, stateErr)
+			return
 		}
+		s.releaseCapacity(j.ID)
 	}()
 	log.Printf("publish job started id=%s", j.ID)
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
@@ -1554,7 +1563,7 @@ func (s *server) reconcileStagingState() error {
 	}
 	for _, job := range pending {
 		if err = s.cleanupPublishJob(store.Job{ID: job.ID, IncomingPath: job.IncomingPath}); err != nil {
-			_ = s.db.SetCleanupResult(context.Background(), job.ID, err)
+			_ = s.db.SetCleanupRetry(context.Background(), job.ID, err, s.cleanupRetryAt(s.cleanupCurrentTime(), job.Attempts+1))
 			return fmt.Errorf("cleanup publication job %s: %w", job.ID, err)
 		}
 		if err = s.db.SetCleanupResult(context.Background(), job.ID, nil); err != nil {
@@ -1569,7 +1578,7 @@ func (s *server) reconcileStagingState() error {
 		if err := s.publicationCheckpoint("cleanup-terminal-incoming"); err != nil {
 			return fmt.Errorf("cleanup terminal incoming: %w", err)
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := s.removePath(path); err != nil {
 			return fmt.Errorf("remove terminal incoming workspace: %w", err)
 		}
 	}
@@ -1596,7 +1605,7 @@ func (s *server) reconcileStagingState() error {
 		if err = s.publicationCheckpoint("cleanup-orphaned-incoming"); err != nil {
 			return fmt.Errorf("cleanup orphaned incoming: %w", err)
 		}
-		if err = os.RemoveAll(path); err != nil {
+		if err = s.removePath(path); err != nil {
 			return fmt.Errorf("remove orphaned incoming workspace: %w", err)
 		}
 	}
@@ -1612,7 +1621,7 @@ func (s *server) reconcileStagingState() error {
 		if err = s.publicationCheckpoint("cleanup-abandoned-work"); err != nil {
 			return fmt.Errorf("cleanup abandoned work: %w", err)
 		}
-		if err = os.RemoveAll(filepath.Join(work, entry.Name())); err != nil {
+		if err = s.removePath(filepath.Join(work, entry.Name())); err != nil {
 			return fmt.Errorf("remove abandoned staging workspace: %w", err)
 		}
 	}
@@ -1625,9 +1634,97 @@ func (s *server) cleanupPublishJob(j store.Job) error {
 		if path == "" {
 			continue
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := s.removePath(path); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+const cleanupRetryPoll = 100 * time.Millisecond
+
+func (s *server) removePath(path string) error {
+	if s.removeAll != nil {
+		return s.removeAll(path)
+	}
+	return os.RemoveAll(path)
+}
+
+func (s *server) cleanupCurrentTime() time.Time {
+	if s.cleanupNow != nil {
+		return s.cleanupNow().UTC()
+	}
+	return s.currentTime().UTC()
+}
+
+func (s *server) cleanupRetryAt(now time.Time, attempt int64) time.Time {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := 100 * time.Millisecond
+	for i := int64(1); i < attempt && delay < time.Minute; i++ {
+		delay *= 2
+		if delay >= time.Minute {
+			delay = time.Minute
+		}
+	}
+	return now.Add(delay)
+}
+
+func (s *server) signalCleanupRetry() {
+	if s.cleanupWake == nil {
+		return
+	}
+	select {
+	case s.cleanupWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *server) cleanupRetryLoop() {
+	ticker := time.NewTicker(cleanupRetryPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.retryPendingCleanup(s.cleanupCurrentTime()); err != nil {
+				log.Printf("publish cleanup retry: %v", err)
+			}
+		case <-s.cleanupWake:
+			if err := s.retryPendingCleanup(s.cleanupCurrentTime()); err != nil {
+				log.Printf("publish cleanup retry: %v", err)
+			}
+		}
+	}
+}
+
+func (s *server) retryPendingCleanup(now time.Time) error {
+	pending, err := s.db.PendingCleanupJobs(context.Background())
+	if err != nil {
+		return err
+	}
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
+	for _, job := range pending {
+		if job.NextRetry != "" {
+			next, parseErr := time.Parse(time.RFC3339Nano, job.NextRetry)
+			if parseErr == nil && next.After(now) {
+				continue
+			}
+		}
+		cleanupErr := s.cleanupPublishJob(store.Job{ID: job.ID, IncomingPath: job.IncomingPath})
+		if cleanupErr != nil {
+			if err = s.db.SetCleanupRetry(context.Background(), job.ID, cleanupErr, s.cleanupRetryAt(now, job.Attempts+1)); err != nil {
+				return err
+			}
+			continue
+		}
+		if err = s.db.SetCleanupResult(context.Background(), job.ID, nil); err != nil {
+			return err
+		}
+		s.releaseCapacity(job.ID)
 	}
 	return nil
 }
@@ -2311,6 +2408,22 @@ func copyDebs(src, dst string, replace bool) error {
 				}
 				stem := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 				out = filepath.Join(dst, stem+"-"+digest[:16]+filepath.Ext(entry.Name()))
+				if _, derivedErr := os.Stat(out); derivedErr == nil {
+					equal, compareErr = filesEqual(in, out)
+					if compareErr != nil {
+						a.Close()
+						return compareErr
+					}
+					if equal {
+						a.Close()
+						return nil
+					}
+					a.Close()
+					return fmt.Errorf("digest-derived package collision: %s", out)
+				} else if !os.IsNotExist(derivedErr) {
+					a.Close()
+					return derivedErr
+				}
 			}
 		}
 		b, e := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
