@@ -263,16 +263,24 @@ func TestPurchasePreservesGrandfatheredGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	purchase := BillingPurchase{ID: "grandfathered-purchase", AccountID: "grandfathered", ProductID: string(commerce.ProductTPAHub), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_grandfathered", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
-	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "repository.download", Period: commerce.PeriodAnnual}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual}, commerce.GrantTemplate{CapabilityID: "repository.download", Period: commerce.PeriodAnnual}); err != nil {
 		t.Fatal(err)
 	}
 	transition := commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-grandfathered", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: purchase.Provider, Environment: purchase.BillingEnvironment, Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}
 	if err = s.ApplyPaymentTransition(ctx, transition); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.publish", now)
-	if err != nil || legacy.Source != "legacy" || legacy.PurchaseID != "" {
-		t.Fatalf("grandfathered grant changed after purchase: %+v err=%v", legacy, err)
+	var legacySource, legacyPurchase string
+	var legacyStorage int64
+	if err = s.db.QueryRow(`SELECT source,purchase_id,storage_limit_bytes FROM product_grants WHERE customer_id=? AND capability_id=?`, "grandfathered", "repository.publish").Scan(&legacySource, &legacyPurchase, &legacyStorage); err != nil || legacySource != "legacy" || legacyPurchase != "" || legacyStorage != 0 {
+		t.Fatalf("grandfathered row source=%s purchase=%s storage=%d err=%v", legacySource, legacyPurchase, legacyStorage, err)
+	}
+	var retained int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id=? AND capability_id=? AND source='legacy'`, "grandfathered", "repository.publish").Scan(&retained); err != nil || retained != 1 {
+		t.Fatalf("grandfathered row count=%d err=%v", retained, err)
+	}
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id=? AND capability_id=? AND purchase_id=?`, "grandfathered", "repository.publish", purchase.ID).Scan(&retained); err != nil || retained != 1 {
+		t.Fatalf("purchased same-capability row count=%d err=%v", retained, err)
 	}
 	purchased, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.download", now)
 	if err != nil || purchased.Source != "purchase" || purchased.PurchaseID != purchase.ID || purchased.ValidUntil == nil || !purchased.ValidUntil.Equal(until) {
@@ -332,6 +340,12 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	}
 	if _, err = s.db.Exec(`UPDATE purchase_grant_snapshots SET operation_limit=999 WHERE purchase_id=?`, purchase.ID); err == nil {
 		t.Fatal("purchase grant snapshot was mutable")
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`INSERT INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence) VALUES(?,?,?)`, purchase.ID, "late-capability", "monthly"); err == nil {
+		t.Fatal("finalized purchase snapshot accepted a late capability")
 	}
 	// Webhook-time grants are deliberately changed; activation must use the
 	// immutable purchase snapshot instead of this mutable live state.

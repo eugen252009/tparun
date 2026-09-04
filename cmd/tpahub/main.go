@@ -806,10 +806,10 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 			return nil
 		})
 	}
-	if s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
+	if s.cfg.MaxStagingBytes > 0 && staged > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging storage limit exceeded")
 	}
-	if usage.StoredBytes+staged+incoming > grant.Limits.StorageBytes {
+	if usage.StoredBytes+staged > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
 	}
 	return nil

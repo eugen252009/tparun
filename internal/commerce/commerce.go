@@ -78,6 +78,9 @@ func (g Grant) PeriodAt(now time.Time) (time.Time, time.Time, error) {
 	if !g.ActiveAt(now) {
 		return time.Time{}, time.Time{}, ErrGrantInactive
 	}
+	if g.Period != PeriodAnnual && g.Period != PeriodMonthly && g.Period != PeriodContinuous {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid grant period: %s", g.Period)
+	}
 	if g.ValidUntil != nil {
 		return g.ValidFrom.UTC(), g.ValidUntil.UTC(), nil
 	}

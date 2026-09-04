@@ -38,6 +38,15 @@ func TestPaymentServiceValidatesAndNormalizesTransition(t *testing.T) {
 	}
 }
 
+func TestBoundedGrantRejectsMalformedPeriod(t *testing.T) {
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	until := from.AddDate(1, 0, 0)
+	grant := Grant{Enabled: true, ValidFrom: from, ValidUntil: &until, Period: "malformed"}
+	if _, _, err := grant.PeriodAt(from); err == nil {
+		t.Fatal("bounded malformed grant period was accepted")
+	}
+}
+
 func TestGrantHalfOpenValidityAndPeriods(t *testing.T) {
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	until := from.AddDate(1, 0, 0)
