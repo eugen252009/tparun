@@ -64,6 +64,25 @@ func TestEntitlementValidityBoundaries(t *testing.T) {
 	}
 }
 
+func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,created_at,updated_at,source) VALUES('unknown-plan','mystery','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','legacy')`); err != nil {
+		// The foreign key is intentionally exercised with a real account below.
+		_, _ = s.db.Exec(`INSERT INTO accounts VALUES('unknown-plan','unknown-plan@example.invalid','x','active','2026-01-01T00:00:00Z')`)
+		if _, err = s.db.Exec(`INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,created_at,updated_at,source) VALUES('unknown-plan','mystery','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','legacy')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	if _, err = Open(dir); err == nil {
+		t.Fatal("unknown legacy plan migrated successfully")
+	}
+}
+
 func TestEntitlementValidityMigrationAndRestart(t *testing.T) {
 	d := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(d, "tpahub.db"))

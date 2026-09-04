@@ -107,6 +107,26 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT DISTINCT plan_code FROM account_entitlements`)
+	if err != nil {
+		return fmt.Errorf("inspect legacy plans: %w", err)
+	}
+	for rows.Next() {
+		var plan string
+		if err = rows.Scan(&plan); err != nil {
+			rows.Close()
+			return fmt.Errorf("read legacy plan: %w", err)
+		}
+		if plan != "nano" && plan != "standard" && plan != "pro" {
+			rows.Close()
+			return fmt.Errorf("unknown legacy plan: %s", plan)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("inspect legacy plans: %w", err)
+	}
+	rows.Close()
 	var exists int
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='commerce-product-grants-v1'`).Scan(&exists); err != nil {
 		return err

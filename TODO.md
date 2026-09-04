@@ -128,8 +128,8 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID      | Status | Requirement / Invariant                               | Required Work                                | Required Verification | Evidence |
 | ------- | ------ | ----------------------------------------------------- | -------------------------------------------- | --------------------- | -------- |
-| P0.6.1  | TODO   | Only known legacy plans may migrate                   | Explicitly map Nano, Standard, Pro           | Migration test        |          |
-| P0.6.2  | TODO   | Unknown plan must not become unlimited                | Fail migration or quarantine row             | Unknown-plan test     |          |
+| P0.6.1  | VERIFIED | Only known legacy plans may migrate                   | Explicitly map Nano, Standard, Pro           | Migration test        | `internal/store/store.go`: migration accepts only the explicit `nano`, `standard`, and `pro` plan set before grant materialization; `go test ./...` PASS |
+| P0.6.2  | VERIFIED | Unknown plan must not become unlimited                | Fail migration or quarantine row             | Unknown-plan test     | `internal/store/store.go`: unknown legacy plans fail migration before inserts; `internal/store/store_test.go`: `TestUnknownLegacyPlanFailsClosedDuringMigration`; `go test ./...` PASS |
 | P0.6.3  | TODO   | Purchase-backed grant requires authoritative purchase | Validate linked purchase exists              | Migration test        |          |
 | P0.6.4  | TODO   | Purchase-backed grant requires paid purchase state    | Validate purchase state                      | Migration test        |          |
 | P0.6.5  | TODO   | Purchase-backed grant requires bounded validity       | Reject empty `valid_until`                   | Migration test        |          |
