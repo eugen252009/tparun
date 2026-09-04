@@ -499,8 +499,14 @@ func (s *server) worker() {
 	}
 }
 func (s *server) process(j store.Job) {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
 	log.Printf("publish job started id=%s", j.ID)
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := s.checkDiskHeadroom(); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -539,6 +545,19 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	if e := s.publicationCheckpoint("candidate-built"); e != nil {
+		s.fail(j, e)
+		return
+	}
+	if e := s.checkDiskHeadroom(); e != nil {
+		s.fail(j, e)
+		return
+	}
+	repository, repositoryErr := s.db.Repository(context.Background(), j.RepositoryID)
+	if repositoryErr != nil {
+		s.fail(j, repositoryErr)
+		return
+	}
+	if e := s.checkStagingCapacity(context.Background(), repository.AccountID, 0); e != nil {
 		s.fail(j, e)
 		return
 	}
