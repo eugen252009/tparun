@@ -829,7 +829,11 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 	}
 	var staged int64
 	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
-		staged += fileTreeSize(root)
+		treeSize, sizeErr := fileTreeSize(root)
+		if sizeErr != nil {
+			return fmt.Errorf("global staging usage unavailable: %w", sizeErr)
+		}
+		staged += treeSize
 	}
 	if !alreadyWritten && s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging storage limit exceeded")
@@ -840,10 +844,19 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		return fmt.Errorf("account staging usage unavailable: %w", pathErr)
 	}
 	for _, path := range paths {
-		accountStaged += fileTreeSize(path)
+		treeSize, sizeErr := fileTreeSize(path)
+		if sizeErr != nil {
+			return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
+		}
+		accountStaged += treeSize
 		jobID := filepath.Base(path)
-		accountStaged += fileTreeSize(filepath.Join(s.cfg.DataDir, "work", jobID))
-		accountStaged += fileTreeSize(filepath.Join(s.cfg.DataDir, "work", jobID+"-published"))
+		for _, workPath := range []string{filepath.Join(s.cfg.DataDir, "work", jobID), filepath.Join(s.cfg.DataDir, "work", jobID+"-published")} {
+			treeSize, sizeErr = fileTreeSize(workPath)
+			if sizeErr != nil {
+				return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
+			}
+			accountStaged += treeSize
+		}
 	}
 	if usage.StoredBytes+accountStaged+incoming > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
@@ -882,18 +895,26 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	}
 	return nil
 }
-func fileTreeSize(root string) int64 {
+func fileTreeSize(root string) (int64, error) {
 	var total int64
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.IsDir() {
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) && path == root {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() {
 			return nil
 		}
-		if info, err := entry.Info(); err == nil {
-			total += info.Size()
+		info, err := entry.Info()
+		if err != nil {
+			return err
 		}
+		total += info.Size()
 		return nil
 	})
-	return total
+	return total, err
 }
 
 func copyDebs(src, dst string, replace bool) error {
