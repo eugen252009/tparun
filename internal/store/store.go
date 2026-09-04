@@ -400,7 +400,13 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 			}
 			return existing, nil
 		}
-		if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='failed',failed_at=?,updated_at=? WHERE id=? AND status='pending'`, now, now, existing.ID); e != nil {
+		status := "failed"
+		if existing.ProviderReference != "" || existing.CheckoutURL != "" {
+			// The provider may still accept this checkout. Keep it payable and
+			// reconciliable even though a newer local intent occupies the slot.
+			status = "superseded"
+		}
+		if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET status=?,failed_at=?,updated_at=? WHERE id=? AND status='pending'`, status, now, now, existing.ID); e != nil {
 			return BillingPurchase{}, e
 		}
 	}
@@ -509,7 +515,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 			}
 			return tx.Commit()
 		}
-		if p.Status != "pending" || p.AmountMinor != amount || p.Currency != currency {
+		if (p.Status != "pending" && p.Status != "superseded") || p.AmountMinor != amount || p.Currency != currency {
 			return fmt.Errorf("payment-verification-failed")
 		}
 		var snapshotCount int

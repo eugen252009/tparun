@@ -51,6 +51,7 @@ func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 	s := configuredPurchaseTestServer(t)
 	s.now = func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) }
 	ctx := context.Background()
+	var err error
 	personal, _, e := s.startNanoPurchase(ctx, "a", false)
 	if e != nil {
 		t.Fatal(e)
@@ -63,12 +64,15 @@ func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 		t.Fatalf("identities personal=%+v business=%+v", personal, business)
 	}
 	old, _ := s.db.Purchase(ctx, personal.ID)
-	if old.Status != "failed" {
+	if old.Status != "superseded" {
 		t.Fatalf("old pending status=%s", old.Status)
 	}
 	again, _, e := s.startNanoPurchase(ctx, "a", true)
 	if e != nil || again.ID != business.ID {
 		t.Fatalf("compatible retry=%+v err=%v", again, e)
+	}
+	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-superseded", OperationID: old.ID, Type: commerce.PaymentSucceeded, ProviderReference: old.ProviderReference, AmountMinor: old.AmountMinor, Currency: old.Currency, OccurredAt: s.currentTime()}, Provider: old.Provider, Environment: old.BillingEnvironment, Kind: "success", AmountMinor: old.AmountMinor, Currency: old.Currency, ValidFrom: s.currentTime(), ValidUntil: s.currentTime().AddDate(1, 0, 0)}); err != nil {
+		t.Fatalf("superseded payable checkout was not reconciliable: %v", err)
 	}
 }
 func TestStalePreTaxPurchaseGetsNewCheckoutOperation(t *testing.T) {
