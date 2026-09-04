@@ -532,6 +532,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.db.SetActiveGeneration(context.Background(), j.RepositoryID, j.ID, s.currentTime().UTC().Format(time.RFC3339Nano)); e != nil {
+		s.fail(j, e)
+		return
+	}
 	e := os.RemoveAll(art)
 	if e == nil {
 		e = os.MkdirAll(filepath.Dir(art), 0755)

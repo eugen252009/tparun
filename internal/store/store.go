@@ -43,6 +43,10 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", e)
 	}
+	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL)`); e != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize publication state: %w", e)
+	}
 	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE billing_provider_submissions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE mock_billing_events ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'"} {
 		if _, ae := db.Exec(stmt); ae != nil && !strings.Contains(strings.ToLower(ae.Error()), "duplicate column") {
 			db.Close()
@@ -704,6 +708,17 @@ func (s *Store) CreateRepository(c context.Context, r Repository) error {
 	_, e := s.db.ExecContext(c, "INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES(?,?,?,?,?)", r.ID, owner, r.Name, r.Visibility, r.CreatedAt)
 	return e
 }
+func (s *Store) SetActiveGeneration(c context.Context, repositoryID, generation, updatedAt string) error {
+	_, err := s.db.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, generation, updatedAt)
+	return err
+}
+
+func (s *Store) ActiveGeneration(c context.Context, repositoryID string) (string, error) {
+	var generation string
+	err := s.db.QueryRowContext(c, `SELECT active_generation FROM repository_publications WHERE repository_id=?`, repositoryID).Scan(&generation)
+	return generation, err
+}
+
 func (s *Store) Repository(c context.Context, id string) (Repository, error) {
 	var r Repository
 	e := s.db.QueryRowContext(c, "SELECT id,COALESCE(account_id,''),name,visibility,created_at FROM repositories WHERE id=?", id).Scan(&r.ID, &r.AccountID, &r.Name, &r.Visibility, &r.CreatedAt)

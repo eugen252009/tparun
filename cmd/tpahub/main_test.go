@@ -52,6 +52,9 @@ func TestPublicationCandidateMustBeComplete(t *testing.T) {
 func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	s, _ := testServer(t)
 	root := filepath.Join(s.cfg.DataDir, "repos", "generation-test")
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: "generation-test", AccountID: "a", Name: "generation-test", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
 	generation := filepath.Join(root, "generations", "job-1")
 	if err := os.MkdirAll(generation, 0755); err != nil {
 		t.Fatal(err)
@@ -64,6 +67,12 @@ func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	}
 	if got := s.activeRepositoryRoot(root); got != filepath.Join(root, "current") {
 		t.Fatalf("active root=%q", got)
+	}
+	if err := s.db.SetActiveGeneration(context.Background(), "generation-test", "job-1", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.db.ActiveGeneration(context.Background(), "generation-test"); err != nil || got != "job-1" {
+		t.Fatalf("durable generation=%q err=%v", got, err)
 	}
 	data, err := os.ReadFile(filepath.Join(s.activeRepositoryRoot(root), "Packages"))
 	if err != nil || string(data) != "generation-1" {
