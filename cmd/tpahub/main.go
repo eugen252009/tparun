@@ -996,6 +996,10 @@ func (s *server) resizeCapacity(jobID string, bytes int64) error {
 			return err
 		}
 	}
+	if bytes == 0 {
+		delete(s.reservations, jobID)
+		return nil
+	}
 	r.Bytes = bytes
 	s.reservations[jobID] = r
 	return nil

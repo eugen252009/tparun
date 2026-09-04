@@ -175,6 +175,83 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 	}
 }
 
+func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
+	s, _ := testServer(t)
+	s.ctx = context.Background()
+	s.cfg.MaxUpload = 1024
+	s.cfg.MaxStagingBytes = 4 << 20
+	s.cfg.MinDiskFreeBytes = 0
+	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "worker-b@invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, account string }{{"worker-repo-a", "a"}, {"worker-repo-b", "b"}} {
+		if err := s.db.CreateRepository(context.Background(), store.Repository{ID: item.id, AccountID: item.account, Name: item.id, CreatedAt: "now"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uploadJob := func(account, repo string) {
+		r := httptest.NewRequest(http.MethodPost, "/?filename=package.deb", bytes.NewReader([]byte("payload")))
+		r.ContentLength = 7
+		r = r.WithContext(context.WithValue(r.Context(), accountKey, account))
+		w := httptest.NewRecorder()
+		s.upload(w, r, repo)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("upload %s returned %d", account, w.Code)
+		}
+	}
+	uploadJob("a", "worker-repo-a")
+	uploadJob("b", "worker-repo-b")
+	first, err := s.db.Claim(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.db.Claim(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &blockingPublicationRunner{started: make(chan struct{}, 2), release: make(chan struct{}, 2)}
+	s.runner = runner
+	firstDone := make(chan struct{})
+	go func() { s.process(first); close(firstDone) }()
+	<-runner.started
+	secondDone := make(chan struct{})
+	go func() { s.process(second); close(secondDone) }()
+	uploadDone := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, item := range []struct{ account, repo string }{{"a", "worker-repo-a"}, {"b", "worker-repo-b"}} {
+		wg.Add(1)
+		go func(account, repo string) {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/?filename=second.deb", bytes.NewReader([]byte("payload")))
+			r.ContentLength = 7
+			r = r.WithContext(context.WithValue(r.Context(), accountKey, account))
+			w := httptest.NewRecorder()
+			s.upload(w, r, repo)
+			uploadDone <- w.Code
+		}(item.account, item.repo)
+	}
+	select {
+	case <-runner.started:
+		t.Fatal("second worker bypassed staging serialization")
+	case <-time.After(20 * time.Millisecond):
+	}
+	runner.release <- struct{}{}
+	<-firstDone
+	<-runner.started
+	runner.release <- struct{}{}
+	<-secondDone
+	wg.Wait()
+	close(uploadDone)
+	for code := range uploadDone {
+		if code != http.StatusAccepted {
+			t.Fatalf("concurrent upload lost capacity arbitration: %d", code)
+		}
+	}
+	if len(s.reservations) != 0 {
+		t.Fatalf("reservations leaked after workers/uploads: %#v", s.reservations)
+	}
+}
+
 func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MaxUpload = 10
