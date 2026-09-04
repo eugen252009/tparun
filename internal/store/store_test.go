@@ -301,6 +301,12 @@ func TestPurchasePreservesGrandfatheredGrant(t *testing.T) {
 	if err != nil || purchased.Source != "purchase" || purchased.PurchaseID != purchase.ID || purchased.ValidUntil == nil || !purchased.ValidUntil.Equal(until) {
 		t.Fatalf("purchased grant validity/provenance=%+v err=%v", purchased, err)
 	}
+	if _, err = s.db.Exec(`UPDATE purchase_grant_instances SET valid_until=? WHERE purchase_id=? AND capability_id=?`, now.Add(-time.Minute).Format(time.RFC3339Nano), purchase.ID, "repository.publish"); err != nil {
+		t.Fatal(err)
+	}
+	if effective, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.publish", now); err != nil || effective.Source != "legacy" {
+		t.Fatalf("grandfathered fallback after purchase expiry=%+v err=%v", effective, err)
+	}
 }
 
 func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {

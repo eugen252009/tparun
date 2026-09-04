@@ -497,10 +497,13 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 				purchased.Limits.OperationMetric = legacy.Limits.OperationMetric
 			}
 		}
-		if !purchased.Enabled {
-			return commerce.Grant{}, commerce.ErrGrantDisabled
-		}
-		if !purchased.ActiveAt(at) {
+		if !purchased.Enabled || !purchased.ActiveAt(at) {
+			if legacyErr == nil && legacy.Enabled && legacy.Source == "legacy" && legacy.ValidUntil == nil && (legacy.OfferID == "nano" || legacy.OfferID == "standard" || legacy.OfferID == "pro") && legacy.ActiveAt(at) {
+				return legacy, nil
+			}
+			if !purchased.Enabled {
+				return commerce.Grant{}, commerce.ErrGrantDisabled
+			}
 			return commerce.Grant{}, commerce.ErrGrantInactive
 		}
 		return purchased, nil
