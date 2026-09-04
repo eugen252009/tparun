@@ -67,6 +67,9 @@ func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 	if old.Status != "superseded" {
 		t.Fatalf("old pending status=%s", old.Status)
 	}
+	if err := s.db.UpdatePurchaseCheckout(ctx, old.ID, "wrong-reference", "https://checkout.invalid", s.currentTime().Format(time.RFC3339Nano)); err == nil {
+		t.Fatal("superseded purchase checkout state was silently updated")
+	}
 	again, _, e := s.startNanoPurchase(ctx, "a", true)
 	if e != nil || again.ID != business.ID {
 		t.Fatalf("compatible retry=%+v err=%v", again, e)

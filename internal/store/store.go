@@ -483,8 +483,16 @@ func (s *Store) FailPendingPurchase(c context.Context, id, failedAt string) erro
 }
 
 func (s *Store) UpdatePurchaseCheckout(c context.Context, id, reference, checkoutURL string, updatedAt string) error {
-	_, e := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,updated_at=? WHERE id=? AND status='pending'`, reference, checkoutURL, updatedAt, id)
-	return e
+	res, e := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,updated_at=? WHERE id=? AND status='pending'`, reference, checkoutURL, updatedAt, id)
+	if e != nil {
+		return e
+	}
+	if n, e := res.RowsAffected(); e != nil {
+		return e
+	} else if n != 1 {
+		return fmt.Errorf("purchase checkout state changed")
+	}
+	return nil
 }
 func (s *Store) applyBillingProviderEvent(c context.Context, event billingProviderEvent, purchaseID, providerReference string, kind string, amount int64, currency, paidAt, entitlementStart, entitlementEnd string) error {
 	tx, e := s.db.BeginTx(c, nil)
