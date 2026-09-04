@@ -604,6 +604,18 @@ func (s *server) process(j store.Job) {
 	out := filepath.Join(generations, j.ID)
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PublishTimeout)
 	defer cancel()
+	workBytes, e := fileTreeSize(work)
+	if e != nil {
+		s.fail(j, fmt.Errorf("work capacity accounting: %w", e))
+		return
+	}
+	// TPA output is variable-sized; reserve a conservative two-work-tree bound
+	// before the runner can create candidate files.
+	candidateBound := workBytes*2 + 1<<20
+	if e = s.reserveCapacity(context.Background(), "", j.RepositoryID, j.ID, "candidate", candidateBound); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.runner.Publish(ctx, tpa.PublishRequest{Input: work, Output: candidate}); e != nil {
 		s.fail(j, e)
 		return
@@ -633,6 +645,14 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	candidateBytes, e := fileTreeSize(candidate)
+	if e != nil || candidateBytes > candidateBound {
+		if e == nil {
+			e = fmt.Errorf("candidate exceeded reserved capacity")
+		}
+		s.fail(j, e)
+		return
+	}
 	if e := s.publicationCheckpoint("candidate-verified"); e != nil {
 		s.fail(j, e)
 		return
@@ -644,6 +664,13 @@ func (s *server) process(j store.Job) {
 	// The verified candidate is the artifact that becomes the immutable
 	// generation. Never rebuild a second, independently unverified tree.
 	if e := os.Rename(candidate, out); e != nil {
+		s.fail(j, e)
+		return
+	}
+	// Same-filesystem rename changes ownership from candidate to generation;
+	// it does not allocate another copy. Clear the candidate reservation rather
+	// than counting the same physical bytes twice.
+	if e := s.resizeCapacity(j.ID, 0); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -922,17 +949,23 @@ func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, j
 	if old, ok := s.reservations[jobID]; ok {
 		oldBytes = old.Bytes
 	}
-	if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
-		return err
+	if accountID != "" {
+		if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
+			return err
+		}
 	}
 	var reserved int64
 	for _, r := range s.reservations {
 		reserved += r.Bytes
 	}
-	root := filepath.Join(s.cfg.DataDir, "incoming")
-	actual, err := fileTreeSize(root)
-	if err != nil {
-		return fmt.Errorf("capacity accounting: %w", err)
+	var actual int64
+	var err error
+	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
+		tree, sizeErr := fileTreeSize(root)
+		if sizeErr != nil {
+			return fmt.Errorf("capacity accounting: %w", sizeErr)
+		}
+		actual += tree
 	}
 	if s.cfg.MaxStagingBytes > 0 && actual+reserved+bytes > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging reservation exceeded")
