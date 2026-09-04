@@ -770,6 +770,9 @@ func (s *server) collectOldGenerations(repositoryID string) error {
 		keep = 0
 	}
 	for i := keep; i < len(candidates); i++ {
+		if err = s.publicationCheckpoint("cleanup-old-generation"); err != nil {
+			return err
+		}
 		if err = os.RemoveAll(filepath.Join(root, candidates[i].name)); err != nil {
 			return err
 		}
@@ -820,6 +823,9 @@ func (s *server) reconcileStagingState() error {
 		return fmt.Errorf("scan terminal staging state: %w", err)
 	}
 	for _, path := range paths {
+		if err := s.publicationCheckpoint("cleanup-terminal-incoming"); err != nil {
+			return fmt.Errorf("cleanup terminal incoming: %w", err)
+		}
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove terminal incoming workspace: %w", err)
 		}
@@ -833,6 +839,9 @@ func (s *server) reconcileStagingState() error {
 		return fmt.Errorf("scan staging state: %w", err)
 	}
 	for _, entry := range entries {
+		if err = s.publicationCheckpoint("cleanup-abandoned-work"); err != nil {
+			return fmt.Errorf("cleanup abandoned work: %w", err)
+		}
 		if err = os.RemoveAll(filepath.Join(work, entry.Name())); err != nil {
 			return fmt.Errorf("remove abandoned staging workspace: %w", err)
 		}
@@ -858,6 +867,9 @@ func (s *server) reconcilePublicationState() error {
 		// Temporary pointers are never authoritative. Remove only the
 		// reconciliation/publish names, then rebuild current from durable state.
 		for _, suffix := range []string{".reconcile"} {
+			if err = s.publicationCheckpoint("cleanup-temporary-pointer"); err != nil {
+				return fmt.Errorf("cleanup temporary pointer: %w", err)
+			}
 			if err = os.Remove(pointer + suffix); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove stale publication pointer: %w", err)
 			}
