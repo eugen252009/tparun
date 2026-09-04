@@ -264,7 +264,8 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A same-product unrelated capability must not be activated by this purchase.
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "unrelated", OfferID: "old", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+	unrelated := commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "unrelated", OfferID: "old", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999}, Source: "legacy", CreatedAt: now, UpdatedAt: now}
+	if err = s.PutGrant(ctx, unrelated); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt_snapshot", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}); err != nil {
@@ -274,8 +275,9 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	if err != nil || grant.OfferID != purchase.PlanCode || grant.Period != template.Period || grant.Limits != template.Limits || grant.PurchaseID != purchase.ID {
 		t.Fatalf("activated grant=%+v err=%v", grant, err)
 	}
-	if _, err = s.GetGrant(ctx, "snapshot", "test-product", "unrelated", now); err != nil {
-		t.Fatalf("unrelated grant changed: %v", err)
+	unchanged, err := s.GetGrant(ctx, "snapshot", "test-product", "unrelated", now)
+	if err != nil || unchanged != unrelated {
+		t.Fatalf("unrelated grant changed: before=%+v after=%+v err=%v", unrelated, unchanged, err)
 	}
 }
 
