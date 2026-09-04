@@ -209,6 +209,35 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	}
 }
 
+func TestPurchasePreservesGrandfatheredGrant(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	until := now.AddDate(1, 0, 0)
+	if err = s.CreateAccount(ctx, Account{ID: "grandfathered", Email: "grandfathered@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}, commerce.Grant{CustomerID: "grandfathered", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "grandfathered-purchase", AccountID: "grandfathered", ProductID: string(commerce.ProductTPAHub), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_grandfathered", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "repository.download", Period: commerce.PeriodAnnual}); err != nil {
+		t.Fatal(err)
+	}
+	transition := commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-grandfathered", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: purchase.Provider, Environment: purchase.BillingEnvironment, Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}
+	if err = s.ApplyPaymentTransition(ctx, transition); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.publish", now)
+	if err != nil || legacy.Source != "legacy" || legacy.PurchaseID != "" {
+		t.Fatalf("grandfathered grant changed after purchase: %+v err=%v", legacy, err)
+	}
+	if _, err = s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.download", now); err != nil {
+		t.Fatalf("purchased grant missing: %v", err)
+	}
+}
+
 func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
