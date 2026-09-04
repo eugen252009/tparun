@@ -62,7 +62,7 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	if response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
 		t.Fatal("custom grant egress limit was not enforced")
 	}
-	for _, grantErr := range []error{commerce.ErrGrantNotFound, commerce.ErrGrantInactive} {
+	for _, grantErr := range []error{commerce.ErrGrantNotFound, commerce.ErrGrantDisabled, commerce.ErrGrantInactive} {
 		s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
 			return commerce.Grant{}, grantErr
 		})
