@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -54,6 +55,17 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 		if response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
 			t.Fatalf("grant error %v did not fail closed", grantErr)
 		}
+	}
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return commerce.Grant{}, errors.New("database unavailable")
+	})
+	response, err = http.Get(h.URL + "/r/" + id + "/package.deb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected authority failure status=%d", response.StatusCode)
 	}
 }
 

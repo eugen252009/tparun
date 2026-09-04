@@ -425,6 +425,10 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	if used, limit, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
 		limited = grantDenied(err)
 		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
+		if !limited {
+			bad(w, http.StatusServiceUnavailable, "egress authority unavailable")
+			return
+		}
 	} else {
 		limited = egressLimited(used, limit)
 	}

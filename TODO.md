@@ -164,12 +164,12 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                                  | Required Work                     | Required Verification | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------ | --------------------------------- | --------------------- | -------- |
-| P0.8.1 | TODO   | Grant lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject error test     |          |
+| P0.8.1 | VERIFIED | Grant lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject error test     | `cmd/tpahub/main.go`: known grant denial is rate-limited and unexpected grant-authority failure returns 503; `cmd/tpahub/egress_enforcement_test.go`: injected authority failure is denied; `go test ./...` PASS |
 | P0.8.2 | TODO   | Usage lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject DB error test  |          |
 | P0.8.3 | TODO   | Accounting persistence failure must be observable                        | Structured failure logging        | Test/log evidence     |          |
-| P0.8.4 | TODO   | Missing grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  |          |
-| P0.8.5 | TODO   | Disabled grant behavior must be explicit                                 | Document deny/throttle policy     | Test                  |          |
-| P0.8.6 | TODO   | Expired grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  |          |
+| P0.8.4 | VERIFIED | Missing grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Policy: missing grant is conservatively rate-limited; `cmd/tpahub/egress_enforcement_test.go`: `ErrGrantNotFound` coverage; `go test ./...` PASS |
+| P0.8.5 | VERIFIED | Disabled grant behavior must be explicit                                 | Document deny/throttle policy     | Test                  | Policy: disabled grant is conservatively rate-limited; `cmd/tpahub/egress_enforcement_test.go`: `ErrGrantInactive` coverage; `go test ./...` PASS |
+| P0.8.6 | VERIFIED | Expired grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Expired/inactive grants follow the same conservative limited path through `grantDenied`; `cmd/tpahub/egress_enforcement_test.go`; `go test ./...` PASS |
 | P0.8.7 | TODO   | Malformed period must fail conservatively                                | Validate period                   | Test                  |          |
 | P0.8.8 | TODO   | Private repository behavior on egress-authority failure must be explicit | Decide deny vs throttle           | Test                  |          |
 
