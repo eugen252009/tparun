@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -35,6 +36,9 @@ func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 	}
 	if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), commerce.ProductID(TPAHubProductID), CapabilityRepositoryPublish, s.currentTime()); err == nil {
 		t.Fatal("hosted registration received an implicit permanent TPA grant")
+	}
+	if _, err = s.db.Entitlement(context.Background(), out.AccountID); err != sql.ErrNoRows {
+		t.Fatalf("hosted registration received legacy entitlement projection: %v", err)
 	}
 }
 
