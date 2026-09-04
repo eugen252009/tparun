@@ -37,6 +37,16 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	return s, h
 }
 
+type oversizedPublicationRunner struct{}
+
+func (oversizedPublicationRunner) Check(context.Context) error { return nil }
+func (oversizedPublicationRunner) Publish(_ context.Context, request tpa.PublishRequest) error {
+	if err := os.MkdirAll(request.Output, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(request.Output, "Packages"), make([]byte, 2<<20), 0644)
+}
+
 type copyingPublicationRunner struct{}
 
 func (copyingPublicationRunner) Check(context.Context) error { return nil }
@@ -317,6 +327,42 @@ func countJobsIfAny(s *server) int {
 	}
 	_ = s.db.Finish(context.Background(), j.ID, "failed", "test")
 	return 1
+}
+
+func TestCandidateOutputBeyondReservationCannotActivate(t *testing.T) {
+	s, _ := testServer(t)
+	s.ctx = context.Background()
+	s.cfg.MinDiskFreeBytes = 0
+	repositoryID := "ffffffffffffffffffffffffffffffff"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "oversized", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	incoming := filepath.Join(s.cfg.DataDir, "incoming", "oversized-job")
+	if err := os.MkdirAll(incoming, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, "input.deb"), []byte("input"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job := store.Job{ID: "oversized-job", RepositoryID: repositoryID, State: "running", IncomingPath: incoming, CreatedAt: "now"}
+	if err := s.db.CreateJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	s.runner = oversizedPublicationRunner{}
+	s.process(job)
+	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
+		t.Fatalf("oversized candidate became live: %v", err)
+	}
+	got, err := s.db.Job(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "failed" {
+		t.Fatalf("oversized job state=%s", got.State)
+	}
+	if len(s.reservations) != 0 {
+		t.Fatalf("reservation leaked: %#v", s.reservations)
+	}
 }
 
 func TestCapacityReservationDiskBoundariesAndCandidatePolicy(t *testing.T) {
