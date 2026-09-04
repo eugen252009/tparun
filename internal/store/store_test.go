@@ -392,6 +392,25 @@ func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T
 	if _, err = s.GetGrant(ctx, commerce.CustomerID(purchase.AccountID), commerce.ProductID(purchase.ProductID), "execute", now); err != nil {
 		t.Fatalf("late success did not activate grant: %v", err)
 	}
+
+	expiredPurchase := purchase
+	expiredPurchase.ID = "late-expired-purchase"
+	expiredPurchase.ProductID = "late-expired-product"
+	expiredPurchase.ProviderReference = "cs_late_expired"
+	if _, err = s.CreatePendingPurchase(ctx, expiredPurchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodAnnual}); err != nil {
+		t.Fatal(err)
+	}
+	expiredEvent := commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-late-expired", OperationID: expiredPurchase.ID, Type: commerce.PaymentExpired, ProviderReference: expiredPurchase.ProviderReference, AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, OccurredAt: now}, Provider: expiredPurchase.Provider, Environment: expiredPurchase.BillingEnvironment, Kind: "expired", AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, ValidFrom: now, ValidUntil: until}
+	if err = s.ApplyPaymentTransition(ctx, expiredEvent); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-late-expired-success", OperationID: expiredPurchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: expiredPurchase.ProviderReference, AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, OccurredAt: now}, Provider: expiredPurchase.Provider, Environment: expiredPurchase.BillingEnvironment, Kind: "success", AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, ValidFrom: now, ValidUntil: until}); err != nil {
+		t.Fatalf("payable expired checkout success rejected: %v", err)
+	}
+	expiredPaid, err := s.Purchase(ctx, expiredPurchase.ID)
+	if err != nil || expiredPaid.Status != "paid" {
+		t.Fatalf("expired checkout final state=%+v err=%v", expiredPaid, err)
+	}
 }
 
 func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
