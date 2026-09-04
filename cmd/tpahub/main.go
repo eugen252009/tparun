@@ -587,6 +587,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.publicationCheckpoint("candidate-verified"); e != nil {
+		s.fail(j, e)
+		return
+	}
 	if e := s.ensurePublishAccountActive(j.RepositoryID); e != nil {
 		s.fail(j, e)
 		return
@@ -633,6 +637,10 @@ func (s *server) process(j store.Job) {
 	}
 	if e := s.observeAccountStorage(context.Background(), j.RepositoryID, s.currentTime()); e != nil {
 		log.Printf("storage high-water update: repository=%s: %v", j.RepositoryID, e)
+	}
+	if e := s.publicationCheckpoint("before-job-success"); e != nil {
+		s.fail(j, e)
+		return
 	}
 	if e := s.finishPublishedJob(j); e != nil {
 		s.fail(j, e)

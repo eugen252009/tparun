@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +35,38 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	return s, h
 }
 
+type copyingPublicationRunner struct{}
+
+func (copyingPublicationRunner) Check(context.Context) error { return nil }
+func (copyingPublicationRunner) Publish(_ context.Context, request tpa.PublishRequest) error {
+	if err := os.MkdirAll(request.Output, 0755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(request.Input)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		in, err := os.Open(filepath.Join(request.Input, entry.Name()))
+		if err != nil {
+			return err
+		}
+		out, err := os.Create(filepath.Join(request.Output, entry.Name()))
+		if err == nil {
+			_, err = io.Copy(out, in)
+			out.Close()
+		}
+		in.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type blockingPublicationRunner struct{ started, release chan struct{} }
 
 func (r *blockingPublicationRunner) Check(context.Context) error { return nil }
@@ -50,6 +83,94 @@ func (r *blockingPublicationRunner) Publish(_ context.Context, request tpa.Publi
 	}
 	<-r.release
 	return nil
+}
+
+func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
+	for _, stage := range []string{"candidate-built", "candidate-verified", "before-live-swap", "after-live-swap", "after-durable-record", "before-job-success"} {
+		t.Run(stage, func(t *testing.T) {
+			s, _ := testServer(t)
+			s.ctx = context.Background()
+			s.runner = copyingPublicationRunner{}
+			ctx := context.Background()
+			repositoryID := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+			if err := s.db.CreateRepository(ctx, store.Repository{ID: repositoryID, AccountID: "a", Name: stage, CreatedAt: "now"}); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(s.cfg.DataDir, "repos", repositoryID)
+			old := filepath.Join(root, "generations", "job-old")
+			if err := os.MkdirAll(old, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(old, "old.deb"), []byte("old"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join("generations", "job-old"), filepath.Join(root, "current")); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.SetActiveGeneration(ctx, repositoryID, "job-old", "now"); err != nil {
+				t.Fatal(err)
+			}
+			incoming := filepath.Join(s.cfg.DataDir, "incoming", "job-new")
+			if err := os.MkdirAll(incoming, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(incoming, "new.deb"), []byte("new"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			job := store.Job{ID: "job-new", RepositoryID: repositoryID, State: "running", IncomingPath: incoming, CreatedAt: "now"}
+			if err := s.db.CreateJob(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			s.publicationFault = func(found string) error {
+				if found == stage {
+					panic("simulated process death")
+				}
+				return nil
+			}
+			func() { defer func() { _ = recover() }(); s.process(job) }()
+			s.db.Close()
+			db, err := store.Open(s.cfg.DataDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			s2 := &server{cfg: s.cfg, db: db, runner: copyingPublicationRunner{}, ctx: context.Background()}
+			if err = s2.reconcilePublicationState(); err != nil {
+				t.Fatal(err)
+			}
+			if err = s2.reconcileStagingState(); err != nil {
+				t.Fatal(err)
+			}
+			target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := "job-old"
+			if stage == "after-durable-record" || stage == "before-job-success" {
+				expected = "job-new"
+			}
+			if filepath.Base(target) != expected {
+				t.Fatalf("stage=%s target=%s expected=%s", stage, filepath.Base(target), expected)
+			}
+			nextIncoming := filepath.Join(s.cfg.DataDir, "incoming", "job-next")
+			if err := os.MkdirAll(nextIncoming, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(nextIncoming, "next.deb"), []byte("next"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			next := store.Job{ID: "job-next", RepositoryID: repositoryID, State: "running", IncomingPath: nextIncoming, CreatedAt: "now2"}
+			if err := db.CreateJob(ctx, next); err != nil {
+				t.Fatal(err)
+			}
+			s2.process(next)
+			for _, name := range []string{"old.deb", "next.deb"} {
+				if _, err := os.Stat(filepath.Join(root, "current", name)); err != nil {
+					t.Fatalf("stage=%s missing %s: %v", stage, name, err)
+				}
+			}
+		})
+	}
 }
 
 func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
