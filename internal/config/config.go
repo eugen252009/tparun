@@ -15,6 +15,7 @@ type Config struct {
 	PublishTimeout          time.Duration
 	MaxUpload               int64
 	MaxStagingBytes         int64
+	MinDiskFreeBytes        int64
 	RegistrationEnabled     bool
 	BillingProvider         string
 	BillingEnvironment      string
@@ -34,6 +35,7 @@ func Load() Config {
 		PublishTimeout:          duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
 		MaxUpload:               integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		MaxStagingBytes:         integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
+		MinDiskFreeBytes:        integer("TPAHUB_MIN_DISK_FREE_BYTES", 100<<20),
 		RegistrationEnabled:     os.Getenv("TPAHUB_REGISTRATION_ENABLED") != "false",
 		BillingProvider:         env("TPAHUB_BILLING_PROVIDER", "mock"),
 		BillingEnvironment:      env("TPAHUB_BILLING_ENVIRONMENT", "mock"),

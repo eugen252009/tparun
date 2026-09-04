@@ -269,6 +269,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
+	if err := s.checkDiskHeadroom(); err != nil {
+		bad(w, http.StatusInsufficientStorage, err.Error())
+		return
+	}
 	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
 		bad(w, http.StatusForbidden, "repository publishing grant unavailable")
 		return
@@ -346,6 +350,11 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	if total == 0 {
 		_ = os.RemoveAll(dir)
 		bad(w, 400, "at least one .deb is required")
+		return
+	}
+	if err := s.checkDiskHeadroom(); err != nil {
+		_ = os.RemoveAll(dir)
+		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
 	if err := s.checkStagingCapacity(r.Context(), accountID(r), total); err != nil {
@@ -708,6 +717,21 @@ func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	}
 	if account.Status != store.AccountStatusActive {
 		return fmt.Errorf("publication account is not active")
+	}
+	return nil
+}
+
+func (s *server) checkDiskHeadroom() error {
+	if s.cfg.MinDiskFreeBytes <= 0 {
+		return nil
+	}
+	var stat unix.Statfs_t
+	if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
+		return fmt.Errorf("disk headroom unavailable: %w", err)
+	}
+	free := int64(stat.Bavail) * int64(stat.Bsize)
+	if free < s.cfg.MinDiskFreeBytes {
+		return fmt.Errorf("minimum disk headroom unavailable")
 	}
 	return nil
 }

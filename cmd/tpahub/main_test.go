@@ -31,6 +31,14 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestDiskHeadroomGuardFailsClosed(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MinDiskFreeBytes = 1 << 60
+	if err := s.checkDiskHeadroom(); err == nil {
+		t.Fatal("disk headroom guard accepted impossible reserve")
+	}
+}
+
 func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 	s, _ := testServer(t)
 	now := time.Now().UTC()
