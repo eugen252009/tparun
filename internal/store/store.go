@@ -124,7 +124,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT DISTINCT plan_code FROM account_entitlements`)
+	rows, err := tx.Query(`SELECT DISTINCT plan_code FROM account_entitlements WHERE source='legacy'`)
 	if err != nil {
 		return fmt.Errorf("inspect legacy plans: %w", err)
 	}
@@ -176,7 +176,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed entitlement: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
@@ -198,7 +198,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed grant: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
