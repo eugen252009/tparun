@@ -9,9 +9,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
+	s, h := testServer(t)
+	s.cfg.BillingPurchasesEnabled = true
+	req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(`{"email":"hosted@example.invalid","password":"long-enough-password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var out struct {
+		AccountID string `json:"account_id"`
+	}
+	if err = json.NewDecoder(response.Body).Decode(&out); err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("registration status=%d account=%q err=%v", response.StatusCode, out.AccountID, err)
+	}
+	if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), commerce.ProductID(TPAHubProductID), CapabilityRepositoryPublish, s.currentTime()); err == nil {
+		t.Fatal("hosted registration received an implicit permanent TPA grant")
+	}
+}
 
 func TestAccountStatusEnforcedAcrossAuthenticationPaths(t *testing.T) {
 	s, h := testServer(t)

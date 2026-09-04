@@ -184,7 +184,7 @@ func (s *server) createAccount(r *http.Request, email, password string) (store.A
 		return store.Account{}, e
 	}
 	a := store.Account{ID: newID(), Email: email, PasswordHash: string(h), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if e = s.db.CreateAccount(r.Context(), a, defaultTPAGrants(a.CreatedAt)...); e != nil {
+	if e = s.db.CreateAccount(r.Context(), a, s.initialTPAGrants(a.CreatedAt)...); e != nil {
 		return store.Account{}, e
 	}
 	return a, nil

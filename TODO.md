@@ -73,7 +73,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                                            | Required Work                                            | Required Verification        | Evidence |
 | ------ | ------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------- | -------- |
-| P0.3.1 | TODO   | Hosted production accounts must not receive accidental permanent free grants       | Remove implicit permanent Nano provisioning              | Registration test            |          |
+| P0.3.1 | VERIFIED | Hosted production accounts must not receive accidental permanent free grants       | Remove implicit permanent Nano provisioning              | Registration test            | `cmd/tpahub/auth.go`: `initialTPAGrants` returns no grants when billing purchases are enabled; `cmd/tpahub/web.go` uses the same policy; `cmd/tpahub/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants`; `go test ./...` PASS |
 | P0.3.2 | TODO   | New hosted accounts must not be labeled `legacy`                                   | Introduce explicit provisioning source/policy            | Persistence assertion        |          |
 | P0.3.3 | TODO   | Development/local mode provisioning must be explicit                               | Define development/self-host policy                      | Config test                  |          |
 | P0.3.4 | TODO   | Historical migrated accounts must have explicit grandfathering semantics           | Separate legacy migration policy                         | Migration test               |          |
