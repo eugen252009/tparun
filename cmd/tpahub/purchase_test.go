@@ -86,6 +86,17 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if purchase.Status != "pending" {
 		t.Fatalf("status=%s", purchase.Status)
 	}
+	// Simulate inherited Standard limits at webhook time. Activation must use
+	// the Nano purchase snapshot, not whatever product grants currently exist.
+	until := now.AddDate(1, 0, 0)
+	for _, grant := range []commerce.Grant{
+		{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 500_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
+		{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryDownload, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{EgressBytes: 20_000_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := s.db.PutGrant(context.Background(), grant); err != nil {
+			t.Fatal(err)
+		}
+	}
 	event := fmt.Sprintf(`{"id":"evt_test_1","type":"checkout.session.completed","data":{"object":{"id":"cs_test_1","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, created.PurchaseID)
 	web, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", now))
@@ -111,8 +122,12 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
 	}
 	grant, grantErr := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now)
-	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil {
-		t.Fatalf("activated grant=%+v err=%v", grant, grantErr)
+	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != commerce.PeriodAnnual || grant.Limits.StorageBytes != NanoStorageBytes {
+		t.Fatalf("activated publish grant=%+v err=%v", grant, grantErr)
+	}
+	downloadGrant, downloadErr := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	if downloadErr != nil || downloadGrant.OfferID != "nano" || downloadGrant.Period != commerce.PeriodAnnual || downloadGrant.Limits.EgressBytes != NanoEgressBytes {
+		t.Fatalf("activated download grant=%+v err=%v", downloadGrant, downloadErr)
 	}
 	grantBeforeDuplicate := grant
 	entBeforeDuplicate := ent
