@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,6 +81,9 @@ func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
 	s.Close()
 	if _, err = Open(dir); err == nil {
 		t.Fatal("unknown legacy plan migrated successfully")
+	}
+	if _, err = os.Stat(filepath.Join(dir, "tpahub.db")); err != nil {
+		t.Fatal(err)
 	}
 }
 

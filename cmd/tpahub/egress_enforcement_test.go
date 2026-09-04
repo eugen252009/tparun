@@ -1,18 +1,34 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func TestEgressAccountingFailureIsObservable(t *testing.T) {
+	s, _ := testServer(t)
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	s.db.Close()
+	s.recordRepositoryEgress("missing-repository", "2026-01-01", 10)
+	if !strings.Contains(output.String(), "repository egress accounting") {
+		t.Fatalf("accounting failure was not logged: %q", output.String())
+	}
+}
 
 func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	s, h := testServer(t)
