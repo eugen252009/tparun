@@ -402,13 +402,43 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 	if legacyErr != nil && legacyErr != sql.ErrNoRows {
 		return commerce.Grant{}, legacyErr
 	}
-	purchased, purchaseErr := scanGrant(s.db.QueryRowContext(c, `SELECT customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,'purchase',purchase_id,created_at,updated_at FROM purchase_grant_instances WHERE customer_id=? AND product_id=? AND capability_id=? ORDER BY valid_from DESC,purchase_id DESC LIMIT 1`, customer, product, capability))
-	if purchaseErr != nil && purchaseErr != sql.ErrNoRows {
+	rows, purchaseErr := s.db.QueryContext(c, `SELECT customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,'purchase',purchase_id,created_at,updated_at FROM purchase_grant_instances WHERE customer_id=? AND product_id=? AND capability_id=? ORDER BY valid_from DESC,purchase_id DESC`, customer, product, capability)
+	if purchaseErr != nil {
 		return commerce.Grant{}, purchaseErr
 	}
-	if purchaseErr == nil {
+	var purchased commerce.Grant
+	purchaseFound := false
+	for rows.Next() {
+		candidate, scanErr := scanGrant(rows)
+		if scanErr != nil {
+			rows.Close()
+			return commerce.Grant{}, scanErr
+		}
+		if !purchaseFound {
+			purchased, purchaseFound = candidate, true
+			continue
+		}
+		// Multiple provider-payable purchases are retained independently. The
+		// effective grant is the component-wise maximum, so a later success
+		// cannot reduce rights granted by an earlier success.
+		if candidate.Limits.StorageBytes > purchased.Limits.StorageBytes {
+			purchased.Limits.StorageBytes = candidate.Limits.StorageBytes
+		}
+		if candidate.Limits.EgressBytes > purchased.Limits.EgressBytes {
+			purchased.Limits.EgressBytes = candidate.Limits.EgressBytes
+		}
+		if candidate.Limits.OperationCount > purchased.Limits.OperationCount {
+			purchased.Limits.OperationCount = candidate.Limits.OperationCount
+			purchased.Limits.OperationMetric = candidate.Limits.OperationMetric
+		}
+	}
+	if purchaseErr = rows.Err(); purchaseErr != nil {
+		rows.Close()
+		return commerce.Grant{}, purchaseErr
+	}
+	rows.Close()
+	if purchaseFound {
 		if legacyErr == nil && legacy.Source == "legacy" && legacy.ValidUntil == nil && (legacy.OfferID == "nano" || legacy.OfferID == "standard" || legacy.OfferID == "pro") {
-			// Grandfathered rights are never reduced by a later purchase.
 			if legacy.Limits.StorageBytes > purchased.Limits.StorageBytes {
 				purchased.Limits.StorageBytes = legacy.Limits.StorageBytes
 			}
