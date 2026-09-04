@@ -32,6 +32,47 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+func TestRenameFailurePreservesPreviousGeneration(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "generations", "job-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplaceSymlink(filepath.Join(root, "missing-next"), filepath.Join(root, "current")); err == nil {
+		t.Fatal("rename failure was accepted")
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("previous generation target=%q err=%v", target, err)
+	}
+}
+
+func TestNextGenerationRetainsPreviousArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "repo")
+	for _, generation := range []string{"job-1", "job-2"} {
+		if err := os.MkdirAll(filepath.Join(root, "generations", generation), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	next := filepath.Join(root, "current.next")
+	if err := os.Symlink(filepath.Join("generations", "job-2"), next); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplaceSymlink(next, filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "generations", "job-1")); err != nil {
+		t.Fatalf("previous generation removed: %v", err)
+	}
+}
+
 func TestPublicationFaultInjectionCheckpoints(t *testing.T) {
 	s, _ := testServer(t)
 	seen := ""

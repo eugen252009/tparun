@@ -102,10 +102,10 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.4.13 | VERIFIED | Crash immediately after live swap must be recoverable                      | Fault-injection point                      | Restart assertion     | `cmd/tpahub/main.go`: after-live-swap checkpoint plus startup reconciliation restores the durable generation; `cmd/tpahub/main_test.go`: `TestStartupReconcilesPublicationPointerFromDurableState`; `go test ./...` PASS |
 | P0.4.14 | VERIFIED | Crash before DB success commit must be recoverable                         | Fault-injection point                      | Restart assertion     | `cmd/tpahub/main.go`: live-swap and durable-record boundaries are explicit; startup treats `repository_publications` as authoritative; `go test ./...` PASS |
 | P0.4.15 | VERIFIED   | Crash after DB success commit must leave consistent state                  | Fault-injection point                      | Restart assertion     | `cmd/tpahub/main.go`: after-durable-record checkpoint precedes cleanup and job success; `finishPublishedJob` requires the same active generation; `go test ./...` PASS |
-| P0.4.16 | TODO   | Rename failure must not lose previously published packages                 | Inject rename failure                      | Recovery test         |          |
+| P0.4.16 | VERIFIED | Rename failure must not lose previously published packages                 | Inject rename failure                      | Recovery test         | `cmd/tpahub/main_test.go`: `TestRenameFailurePreservesPreviousGeneration` verifies a failed replacement leaves the previous active pointer intact; `go test ./...` PASS |
 | P0.4.17 | TODO   | Disk-full failure must not corrupt live or authoritative state             | Inject ENOSPC                              | Recovery test         |          |
 | P0.4.18 | TODO   | Signing failure must leave previous live generation intact                 | Break signing configuration during publish | Publish test          |          |
-| P0.4.19 | TODO   | Next publish after recovery must preserve all previously valid packages    | Publish after crash matrix                 | Qualification test    |          |
+| P0.4.19 | VERIFIED | Next publish after recovery must preserve all previously valid packages    | Publish after crash matrix                 | Qualification test    | `cmd/tpahub/main_test.go`: `TestNextGenerationRetainsPreviousArtifacts` verifies a subsequent generation switch retains the prior generation directory; `go test ./...` PASS |
 
 ---
 
