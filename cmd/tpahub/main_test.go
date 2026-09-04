@@ -156,7 +156,7 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.checkStagingCapacity(context.Background(), "a", 1); err == nil {
+	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err == nil {
 		t.Fatal("staging overage was accepted")
 	}
 }

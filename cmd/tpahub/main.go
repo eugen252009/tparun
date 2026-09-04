@@ -284,7 +284,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			bad(w, http.StatusInsufficientStorage, err.Error())
 			return
 		}
-		if err := s.checkStagingCapacity(r.Context(), accountID(r), r.ContentLength); err != nil {
+		if err := s.checkStagingCapacity(r.Context(), accountID(r), r.ContentLength, false); err != nil {
 			bad(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
 		}
@@ -368,7 +368,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	if err := s.checkStagingCapacity(r.Context(), accountID(r), 0); err != nil {
+	if err := s.checkStagingCapacity(r.Context(), accountID(r), total, true); err != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
@@ -567,7 +567,7 @@ func (s *server) process(j store.Job) {
 		s.fail(j, repositoryErr)
 		return
 	}
-	if e := s.checkStagingCapacity(context.Background(), repository.AccountID, 0); e != nil {
+	if e := s.checkStagingCapacity(context.Background(), repository.AccountID, 0, true); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -815,7 +815,7 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 	return nil
 }
 
-func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64) error {
+func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64, alreadyWritten bool) error {
 	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		return fmt.Errorf("staging grant unavailable: %w", err)
@@ -829,21 +829,23 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 	}
 	var staged int64
 	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
-		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil || entry.IsDir() {
-				return nil
-			}
-			info, statErr := entry.Info()
-			if statErr == nil {
-				staged += info.Size()
-			}
-			return nil
-		})
+		staged += fileTreeSize(root)
 	}
-	if s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
+	if !alreadyWritten && s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging storage limit exceeded")
 	}
-	if usage.StoredBytes+staged+incoming > grant.Limits.StorageBytes {
+	accountStaged := int64(0)
+	paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
+	if pathErr != nil {
+		return fmt.Errorf("account staging usage unavailable: %w", pathErr)
+	}
+	for _, path := range paths {
+		accountStaged += fileTreeSize(path)
+		jobID := filepath.Base(path)
+		accountStaged += fileTreeSize(filepath.Join(s.cfg.DataDir, "work", jobID))
+		accountStaged += fileTreeSize(filepath.Join(s.cfg.DataDir, "work", jobID+"-published"))
+	}
+	if usage.StoredBytes+accountStaged+incoming > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
 	}
 	return nil
@@ -880,6 +882,20 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	}
 	return nil
 }
+func fileTreeSize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return nil
+		}
+		if info, err := entry.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
 func copyDebs(src, dst string, replace bool) error {
 	entries, e := os.ReadDir(src)
 	if e != nil {
