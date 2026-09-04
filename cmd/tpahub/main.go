@@ -573,7 +573,7 @@ func (s *server) process(j store.Job) {
 		baseline = art
 	}
 	// Reserve work, candidate, and immutable-generation expansion before copying.
-	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", incomingBytes*2); e != nil {
+	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", incomingBytes); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -586,6 +586,12 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	if e := copyDebs(j.IncomingPath, work, true); e != nil {
+		s.fail(j, e)
+		return
+	}
+	// Work reservation is converted to actual bytes before candidate creation;
+	// subsequent output is bounded by the publication capacity checks.
+	if e := s.resizeCapacity(j.ID, 0); e != nil {
 		s.fail(j, e)
 		return
 	}
