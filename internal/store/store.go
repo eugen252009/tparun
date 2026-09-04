@@ -15,6 +15,7 @@ import (
 
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/payments"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
@@ -29,6 +30,7 @@ type Store struct{ db *sql.DB }
 
 var ErrNotFound = sql.ErrNoRows
 var migrationFault func(string) error
+var migrationNow = time.Now
 
 func migrationCheckpoint(stage string) error {
 	if migrationFault != nil {
@@ -52,7 +54,7 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", e)
 	}
-	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL)`); e != nil {
+	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS egress_accounting_uncertain(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),created_at TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '')`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize publication state: %w", e)
 	}
@@ -71,11 +73,15 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		db.Close()
 		return nil, fmt.Errorf("migrate entitlement validity: %w", e)
 	}
-	if _, e = db.Exec(`CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; DROP TRIGGER IF EXISTS billing_purchase_terms_immutable; CREATE TRIGGER billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN OLD.snapshot_finalized=1 AND (NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id OR NEW.rate_card_mode<>OLD.rate_card_mode OR NEW.tax_classification<>OLD.tax_classification OR ((NEW.entitlement_period_start<>OLD.entitlement_period_start OR NEW.entitlement_period_end<>OLD.entitlement_period_end) AND NOT (NEW.status='paid' AND OLD.status IN ('pending','superseded','failed','expired'))) OR NEW.provider<>OLD.provider OR NEW.billing_environment<>OLD.billing_environment) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_update BEFORE UPDATE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_delete BEFORE DELETE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id)`); e != nil {
+	if _, e = db.Exec(`CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; DROP TRIGGER IF EXISTS billing_purchase_terms_immutable; CREATE TRIGGER billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN OLD.snapshot_finalized=1 AND (NEW.snapshot_finalized<>OLD.snapshot_finalized OR NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id OR NEW.rate_card_mode<>OLD.rate_card_mode OR NEW.tax_classification<>OLD.tax_classification OR NEW.entitlement_period_start<>OLD.entitlement_period_start OR NEW.entitlement_period_end<>OLD.entitlement_period_end OR NEW.provider<>OLD.provider OR NEW.provider_reference<>OLD.provider_reference OR NEW.billing_environment<>OLD.billing_environment) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_update BEFORE UPDATE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_delete BEFORE DELETE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id); CREATE TRIGGER IF NOT EXISTS migration_grants_commercial_terms_immutable BEFORE UPDATE ON product_grants WHEN OLD.source='migration' AND (NEW.source<>OLD.source OR NEW.offer_id<>OLD.offer_id OR NEW.valid_from<>OLD.valid_from OR NEW.valid_until<>OLD.valid_until OR NEW.period_cadence<>OLD.period_cadence OR NEW.storage_limit_bytes<>OLD.storage_limit_bytes OR NEW.egress_limit_bytes<>OLD.egress_limit_bytes OR NEW.operation_metric<>OLD.operation_metric OR NEW.operation_limit<>OLD.operation_limit OR NEW.purchase_id<>OLD.purchase_id) BEGIN SELECT RAISE(ABORT,'migration grant terms are immutable'); END`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize purchase grant instances: %w", e)
 	}
 	if e = migrateLegacyTPAGrants(db); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = migrateLegacyAccessToSixMonthNano(db); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -154,7 +160,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 			sources.Close()
 			return fmt.Errorf("read entitlement source: %w", err)
 		}
-		if source != "legacy" && source != "purchase" {
+		if source != "legacy" && source != "migration" && source != "local" && source != "purchase" {
 			sources.Close()
 			return fmt.Errorf("unknown entitlement source: %s", source)
 		}
@@ -241,6 +247,68 @@ INSERT OR IGNORE INTO purchase_grant_snapshots(purchase_id,capability_id,period_
 	return tx.Commit()
 }
 
+func migrateLegacyAccessToSixMonthNano(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return tx.Commit()
+	}
+	anchor := migrationNow().UTC()
+	from, until := anchor.Format(time.RFC3339Nano), anchor.AddDate(0, 6, 0).Format(time.RFC3339Nano)
+	rows, err := tx.Query(`SELECT account_id FROM account_entitlements WHERE source='legacy' AND valid_from<=? AND (valid_until='' OR valid_until>?) UNION SELECT customer_id FROM product_grants WHERE source='legacy' AND product_id=? AND enabled=1 AND valid_from<=? AND (valid_until='' OR valid_until>?)`, from, from, string(commerce.ProductTPAHub), from, from)
+	if err != nil {
+		return err
+	}
+	var accounts []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		accounts = append(accounts, id)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if err = migrationCheckpoint("bounded-after-eligibility"); err != nil {
+		return err
+	}
+	offer := tpahubproduct.NanoOffer()
+	for _, accountID := range accounts {
+		if _, err = tx.Exec(`DELETE FROM product_grants WHERE customer_id=? AND product_id=? AND source='legacy'`, accountID, string(offer.ProductID)); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE account_entitlements SET plan_code='nano',started_at=?,valid_from=?,valid_until=?,source='migration',purchase_id='',updated_at=? WHERE account_id=? AND source='legacy'`, from, from, until, from, accountID); err != nil {
+			return err
+		}
+		for _, template := range offer.Grants {
+			if _, err = tx.Exec(`INSERT INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,source,purchase_id,created_at,updated_at) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,'migration','',?,?) ON CONFLICT(customer_id,product_id,capability_id) DO UPDATE SET offer_id=excluded.offer_id,enabled=1,valid_from=excluded.valid_from,valid_until=excluded.valid_until,period_cadence=excluded.period_cadence,storage_limit_bytes=excluded.storage_limit_bytes,egress_limit_bytes=excluded.egress_limit_bytes,operation_metric=excluded.operation_metric,operation_limit=excluded.operation_limit,source='migration',purchase_id='',updated_at=excluded.updated_at`, accountID, offer.ProductID, template.CapabilityID, offer.ID, from, until, template.Period, template.Limits.StorageBytes, template.Limits.EgressBytes, template.Limits.OperationMetric, template.Limits.OperationCount, from, from); err != nil {
+				return err
+			}
+		}
+		if err = migrationCheckpoint("bounded-after-account"); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`INSERT INTO schema_migrations(name,applied_at) VALUES('legacy-six-month-nano-v1',?)`, from); err != nil {
+		return err
+	}
+	if err = migrationCheckpoint("bounded-before-commit"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func rebuildCompatibilityProjection(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -302,6 +370,46 @@ func (s *Store) AddRepositoryEgress(c context.Context, repositoryID, period stri
 	_, e := s.db.ExecContext(c, `INSERT INTO repository_egress_usage(repository_id,period,egress_bytes,updated_at) VALUES(?,?,?,?) ON CONFLICT(repository_id,period) DO UPDATE SET egress_bytes=egress_bytes+excluded.egress_bytes,updated_at=excluded.updated_at`, repositoryID, period, bytes, updatedAt)
 	return e
 }
+func (s *Store) BeginEgressDelivery(c context.Context, id, repositoryID, createdAt string) error {
+	_, err := s.db.ExecContext(c, `INSERT INTO egress_accounting_uncertain(id,repository_id,created_at) VALUES(?,?,?)`, id, repositoryID, createdAt)
+	return err
+}
+func (s *Store) CompleteEgressDelivery(c context.Context, id, repositoryID, usageDate string, bytes int64, updatedAt string) error {
+	tx, err := s.db.BeginTx(c, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if bytes > 0 {
+		if _, err = tx.ExecContext(c, `INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES(?,?,?,?) ON CONFLICT(repository_id,usage_date) DO UPDATE SET egress_bytes=egress_bytes+excluded.egress_bytes,updated_at=excluded.updated_at`, repositoryID, usageDate, bytes, updatedAt); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(c, `DELETE FROM egress_accounting_uncertain WHERE id=? AND repository_id=?`, id, repositoryID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("egress delivery uncertainty missing")
+	}
+	return tx.Commit()
+}
+func (s *Store) AccountEgressUncertain(c context.Context, accountID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(c, `SELECT COUNT(*) FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=?`, accountID).Scan(&n)
+	return n > 0, err
+}
+func (s *Store) RepositoryEgressUncertain(c context.Context, repositoryID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(c, `SELECT COUNT(*) FROM egress_accounting_uncertain WHERE repository_id=?`, repositoryID).Scan(&n)
+	return n > 0, err
+}
+func (s *Store) ClearAccountEgressUncertainty(c context.Context, accountID string) error {
+	_, err := s.db.ExecContext(c, `DELETE FROM egress_accounting_uncertain WHERE repository_id IN (SELECT id FROM repositories WHERE account_id=?)`, accountID)
+	return err
+}
+
 func (s *Store) AddRepositoryEgressDaily(c context.Context, repositoryID, usageDate string, bytes int64, updatedAt string) error {
 	if bytes <= 0 {
 		return nil
@@ -403,7 +511,7 @@ func (x AccountEntitlement) ActiveAt(now time.Time) (bool, error) {
 		return false, nil
 	}
 	if x.ValidUntil == "" {
-		return x.Source == "legacy", nil
+		return x.Source == "legacy" || x.Source == "local", nil
 	}
 	until, e := parseEntitlementTime(x.ValidUntil)
 	if e != nil {
@@ -421,7 +529,7 @@ func (s *Store) SetEntitlement(c context.Context, x AccountEntitlement) error {
 		x.ValidFrom = x.StartedAt
 	}
 	if x.Source == "" {
-		x.Source = "legacy"
+		x.Source = "local"
 	}
 	tx, e := s.db.BeginTx(c, nil)
 	if e != nil {
@@ -432,7 +540,7 @@ func (s *Store) SetEntitlement(c context.Context, x AccountEntitlement) error {
 		return e
 	}
 	if x.Source != "purchase" {
-		if _, e = tx.ExecContext(c, `UPDATE product_grants SET offer_id=?,enabled=1,valid_from=?,valid_until=?,period_cadence=CASE WHEN ?='nano' THEN 'annual' ELSE 'monthly' END,storage_limit_bytes=CASE WHEN capability_id='repository.publish' THEN CASE ? WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END ELSE storage_limit_bytes END,egress_limit_bytes=CASE WHEN capability_id='repository.download' THEN CASE ? WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END ELSE egress_limit_bytes END,source=?,purchase_id=?,updated_at=? WHERE customer_id=? AND product_id='tpa-hub' AND source='legacy'`, x.PlanCode, x.ValidFrom, x.ValidUntil, x.PlanCode, x.PlanCode, x.PlanCode, x.Source, x.PurchaseID, x.UpdatedAt, x.AccountID); e != nil {
+		if _, e = tx.ExecContext(c, `UPDATE product_grants SET offer_id=?,enabled=1,valid_from=?,valid_until=?,period_cadence=CASE WHEN ?='nano' THEN 'annual' ELSE 'monthly' END,storage_limit_bytes=CASE WHEN capability_id='repository.publish' THEN CASE ? WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END ELSE storage_limit_bytes END,egress_limit_bytes=CASE WHEN capability_id='repository.download' THEN CASE ? WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END ELSE egress_limit_bytes END,source=?,purchase_id=?,updated_at=? WHERE customer_id=? AND product_id='tpa-hub' AND source IN ('legacy','local')`, x.PlanCode, x.ValidFrom, x.ValidUntil, x.PlanCode, x.PlanCode, x.PlanCode, x.Source, x.PurchaseID, x.UpdatedAt, x.AccountID); e != nil {
 			return e
 		}
 	}
@@ -473,85 +581,103 @@ func scanGrant(row interface{ Scan(...any) error }) (commerce.Grant, error) {
 	return grant, nil
 }
 func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, product commerce.ProductID, capability commerce.CapabilityID, at time.Time) (commerce.Grant, error) {
-	legacy, legacyErr := scanGrant(s.db.QueryRowContext(c, `SELECT customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,source,purchase_id,created_at,updated_at FROM product_grants WHERE customer_id=? AND product_id=? AND capability_id=?`, customer, product, capability))
-	if legacyErr != nil && legacyErr != sql.ErrNoRows {
-		return commerce.Grant{}, legacyErr
+	const columns = `customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,source,purchase_id,created_at,updated_at`
+	var contributors []commerce.Grant
+	seen, enabledSeen := false, false
+	base, err := scanGrant(s.db.QueryRowContext(c, `SELECT `+columns+` FROM product_grants WHERE customer_id=? AND product_id=? AND capability_id=?`, customer, product, capability))
+	if err == nil {
+		// Permanent historical legacy rows are audit-only after the bounded
+		// migration. They never participate in runtime authorization.
+		if base.Source == "legacy" && base.ProductID == commerce.ProductTPAHub {
+			base.Enabled = false
+		}
+		seen = true
+		if base.Enabled {
+			enabledSeen = true
+			if base.ActiveAt(at) {
+				contributors = append(contributors, base)
+			}
+		}
+	} else if err != sql.ErrNoRows {
+		return commerce.Grant{}, err
 	}
-	rows, purchaseErr := s.db.QueryContext(c, `SELECT customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,'purchase',purchase_id,created_at,updated_at FROM purchase_grant_instances WHERE customer_id=? AND product_id=? AND capability_id=? ORDER BY valid_from DESC,purchase_id DESC`, customer, product, capability)
-	if purchaseErr != nil {
-		return commerce.Grant{}, purchaseErr
+	rows, err := s.db.QueryContext(c, `SELECT customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,'purchase',purchase_id,created_at,updated_at FROM purchase_grant_instances WHERE customer_id=? AND product_id=? AND capability_id=? ORDER BY valid_from DESC,purchase_id DESC`, customer, product, capability)
+	if err != nil {
+		return commerce.Grant{}, err
 	}
-	var purchased commerce.Grant
-	purchaseFound, purchaseSeen, enabledSeen := false, false, false
+	defer rows.Close()
 	for rows.Next() {
 		candidate, scanErr := scanGrant(rows)
 		if scanErr != nil {
-			rows.Close()
 			return commerce.Grant{}, scanErr
 		}
-		purchaseSeen = true
+		seen = true
 		if !candidate.Enabled {
 			continue
 		}
 		enabledSeen = true
-		if !candidate.ActiveAt(at) {
-			continue
-		}
-		if !purchaseFound {
-			purchased, purchaseFound = candidate, true
-			continue
-		}
-		// Multiple provider-payable purchases are retained independently. Only
-		// active instances contribute, and each limit dimension takes its
-		// component-wise maximum, so expiry and arrival order cannot reduce an
-		// unrelated active right.
-		if candidate.Limits.StorageBytes > purchased.Limits.StorageBytes {
-			purchased.Limits.StorageBytes = candidate.Limits.StorageBytes
-		}
-		if candidate.Limits.EgressBytes > purchased.Limits.EgressBytes {
-			purchased.Limits.EgressBytes = candidate.Limits.EgressBytes
-		}
-		if candidate.Limits.OperationCount > purchased.Limits.OperationCount {
-			purchased.Limits.OperationCount = candidate.Limits.OperationCount
-			purchased.Limits.OperationMetric = candidate.Limits.OperationMetric
+		if candidate.ActiveAt(at) {
+			contributors = append(contributors, candidate)
 		}
 	}
-	if purchaseErr = rows.Err(); purchaseErr != nil {
-		rows.Close()
-		return commerce.Grant{}, purchaseErr
+	if err = rows.Err(); err != nil {
+		return commerce.Grant{}, err
 	}
-	rows.Close()
-	if purchaseFound {
-		if legacyErr == nil && legacy.Source == "legacy" && legacy.ValidUntil == nil && (legacy.OfferID == "nano" || legacy.OfferID == "standard" || legacy.OfferID == "pro") {
-			if legacy.Limits.StorageBytes > purchased.Limits.StorageBytes {
-				purchased.Limits.StorageBytes = legacy.Limits.StorageBytes
-			}
-			if legacy.Limits.EgressBytes > purchased.Limits.EgressBytes {
-				purchased.Limits.EgressBytes = legacy.Limits.EgressBytes
-			}
-			if legacy.Limits.OperationCount > purchased.Limits.OperationCount {
-				purchased.Limits.OperationCount = legacy.Limits.OperationCount
-				purchased.Limits.OperationMetric = legacy.Limits.OperationMetric
-			}
+	if len(contributors) == 0 {
+		if !seen {
+			return commerce.Grant{}, commerce.ErrGrantNotFound
 		}
-		return purchased, nil
-	}
-	if legacyErr == sql.ErrNoRows {
-		if purchaseSeen {
-			if !enabledSeen {
-				return commerce.Grant{}, commerce.ErrGrantDisabled
-			}
-			return commerce.Grant{}, commerce.ErrGrantInactive
+		if !enabledSeen {
+			return commerce.Grant{}, commerce.ErrGrantDisabled
 		}
-		return commerce.Grant{}, commerce.ErrGrantNotFound
-	}
-	if !legacy.Enabled {
-		return commerce.Grant{}, commerce.ErrGrantDisabled
-	}
-	if !legacy.ActiveAt(at) {
 		return commerce.Grant{}, commerce.ErrGrantInactive
 	}
-	return legacy, nil
+	sort.Slice(contributors, func(i, j int) bool {
+		left := fmt.Sprintf("%s|%s|%s|%s|%s", contributors[i].Source, contributors[i].PurchaseID, contributors[i].OfferID, contributors[i].ValidFrom.UTC().Format(time.RFC3339Nano), contributors[i].Period)
+		right := fmt.Sprintf("%s|%s|%s|%s|%s", contributors[j].Source, contributors[j].PurchaseID, contributors[j].OfferID, contributors[j].ValidFrom.UTC().Format(time.RFC3339Nano), contributors[j].Period)
+		return left < right
+	})
+	metric := commerce.MetricID("")
+	for _, grant := range contributors {
+		if grant.Limits.OperationCount > 0 {
+			if grant.Limits.OperationMetric == "" {
+				return commerce.Grant{}, commerce.ErrIncompatibleGrantMetrics
+			}
+			if metric != "" && metric != grant.Limits.OperationMetric {
+				return commerce.Grant{}, commerce.ErrIncompatibleGrantMetrics
+			}
+			metric = grant.Limits.OperationMetric
+		}
+	}
+	effective := commerce.Grant{CustomerID: customer, ProductID: product, CapabilityID: capability, Enabled: true, Source: "effective"}
+	storageContributor, egressContributor, operationContributor := 0, 0, 0
+	for i, grant := range contributors {
+		if grant.Limits.StorageBytes > effective.Limits.StorageBytes {
+			effective.Limits.StorageBytes = grant.Limits.StorageBytes
+			storageContributor = i
+		}
+		if grant.Limits.EgressBytes > effective.Limits.EgressBytes {
+			effective.Limits.EgressBytes = grant.Limits.EgressBytes
+			egressContributor = i
+		}
+		if grant.Limits.OperationCount > effective.Limits.OperationCount {
+			effective.Limits.OperationCount = grant.Limits.OperationCount
+			effective.Limits.OperationMetric = grant.Limits.OperationMetric
+			operationContributor = i
+		}
+	}
+	if len(contributors) > 1 {
+		periodContributor := storageContributor
+		if effective.Limits.OperationCount > 0 {
+			periodContributor = operationContributor
+		}
+		if effective.Limits.EgressBytes > 0 {
+			periodContributor = egressContributor
+		}
+		effective.Effective = &commerce.EffectiveGrant{Contributors: contributors, PeriodContributor: periodContributor}
+		return effective, nil
+	}
+	return contributors[0], nil
 }
 func (s *Store) PutGrant(c context.Context, grant commerce.Grant) error {
 	validUntil := ""
@@ -603,6 +729,13 @@ func snapshotDigest(templates []commerce.GrantTemplate) string {
 }
 
 func (s *Store) ApplyPaymentTransition(c context.Context, transition commerce.PaymentTransition) error {
+	state, err := s.PurchasePaymentState(c, transition.Event.OperationID)
+	if err != nil {
+		return err
+	}
+	if transition.Provider != state.Provider || transition.Environment != state.Environment || transition.Event.ProviderReference != state.ProviderReference || transition.AmountMinor != state.AmountMinor || transition.Currency != state.Currency || transition.Event.AmountMinor != state.AmountMinor || transition.Event.Currency != state.Currency {
+		return fmt.Errorf("payment transition does not match finalized purchase authority")
+	}
 	received := transition.Event.OccurredAt.UTC().Format(time.RFC3339Nano)
 	return s.applyBillingProviderEvent(c, billingProviderEvent{Provider: transition.Provider, Environment: transition.Environment, ProviderEventID: transition.Event.ProviderEventID, EventType: string(transition.Event.Type), ReceivedAt: received}, transition.Event.OperationID, transition.Event.ProviderReference, transition.Kind, transition.AmountMinor, transition.Currency, received, transition.ValidFrom.UTC().Format(time.RFC3339Nano), transition.ValidUntil.UTC().Format(time.RFC3339Nano))
 }
@@ -728,7 +861,19 @@ func (s *Store) FailPendingPurchase(c context.Context, id, failedAt string) erro
 }
 
 func (s *Store) UpdatePurchaseCheckout(c context.Context, id, reference, checkoutURL string, updatedAt string) error {
-	res, e := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,updated_at=? WHERE id=? AND status='pending'`, reference, checkoutURL, updatedAt, id)
+	if strings.TrimSpace(reference) == "" {
+		return fmt.Errorf("purchase provider reference is empty")
+	}
+	purchase, err := s.Purchase(c, id)
+	if err != nil {
+		return err
+	}
+	from, fromErr := parseEntitlementTime(purchase.EntitlementPeriodStart)
+	until, untilErr := parseEntitlementTime(purchase.EntitlementPeriodEnd)
+	if fromErr != nil || untilErr != nil || !until.After(from) {
+		return fmt.Errorf("purchase validity is invalid")
+	}
+	res, e := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,updated_at=? WHERE id=? AND status='pending' AND snapshot_finalized=0`, reference, checkoutURL, updatedAt, id)
 	if e != nil {
 		return e
 	}
@@ -772,6 +917,19 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		if (p.Status != "pending" && p.Status != "superseded" && !payableTerminal) || p.AmountMinor != amount || p.Currency != currency {
 			return fmt.Errorf("payment-verification-failed")
 		}
+		var snapshotFinalized int
+		if e = tx.QueryRowContext(c, `SELECT snapshot_finalized FROM billing_purchases WHERE id=?`, purchaseID).Scan(&snapshotFinalized); e != nil {
+			return e
+		}
+		if snapshotFinalized != 1 || p.ProviderReference == "" || p.EntitlementPeriodStart == "" || p.EntitlementPeriodEnd == "" {
+			return fmt.Errorf("finalized purchase terms incomplete")
+		}
+		finalizedFrom, fromErr := parseEntitlementTime(p.EntitlementPeriodStart)
+		finalizedUntil, untilErr := parseEntitlementTime(p.EntitlementPeriodEnd)
+		if fromErr != nil || untilErr != nil || !finalizedUntil.After(finalizedFrom) {
+			return fmt.Errorf("finalized purchase validity invalid")
+		}
+		entitlementStart, entitlementEnd = p.EntitlementPeriodStart, p.EntitlementPeriodEnd
 		var snapshotCount, expectedCount int
 		var expectedDigest string
 		if e = tx.QueryRowContext(c, `SELECT expected_count,capability_digest FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, purchaseID).Scan(&expectedCount, &expectedDigest); e != nil {
@@ -960,6 +1118,34 @@ func (s *Store) CreateRepository(c context.Context, r Repository) error {
 func (s *Store) SetActiveGeneration(c context.Context, repositoryID, generation, updatedAt string) error {
 	_, err := s.db.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, generation, updatedAt)
 	return err
+}
+
+func (s *Store) CommitPublication(c context.Context, repositoryID, jobID, productID, capabilityID, activeAt, updatedAt string) error {
+	tx, err := s.db.BeginTx(c, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var authorized int
+	err = tx.QueryRowContext(c, `SELECT COUNT(*) FROM repositories r JOIN accounts a ON a.id=r.account_id WHERE r.id=? AND a.status=? AND (EXISTS(SELECT 1 FROM product_grants g WHERE g.customer_id=r.account_id AND g.product_id=? AND g.capability_id=? AND g.enabled=1 AND g.source<>'legacy' AND g.valid_from<=? AND (g.valid_until='' OR g.valid_until>?)) OR EXISTS(SELECT 1 FROM purchase_grant_instances g WHERE g.customer_id=r.account_id AND g.product_id=? AND g.capability_id=? AND g.enabled=1 AND g.valid_from<=? AND g.valid_until>?))`, repositoryID, AccountStatusActive, productID, capabilityID, activeAt, activeAt, productID, capabilityID, activeAt, activeAt).Scan(&authorized)
+	if err != nil {
+		return err
+	}
+	if authorized != 1 {
+		return fmt.Errorf("publication authorization changed before commit")
+	}
+	if _, err = tx.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, jobID, updatedAt); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(c, `UPDATE publish_jobs SET state='succeeded',error='',finished_at=? WHERE id=? AND repository_id=? AND state='running'`, updatedAt, jobID, repositoryID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("publication job state changed before commit")
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ActiveGeneration(c context.Context, repositoryID string) (string, error) {

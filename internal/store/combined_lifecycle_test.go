@@ -2,130 +2,338 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
-func TestCombinedGrandfatheringPurchasesConvergeAcrossPaymentAndExpiryOrder(t *testing.T) {
-	for _, paymentReverse := range []bool{false, true} {
-		for _, expiryReverse := range []bool{false, true} {
-			name := map[bool]string{false: "pay-A-B", true: "pay-B-A"}[paymentReverse] + "/" + map[bool]string{false: "expire-A-B", true: "expire-B-A"}[expiryReverse]
-			t.Run(name, func(t *testing.T) {
-				dir := t.TempDir()
-				s, err := Open(dir)
-				if err != nil {
-					t.Fatal(err)
-				}
-				ctx := context.Background()
-				now := time.Date(2027, 2, 1, 0, 0, 0, 0, time.UTC)
-				until := now.AddDate(1, 0, 0)
-				legacy := []commerce.Grant{
-					{CustomerID: "combined", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), Limits: commerce.Limits{StorageBytes: 1000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
-					{CustomerID: "combined", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.download", OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), Limits: commerce.Limits{EgressBytes: 50}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
-					{CustomerID: "combined", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.read.private", OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), Source: "legacy", CreatedAt: now, UpdatedAt: now},
-				}
-				if err = s.CreateAccount(ctx, Account{ID: "combined", Email: "combined@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}, legacy...); err != nil {
-					t.Fatal(err)
-				}
-				mk := func(id, ref string) BillingPurchase {
-					return BillingPurchase{ID: id, AccountID: "combined", ProductID: "tpa-hub", PlanCode: id, RateCardID: id, RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: ref, CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
-				}
-				templates := func(mult int) []commerce.GrantTemplate {
-					return []commerce.GrantTemplate{
-						{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: int64(10 * mult), OperationMetric: "publish", OperationCount: int64(2 * mult)}},
-						{CapabilityID: "repository.download", Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: int64(100 * mult)}},
-						{CapabilityID: "repository.read.private", Period: commerce.PeriodAnnual},
-					}
-				}
-				a, b := mk("purchase-a", "ref-a"), mk("purchase-b", "ref-b")
-				if _, err = s.CreatePendingPurchase(ctx, a, now.Format(time.RFC3339Nano), templates(1)...); err != nil {
-					t.Fatal(err)
-				}
-				if _, err = s.CreatePendingPurchase(ctx, b, now.Format(time.RFC3339Nano), templates(2)...); err != nil {
-					t.Fatal(err)
-				}
-				pay := func(p BillingPurchase) {
-					if err := s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-" + p.ID, OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: p.ProviderReference, AmountMinor: 1, Currency: "EUR", OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR", ValidFrom: now, ValidUntil: until}); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if paymentReverse {
-					pay(b)
-					pay(a)
-				} else {
-					pay(a)
-					pay(b)
-				}
-				assertSources := func(activeA, activeB bool) {
-					for _, capability := range []string{"repository.publish", "repository.download", "repository.read.private"} {
-						var legacyCount, purchasedCount int
-						if err := s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='combined' AND capability_id=? AND source='legacy' AND purchase_id=''`, capability).Scan(&legacyCount); err != nil || legacyCount != 1 {
-							t.Fatalf("%s legacy=%d err=%v", capability, legacyCount, err)
-						}
-						if err := s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id='combined' AND capability_id=? AND purchase_id IN ('purchase-a','purchase-b')`, capability).Scan(&purchasedCount); err != nil || purchasedCount != 2 {
-							t.Fatalf("%s purchases=%d err=%v", capability, purchasedCount, err)
-						}
-					}
-					for _, id := range []string{"purchase-a", "purchase-b"} {
-						var status string
-						if err := s.db.QueryRow(`SELECT status FROM billing_purchases WHERE id=?`, id).Scan(&status); err != nil || status != "paid" {
-							t.Fatalf("%s status=%q err=%v", id, status, err)
-						}
-					}
-					wantEgress := int64(50)
-					if activeA {
-						wantEgress = 100
-					}
-					if activeB {
-						wantEgress = 200
-					}
-					publish, e := s.GetGrant(ctx, "combined", commerce.ProductTPAHub, "repository.publish", now)
-					if e != nil || publish.Limits.StorageBytes != 1000 {
-						t.Fatalf("publish=%+v err=%v", publish, e)
-					}
-					download, e := s.GetGrant(ctx, "combined", commerce.ProductTPAHub, "repository.download", now)
-					if e != nil || download.Limits.EgressBytes != wantEgress {
-						t.Fatalf("download=%+v want=%d err=%v", download, wantEgress, e)
-					}
-				}
-				assertSources(true, true)
-				s.Close()
-				s, err = Open(dir)
-				if err != nil {
-					t.Fatal(err)
-				}
-				assertSources(true, true)
-				expire := func(id string) {
-					if _, err := s.db.Exec(`UPDATE purchase_grant_instances SET valid_until=? WHERE purchase_id=?`, now.Add(-time.Minute).Format(time.RFC3339Nano), id); err != nil {
-						t.Fatal(err)
-					}
-				}
-				first, second := "purchase-a", "purchase-b"
-				activeA, activeB := false, true
-				if expiryReverse {
-					first, second = "purchase-b", "purchase-a"
-					activeA, activeB = true, false
-				}
-				expire(first)
-				assertSources(activeA, activeB)
-				s.Close()
-				s, err = Open(dir)
-				if err != nil {
-					t.Fatal(err)
-				}
-				assertSources(activeA, activeB)
-				expire(second)
-				assertSources(false, false)
-				s.Close()
-				s, err = Open(dir)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer s.Close()
-				assertSources(false, false)
-			})
+func seedEligibleHistoricalAccount(t *testing.T, dir, plan string) {
+	t.Helper()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	grants := tpahubproduct.DefaultGrants(now)
+	for i := range grants {
+		grants[i].Source = "legacy"
+		grants[i].OfferID = plan
+		if grants[i].CapabilityID == tpahubproduct.CapabilityRepositoryPublish {
+			grants[i].Limits.StorageBytes = 999_000_000
 		}
+	}
+	if err = s.CreateAccount(context.Background(), Account{ID: "historical", Email: "historical@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}, grants...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+}
+
+func TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant(t *testing.T) {
+	for _, plan := range []string{"standard", "pro"} {
+		t.Run(plan, func(t *testing.T) {
+			dir := t.TempDir()
+			seedEligibleHistoricalAccount(t, dir, plan)
+			anchor := time.Date(2028, 4, 15, 12, 0, 0, 0, time.UTC)
+			migrationNow = func() time.Time { return anchor }
+			defer func() { migrationNow = time.Now }()
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			var fromText, untilText string
+			if err = s.db.QueryRow(`SELECT valid_from,valid_until FROM account_entitlements WHERE account_id='historical' AND source='migration' AND plan_code='nano'`).Scan(&fromText, &untilText); err != nil {
+				t.Fatal(err)
+			}
+			from, _ := time.Parse(time.RFC3339Nano, fromText)
+			until, _ := time.Parse(time.RFC3339Nano, untilText)
+			if !from.Equal(anchor) || !until.Equal(anchor.AddDate(0, 6, 0)) {
+				t.Fatalf("migration validity %s..%s", from, until)
+			}
+			var n int
+			if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='historical' AND source='migration' AND offer_id='nano' AND purchase_id=''`).Scan(&n); err != nil || n != len(tpahubproduct.NanoOffer().Grants) {
+				t.Fatalf("migration grants=%d err=%v", n, err)
+			}
+			if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='historical' AND source='legacy'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("legacy grants remain=%d err=%v", n, err)
+			}
+			g, err := s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, from.Add(time.Hour))
+			if _, mutationErr := s.db.Exec(`UPDATE product_grants SET valid_until=valid_from WHERE customer_id='historical' AND source='migration'`); mutationErr == nil {
+				t.Fatal("migration validity was mutable")
+			}
+			if err != nil || g.Source != "migration" || g.Limits.StorageBytes != tpahubproduct.NanoStorageBytes {
+				t.Fatalf("effective migration=%+v err=%v", g, err)
+			}
+			s.Close()
+			s, err = Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var from2, until2 string
+			_ = s.db.QueryRow(`SELECT valid_from,valid_until FROM account_entitlements WHERE account_id='historical'`).Scan(&from2, &until2)
+			if from2 != fromText || until2 != untilText {
+				t.Fatalf("migration clock extended %s/%s -> %s/%s", fromText, untilText, from2, until2)
+			}
+			if _, err = s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, until); !errors.Is(err, commerce.ErrGrantInactive) {
+				t.Fatalf("expired migration err=%v", err)
+			}
+		})
+	}
+}
+
+func TestMigrationAndPurchasesUseOnlyActiveEnabledContributors(t *testing.T) {
+	dir := t.TempDir()
+	seedEligibleHistoricalAccount(t, dir, "pro")
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	var migrationFrom, migrationUntil string
+	_ = s.db.QueryRow(`SELECT valid_from,valid_until FROM account_entitlements WHERE account_id='historical'`).Scan(&migrationFrom, &migrationUntil)
+	from, _ := time.Parse(time.RFC3339Nano, migrationFrom)
+	until, _ := time.Parse(time.RFC3339Nano, migrationUntil)
+	purchaseUntil := until.AddDate(0, 6, 0)
+	p := BillingPurchase{ID: "paid", AccountID: "historical", ProductID: "tpa-hub", PlanCode: "paid", RateCardID: "paid", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: purchaseUntil.Format(time.RFC3339Nano), ProviderReference: "ref", CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 7_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, p.ID, p.ProviderReference, "https://checkout.invalid/paid", p.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt", OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: "ref", AmountMinor: 1, Currency: "EUR", OccurredAt: from}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, from.Add(time.Hour))
+	if err != nil || g.Effective == nil || len(g.Effective.Contributors) != 2 || g.Limits.StorageBytes != 7_000_000 || g.Source != "effective" || g.OfferID != "" || g.PurchaseID != "" || g.Period != "" || !g.ValidFrom.IsZero() || g.ValidUntil != nil {
+		t.Fatalf("combined=%+v err=%v", g, err)
+	}
+	if _, err = s.db.Exec(`UPDATE product_grants SET enabled=0 WHERE customer_id='historical' AND source='migration'`); err != nil {
+		t.Fatal(err)
+	}
+	g, err = s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, from.Add(time.Hour))
+	if err != nil || g.Limits.StorageBytes != 7_000_000 || g.Source != "purchase" {
+		t.Fatalf("disabled migration contributed: %+v %v", g, err)
+	}
+	if _, err = s.GetGrant(ctx, "historical", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, until.Add(time.Second)); err != nil {
+		t.Fatalf("purchase did not survive migration expiry: %v", err)
+	}
+}
+
+func TestFutureMigrationDoesNotContributeUntilActive(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 1)
+	end := future.AddDate(0, 6, 0)
+	if err = s.CreateAccount(ctx, Account{ID: "future", Email: "future@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "future", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: future, ValidUntil: &end, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 99}, Source: "migration", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.GetGrant(ctx, "future", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, now); !errors.Is(err, commerce.ErrGrantInactive) {
+		t.Fatalf("future grant active: %v", err)
+	}
+	g, err := s.GetGrant(ctx, "future", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, future)
+	if err != nil || g.Limits.StorageBytes != 99 {
+		t.Fatalf("future grant not activated: %+v %v", g, err)
+	}
+}
+
+func TestBoundedMigrationEligibilityIsTPAScopedAndActive(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	for _, id := range []string{"other-product", "disabled-tpa", "expired-tpa", "eligible-tpa"} {
+		if err = s.CreateAccount(context.Background(), Account{ID: id, Email: id + "@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: anchor.Format(time.RFC3339Nano)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expired := anchor.Add(-time.Second)
+	grants := []commerce.Grant{
+		{CustomerID: "other-product", ProductID: "other", CapabilityID: "other.use", OfferID: "legacy", Enabled: true, ValidFrom: anchor.Add(-time.Hour), Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: anchor, UpdatedAt: anchor},
+		{CustomerID: "disabled-tpa", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "legacy", Enabled: false, ValidFrom: anchor.Add(-time.Hour), Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: anchor, UpdatedAt: anchor},
+		{CustomerID: "expired-tpa", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "legacy", Enabled: true, ValidFrom: anchor.Add(-time.Hour), ValidUntil: &expired, Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: anchor, UpdatedAt: anchor},
+		{CustomerID: "eligible-tpa", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "legacy", Enabled: true, ValidFrom: anchor.Add(-time.Hour), Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: anchor, UpdatedAt: anchor},
+	}
+	for _, grant := range grants {
+		if err = s.PutGrant(context.Background(), grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	migrationNow = func() time.Time { return anchor }
+	defer func() { migrationNow = time.Now }()
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"other-product", "disabled-tpa", "expired-tpa"} {
+		var count int
+		if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id=? AND source='migration'`, id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("ineligible account %s received %d migration grants: %v", id, count, err)
+		}
+	}
+	var eligible int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='eligible-tpa' AND source='migration'`).Scan(&eligible); err != nil || eligible != len(tpahubproduct.NanoOffer().Grants) {
+		t.Fatalf("eligible migration grants=%d err=%v", eligible, err)
+	}
+}
+
+func TestBoundedMigrationInterruptionReopensIdempotently(t *testing.T) {
+	for _, stage := range []string{"bounded-after-eligibility", "bounded-after-account", "bounded-before-commit"} {
+		t.Run(stage, func(t *testing.T) {
+			dir := t.TempDir()
+			seedEligibleHistoricalAccount(t, dir, "standard")
+			anchor := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
+			migrationNow = func() time.Time { return anchor }
+			defer func() { migrationNow = time.Now; migrationFault = nil }()
+			migrationFault = func(got string) error {
+				if got == stage {
+					return errors.New("bounded migration interruption")
+				}
+				return nil
+			}
+			if s, openErr := Open(dir); openErr == nil {
+				s.Close()
+				t.Fatal("interrupted bounded migration unexpectedly committed")
+			}
+			migrationFault = nil
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var marker, grants int
+			_ = s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`).Scan(&marker)
+			_ = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='historical' AND source='migration'`).Scan(&grants)
+			if marker != 1 || grants != len(tpahubproduct.NanoOffer().Grants) {
+				t.Fatalf("marker=%d grants=%d", marker, grants)
+			}
+		})
+	}
+}
+
+func TestMigrationContributionRequiresEnabledAndActive(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		enabled    bool
+		fromOffset time.Duration
+		until      func(time.Time) time.Time
+		want       int64
+	}{
+		{name: "disabled", enabled: false, fromOffset: -time.Hour, until: func(now time.Time) time.Time { return now.AddDate(0, 6, 0) }, want: 1_000_000},
+		{name: "future", enabled: true, fromOffset: time.Hour, until: func(now time.Time) time.Time { return now.AddDate(0, 6, 0) }, want: 1_000_000},
+		{name: "expired", enabled: true, fromOffset: -time.Hour, until: func(now time.Time) time.Time { return now }, want: 1_000_000},
+		{name: "active", enabled: true, fromOffset: -time.Hour, until: func(now time.Time) time.Time { return now.AddDate(0, 6, 0) }, want: tpahubproduct.NanoStorageBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			ctx := context.Background()
+			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+			if err = s.CreateAccount(ctx, Account{ID: "matrix", Email: tc.name + "@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+				t.Fatal(err)
+			}
+			migrationUntil := tc.until(now)
+			if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "matrix", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "nano", Enabled: tc.enabled, ValidFrom: now.Add(tc.fromOffset), ValidUntil: &migrationUntil, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: tpahubproduct.NanoStorageBytes}, Source: "migration", CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatal(err)
+			}
+			purchaseUntil := now.AddDate(1, 0, 0)
+			purchase := BillingPurchase{ID: "matrix-purchase", AccountID: "matrix", ProductID: "tpa-hub", PlanCode: "paid", RateCardID: "paid", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Add(-time.Hour).Format(time.RFC3339Nano), EntitlementPeriodEnd: purchaseUntil.Format(time.RFC3339Nano), ProviderReference: "matrix-reference", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+			if _, err = s.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1_000_000}}); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/matrix", purchase.UpdatedAt); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "matrix-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: 1, Currency: "EUR", OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR"}); err != nil {
+				t.Fatal(err)
+			}
+			grant, err := s.GetGrant(ctx, "matrix", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, now)
+			if err != nil || grant.Limits.StorageBytes != tc.want {
+				t.Fatalf("grant=%+v err=%v want=%d", grant, err, tc.want)
+			}
+			if tc.name == "active" && grant.Effective == nil {
+				t.Fatal("active migration and purchase were not independently represented")
+			}
+			if tc.name != "active" && grant.Source != "purchase" {
+				t.Fatalf("inactive migration contributed provenance: %+v", grant)
+			}
+		})
+	}
+}
+
+func TestPurchaseExpiryDoesNotResetOrRemoveMigration(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	migrationUntil := now.AddDate(0, 6, 0)
+	if err = s.CreateAccount(ctx, Account{ID: "independent", Email: "independent@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "independent", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now, ValidUntil: &migrationUntil, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: tpahubproduct.NanoStorageBytes}, Source: "migration", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	purchaseUntil := now.AddDate(0, 1, 0)
+	purchase := BillingPurchase{ID: "short-purchase", AccountID: "independent", ProductID: "tpa-hub", PlanCode: "paid", RateCardID: "paid", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: purchaseUntil.Format(time.RFC3339Nano), ProviderReference: "short-reference", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 7_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/short", purchase.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "short-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: 1, Currency: "EUR", OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR"}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := s.GetGrant(ctx, "independent", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, purchaseUntil)
+	if err != nil || grant.Source != "migration" || grant.Limits.StorageBytes != tpahubproduct.NanoStorageBytes {
+		t.Fatalf("migration after purchase expiry=%+v err=%v", grant, err)
+	}
+	if _, err = s.GetGrant(ctx, "independent", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, migrationUntil); !errors.Is(err, commerce.ErrGrantInactive) {
+		t.Fatalf("migration did not expire normally: %v", err)
+	}
+}
+
+func TestNewHostedAccountDoesNotReceiveMigrationGrant(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(context.Background(), Account{ID: "new-hosted", Email: "new-hosted@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id='new-hosted' AND source='migration'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("new hosted migration grants=%d err=%v", count, err)
 	}
 }

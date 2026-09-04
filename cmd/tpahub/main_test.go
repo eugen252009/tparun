@@ -2,13 +2,18 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,20 +36,16 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	}
 	_ = db.CreateAccount(context.Background(), store.Account{ID: "a", Email: "a@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"}, defaultTPAGrants("2024-01-01T00:00:00Z")...)
 	_ = db.CreateSession(context.Background(), store.Session{ID: "s", AccountID: "a", TokenPrefix: "tph_s_test"}, store.HashToken("tph_s_test"))
-	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true}, db: db, runner: tpa.Runner{}}
+	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true}, db: db, runner: tpa.Runner{}, verifyCandidate: func(candidate, _ string) error {
+		entries, err := os.ReadDir(candidate)
+		if err != nil || len(entries) == 0 {
+			return fmt.Errorf("invalid test candidate")
+		}
+		return nil
+	}}
 	h := httptest.NewServer(s.routes())
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
-}
-
-type oversizedPublicationRunner struct{}
-
-func (oversizedPublicationRunner) Check(context.Context) error { return nil }
-func (oversizedPublicationRunner) Publish(_ context.Context, request tpa.PublishRequest) error {
-	if err := os.MkdirAll(request.Output, 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(request.Output, "Packages"), make([]byte, 2<<20), 0644)
 }
 
 type copyingPublicationRunner struct{}
@@ -78,6 +79,9 @@ func (copyingPublicationRunner) Publish(_ context.Context, request tpa.PublishRe
 	}
 	return nil
 }
+func (r copyingPublicationRunner) PublishBounded(ctx context.Context, request tpa.PublishRequest, _ int64) error {
+	return r.Publish(ctx, request)
+}
 
 type blockingPublicationRunner struct{ started, release chan struct{} }
 
@@ -95,6 +99,9 @@ func (r *blockingPublicationRunner) Publish(_ context.Context, request tpa.Publi
 	}
 	<-r.release
 	return nil
+}
+func (r *blockingPublicationRunner) PublishBounded(ctx context.Context, request tpa.PublishRequest, _ int64) error {
+	return r.Publish(ctx, request)
 }
 
 func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
@@ -146,7 +153,7 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			s2 := &server{cfg: s.cfg, db: db, runner: copyingPublicationRunner{}, ctx: context.Background()}
+			s2 := &server{cfg: s.cfg, db: db, runner: copyingPublicationRunner{}, ctx: context.Background(), verifyCandidate: s.verifyCandidate}
 			if err = s2.reconcilePublicationState(); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +185,8 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 			s2.process(next)
 			for _, name := range []string{"old.deb", "next.deb"} {
 				if _, err := os.Stat(filepath.Join(root, "current", name)); err != nil {
-					t.Fatalf("stage=%s missing %s: %v", stage, name, err)
+					entries, _ := os.ReadDir(filepath.Join(root, "current"))
+					t.Fatalf("stage=%s missing %s: %v entries=%v", stage, name, err, entries)
 				}
 			}
 		})
@@ -224,6 +232,17 @@ func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
 	firstDone := make(chan struct{})
 	go func() { s.process(first); close(firstDone) }()
 	<-runner.started
+	physical := int64(0)
+	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
+		allocated, allocationErr := fileTreeAllocatedSize(root)
+		if allocationErr != nil {
+			t.Fatal(allocationErr)
+		}
+		physical += allocated
+	}
+	if physical > s.cfg.MaxStagingBytes {
+		t.Fatalf("physical staging crossed policy at worker barrier: %d > %d", physical, s.cfg.MaxStagingBytes)
+	}
 	secondDone := make(chan struct{})
 	go func() { s.process(second); close(secondDone) }()
 	uploadDone := make(chan int, 2)
@@ -265,7 +284,11 @@ func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
 func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MaxUpload = 10
-	s.cfg.MaxStagingBytes = 20
+	block, err := filesystemAllocationBlock(s.cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MaxStagingBytes = 5 * block
 	s.cfg.MinDiskFreeBytes = 0
 	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "b@invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
 		t.Fatal(err)
@@ -332,6 +355,7 @@ func countJobsIfAny(s *server) int {
 func TestCandidateOutputBeyondReservationCannotActivate(t *testing.T) {
 	s, _ := testServer(t)
 	s.ctx = context.Background()
+	s.cfg.PublishTimeout = time.Minute
 	s.cfg.MinDiskFreeBytes = 0
 	repositoryID := "ffffffffffffffffffffffffffffffff"
 	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "oversized", CreatedAt: "now"}); err != nil {
@@ -348,7 +372,11 @@ func TestCandidateOutputBeyondReservationCannotActivate(t *testing.T) {
 	if err := s.db.CreateJob(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	s.runner = oversizedPublicationRunner{}
+	bin := filepath.Join(t.TempDir(), "oversized-tpa")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nout=''\nwhile [ \"$#\" -gt 0 ]; do [ \"$1\" = '--atomic-publish' ] && { shift; out=$1; }; shift; done\nmkdir -p \"$out\"\nfor n in 1 2 3; do dd if=/dev/zero of=\"$out/blob-$n\" bs=524288 count=1 status=none; done\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s.runner = tpa.Runner{Bin: bin}
 	s.process(job)
 	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
 		t.Fatalf("oversized candidate became live: %v", err)
@@ -359,6 +387,9 @@ func TestCandidateOutputBeyondReservationCannotActivate(t *testing.T) {
 	}
 	if got.State != "failed" {
 		t.Fatalf("oversized job state=%s", got.State)
+	}
+	if !strings.Contains(strings.ToLower(got.Error), "space") {
+		t.Fatalf("candidate hard bound did not return ENOSPC: %s", got.Error)
 	}
 	if len(s.reservations) != 0 {
 		t.Fatalf("reservation leaked: %#v", s.reservations)
@@ -408,8 +439,17 @@ func TestCapacityReservationReconstructsFromFilesystemAfterRestart(t *testing.T)
 	}
 	s.reservations = map[string]capacityReservation{"queued-job": {AccountID: "a", JobID: "queued-job", Bytes: 999}}
 	s.reservations = nil // process death loses identity; filesystem is authoritative
-	if err := s.checkStagingCapacity(context.Background(), "a", 0, true); err != nil {
-		t.Fatalf("surviving incoming was not reconstructed from filesystem: %v", err)
+	physical, err := fileTreeAllocatedSize(filepath.Join(s.cfg.DataDir, "incoming"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MaxStagingBytes = physical
+	block, err := filesystemAllocationBlock(s.cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checkStagingCapacity(context.Background(), "a", block, false); err == nil {
+		t.Fatal("surviving incoming allocation did not affect restart admission")
 	}
 	if err := s.db.Finish(context.Background(), "queued-job", "failed", "test interruption"); err != nil {
 		t.Fatal(err)
@@ -419,6 +459,43 @@ func TestCapacityReservationReconstructsFromFilesystemAfterRestart(t *testing.T)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("terminal incoming survived reconciliation: %v", err)
+	}
+}
+
+func TestPerAccountStagingUsesPhysicalAllocation(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MinDiskFreeBytes = 0
+	s.cfg.MaxStagingBytes = 1 << 30
+	block, err := filesystemAllocationBlock(s.cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.Limits.StorageBytes = 3 * block
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return grant, nil
+	})
+	repo := "physical-account-repo"
+	if err = s.db.CreateRepository(context.Background(), store.Repository{ID: repo, AccountID: "a", Name: repo, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.cfg.DataDir, "incoming", "physical-account-job")
+	if err = os.MkdirAll(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.deb", "two.deb"} {
+		if err = os.WriteFile(filepath.Join(path, name), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.db.CreateJob(context.Background(), store.Job{ID: "physical-account-job", RepositoryID: repo, State: "queued", IncomingPath: path, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.checkStagingCapacity(context.Background(), "a", block, false); err == nil {
+		t.Fatal("per-account physical staging overage was accepted")
 	}
 }
 
@@ -480,6 +557,15 @@ func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
 		t.Fatalf("suspended publication changed pointer: %v", err)
 	}
+	if _, err := s.db.ActiveGeneration(context.Background(), repositoryID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("suspended publication became durable: %v", err)
+	}
+	if stored, err := s.db.Job(context.Background(), job.ID); err != nil || stored.State != "failed" {
+		t.Fatalf("suspended job=%+v err=%v", stored, err)
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations", job.ID)); !os.IsNotExist(err) {
+		t.Fatalf("suspended generation retained: %v", err)
+	}
 }
 
 func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
@@ -521,7 +607,16 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 	close(runner.release)
 	<-done
 	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
-		t.Fatalf("revoked grant changed pointer: %v", err)
+		t.Fatalf("expired grant changed pointer: %v", err)
+	}
+	if _, err := s.db.ActiveGeneration(context.Background(), repositoryID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expired publication became durable: %v", err)
+	}
+	if stored, err := s.db.Job(context.Background(), job.ID); err != nil || stored.State != "failed" {
+		t.Fatalf("expired job=%+v err=%v", stored, err)
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations", job.ID)); !os.IsNotExist(err) {
+		t.Fatalf("expired generation retained: %v", err)
 	}
 }
 
@@ -744,23 +839,199 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 	}
 }
 
-func TestPublicationCandidateMustBeComplete(t *testing.T) {
-	dir := t.TempDir()
-	if err := verifyPublicationCandidate(filepath.Join(dir, "missing")); err == nil {
-		t.Fatal("missing candidate accepted")
-	}
-	empty := filepath.Join(dir, "empty")
-	if err := os.Mkdir(empty, 0755); err != nil {
+func testCandidateSigningConfig(t *testing.T) config.Config {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "gnupg")
+	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyPublicationCandidate(empty); err == nil {
-		t.Fatal("empty candidate accepted")
+	identity := "TPA Hub candidate test <candidate@example.invalid>"
+	cmd := exec.Command("gpg", "--batch", "--homedir", home, "--passphrase", "", "--quick-generate-key", identity, "ed25519", "sign", "0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate candidate signing key: %v: %s", err, output)
 	}
-	if err := os.WriteFile(filepath.Join(empty, "Packages"), []byte("ok"), 0644); err != nil {
+	output, err := exec.Command("gpg", "--batch", "--homedir", home, "--with-colons", "--fingerprint", "--list-secret-keys", identity).Output()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyPublicationCandidate(empty); err != nil {
-		t.Fatalf("complete candidate rejected: %v", err)
+	var fingerprint string
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) > 9 && fields[0] == "fpr" {
+			fingerprint = fields[9]
+			break
+		}
+	}
+	if fingerprint == "" {
+		t.Fatal("candidate signing fingerprint unavailable")
+	}
+	return config.Config{GPGHome: home, GPGFingerprint: fingerprint}
+}
+
+func writeSemanticCandidate(t *testing.T, candidate, work string, cfg config.Config) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(candidate, "pool"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(candidate, "dists", "stable", "main", "binary-amd64"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stanzas string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".deb") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(work, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(candidate, "pool", entry.Name())
+		if err = os.WriteFile(dst, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		stanzas += fmt.Sprintf("Package: test\nVersion: 1\nArchitecture: amd64\nFilename: pool/%s\nSize: %d\nSHA256: %s\n\n", entry.Name(), len(data), hex.EncodeToString(sum[:]))
+	}
+	packages := filepath.Join(candidate, "dists", "stable", "main", "binary-amd64", "Packages")
+	if err = os.WriteFile(packages, []byte(stanzas), 0644); err != nil {
+		t.Fatal(err)
+	}
+	signSemanticCandidate(t, candidate, cfg)
+}
+
+func signSemanticCandidate(t *testing.T, candidate string, cfg config.Config) {
+	t.Helper()
+	packages := filepath.Join(candidate, "dists", "stable", "main", "binary-amd64", "Packages")
+	pd, err := os.ReadFile(packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := os.Create(packages + ".gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(compressed)
+	if _, err = gz.Write(pd); err != nil {
+		t.Fatal(err)
+	}
+	if err = gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(pd)
+	gzipData, _ := os.ReadFile(packages + ".gz")
+	gzipSum := sha256.Sum256(gzipData)
+	release := fmt.Sprintf("Origin: TPA Hub test\nLabel: TPA Hub test\nSuite: stable\nArchitectures: amd64\nComponents: main\nCodename: stable\nSHA256:\n %s %d main/binary-amd64/Packages\n %s %d main/binary-amd64/Packages.gz\n", hex.EncodeToString(sum[:]), len(pd), hex.EncodeToString(gzipSum[:]), len(gzipData))
+	releasePath := filepath.Join(candidate, "dists", "stable", "Release")
+	if err = os.WriteFile(releasePath, []byte(release), 0644); err != nil {
+		t.Fatal(err)
+	}
+	inRelease := filepath.Join(candidate, "dists", "stable", "InRelease")
+	cmd := exec.Command("gpg", "--batch", "--yes", "--homedir", cfg.GPGHome, "--local-user", cfg.GPGFingerprint, "--clearsign", "--output", inRelease, releasePath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sign candidate Release: %v: %s", err, output)
+	}
+}
+
+func omitSemanticPackage(t *testing.T, candidate, name string, cfg config.Config) {
+	t.Helper()
+	packages := filepath.Join(candidate, "dists", "stable", "main", "binary-amd64", "Packages")
+	data, err := os.ReadFile(packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paragraphs := strings.Split(string(data), "\n\n")
+	kept := paragraphs[:0]
+	for _, paragraph := range paragraphs {
+		if paragraph != "" && !strings.Contains(paragraph, "Filename: pool/"+name+"\n") {
+			kept = append(kept, paragraph)
+		}
+	}
+	output := ""
+	if len(kept) > 0 {
+		output = strings.Join(kept, "\n\n") + "\n\n"
+	}
+	if err = os.WriteFile(packages, []byte(output), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(filepath.Join(candidate, "pool", name)); err != nil {
+		t.Fatal(err)
+	}
+	signSemanticCandidate(t, candidate, cfg)
+}
+
+func TestPublicationCandidateSemanticVerification(t *testing.T) {
+	cfg := testCandidateSigningConfig(t)
+	work := filepath.Join(t.TempDir(), "work")
+	if err := os.Mkdir(work, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "package.deb"), []byte("deb"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	makeCandidate := func(t *testing.T) string {
+		p := filepath.Join(t.TempDir(), "candidate")
+		writeSemanticCandidate(t, p, work, cfg)
+		return p
+	}
+	valid := makeCandidate(t)
+	if err := verifyPublicationCandidate(valid, work, cfg); err != nil {
+		t.Fatalf("valid candidate rejected: %v", err)
+	}
+	wrongKey := testCandidateSigningConfig(t)
+	wrongKeyCandidate := makeCandidate(t)
+	if err := verifyPublicationCandidate(wrongKeyCandidate, work, wrongKey); err == nil {
+		t.Fatal("candidate signed by an unrelated key was accepted")
+	}
+	cases := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{"garbage", func(t *testing.T, p string) {
+			os.RemoveAll(p)
+			os.MkdirAll(p, 0755)
+			os.WriteFile(filepath.Join(p, "Packages"), []byte("ok"), 0644)
+		}},
+		{"missing-inrelease", func(t *testing.T, p string) { os.Remove(filepath.Join(p, "dists", "stable", "InRelease")) }},
+		{"invalid-signing-envelope", func(t *testing.T, p string) {
+			os.WriteFile(filepath.Join(p, "dists", "stable", "InRelease"), []byte("unsigned"), 0644)
+		}},
+		{"invalid-signature", func(t *testing.T, p string) {
+			path := filepath.Join(p, "dists", "stable", "InRelease")
+			data, _ := os.ReadFile(path)
+			marker := []byte("-----BEGIN PGP SIGNATURE-----\n\n")
+			at := bytes.Index(data, marker)
+			if at < 0 {
+				t.Fatal("signature marker missing")
+			}
+			data[at+len(marker)] = '!'
+			os.WriteFile(path, data, 0644)
+		}},
+		{"truncated-packages", func(t *testing.T, p string) {
+			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte("Package"), 0644)
+		}},
+		{"missing-payload", func(t *testing.T, p string) { os.Remove(filepath.Join(p, "pool", "package.deb")) }},
+		{"bad-package-checksum", func(t *testing.T, p string) {
+			os.WriteFile(filepath.Join(p, "pool", "package.deb"), []byte("changed"), 0644)
+		}},
+		{"missing-new-package", func(t *testing.T, p string) {
+			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte(""), 0644)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := makeCandidate(t)
+			tc.mutate(t, p)
+			if err := verifyPublicationCandidate(p, work, cfg); err == nil {
+				t.Fatal("malformed candidate accepted")
+			}
+		})
 	}
 }
 

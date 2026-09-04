@@ -194,13 +194,10 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	activationPeriod, periodErr := entitlementPeriod(s.currentTime().UTC().Format("2006-01-02"), s.currentTime())
-	if periodErr != nil {
-		bad(w, http.StatusInternalServerError, "grant activation unavailable")
-		return
-	}
+	// Provider events prove payment state; the store activates the immutable
+	// commercial validity finalized with the checkout.
 	paymentService := commerce.PaymentService{Repository: s.db}
-	if err = paymentService.Process(r.Context(), "stripe", string(payments.EnvironmentTest), paymentEvent, activationPeriod.Start, activationPeriod.End); err != nil {
+	if err = paymentService.Process(r.Context(), "stripe", string(payments.EnvironmentTest), paymentEvent, time.Time{}, time.Time{}); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}

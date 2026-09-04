@@ -23,9 +23,10 @@ const (
 )
 
 var (
-	ErrGrantNotFound = errors.New("grant-not-found")
-	ErrGrantDisabled = errors.New("grant-disabled")
-	ErrGrantInactive = errors.New("grant-inactive")
+	ErrGrantNotFound            = errors.New("grant-not-found")
+	ErrGrantDisabled            = errors.New("grant-disabled")
+	ErrGrantInactive            = errors.New("grant-inactive")
+	ErrIncompatibleGrantMetrics = errors.New("incompatible-grant-operation-metrics")
 )
 
 type Limits struct {
@@ -64,9 +65,20 @@ type Grant struct {
 	PurchaseID   string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// Effective is non-nil only when Limits combine multiple authoritative rows.
+	// Single-source commercial metadata is then held exclusively by Contributors.
+	Effective *EffectiveGrant
 }
 
 func (g Grant) ActiveAt(now time.Time) bool {
+	if g.Effective != nil {
+		for _, contributor := range g.Effective.Contributors {
+			if contributor.ActiveAt(now) {
+				return true
+			}
+		}
+		return false
+	}
 	now = now.UTC()
 	if !g.Enabled || now.Before(g.ValidFrom.UTC()) {
 		return false
@@ -75,6 +87,13 @@ func (g Grant) ActiveAt(now time.Time) bool {
 }
 
 func (g Grant) PeriodAt(now time.Time) (time.Time, time.Time, error) {
+	if g.Effective != nil {
+		index := g.Effective.PeriodContributor
+		if index < 0 || index >= len(g.Effective.Contributors) {
+			return time.Time{}, time.Time{}, fmt.Errorf("effective grant period contributor is invalid")
+		}
+		return g.Effective.Contributors[index].PeriodAt(now)
+	}
 	if !g.ActiveAt(now) {
 		return time.Time{}, time.Time{}, ErrGrantInactive
 	}
@@ -101,6 +120,14 @@ func (g Grant) PeriodAt(now time.Time) (time.Time, time.Time, error) {
 	default:
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid grant period: %s", g.Period)
 	}
+}
+
+// EffectiveGrant keeps aggregate rights separate from source/commercial
+// provenance. PeriodContributor identifies the source whose allowance window
+// applies to PeriodAt; every Contributor is an unaggregated authoritative row.
+type EffectiveGrant struct {
+	Contributors      []Grant
+	PeriodContributor int
 }
 
 type GrantService interface {

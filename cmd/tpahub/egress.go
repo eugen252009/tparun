@@ -81,6 +81,13 @@ func (s *server) currentTime() time.Time {
 }
 
 func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, error) {
+	uncertain, uncertaintyErr := s.db.AccountEgressUncertain(context.Background(), accountID)
+	if uncertaintyErr != nil {
+		return 0, 0, fmt.Errorf("egress accounting uncertainty unavailable: %w", uncertaintyErr)
+	}
+	if uncertain {
+		return 0, 0, fmt.Errorf("egress accounting authority degraded")
+	}
 	if s.egressAccountingDegraded(accountID) {
 		return 0, 0, fmt.Errorf("egress accounting authority degraded")
 	}

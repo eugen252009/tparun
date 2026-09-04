@@ -32,7 +32,7 @@ func DefaultGrants(created time.Time) []commerce.Grant {
 	offer := NanoOffer()
 	grants := make([]commerce.Grant, len(offer.Grants))
 	for i, template := range offer.Grants {
-		grants[i] = commerce.Grant{ProductID: offer.ProductID, CapabilityID: template.CapabilityID, OfferID: offer.ID, Enabled: true, ValidFrom: created.UTC(), Period: template.Period, Limits: template.Limits, Source: "legacy", CreatedAt: created.UTC(), UpdatedAt: created.UTC()}
+		grants[i] = commerce.Grant{ProductID: offer.ProductID, CapabilityID: template.CapabilityID, OfferID: offer.ID, Enabled: true, ValidFrom: created.UTC(), Period: template.Period, Limits: template.Limits, Source: "local", CreatedAt: created.UTC(), UpdatedAt: created.UTC()}
 	}
 	return grants
 }

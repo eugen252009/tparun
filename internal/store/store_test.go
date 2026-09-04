@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 func TestRestartMarksRunningJobsFailed(t *testing.T) {
@@ -138,12 +139,14 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 			t.Fatal(err)
 		}
 		legacy, err := s.Entitlement(context.Background(), "legacy")
-		if err != nil || legacy.ValidFrom != "2025-01-01T00:00:00Z" || legacy.ValidUntil != "" {
-			t.Fatalf("restart %d legacy=%+v err=%v", restart, legacy, err)
+		legacyFrom, fromErr := time.Parse(time.RFC3339Nano, legacy.ValidFrom)
+		legacyUntil, untilErr := time.Parse(time.RFC3339Nano, legacy.ValidUntil)
+		if err != nil || fromErr != nil || untilErr != nil || legacy.Source != "migration" || legacy.PlanCode != "nano" || !legacyUntil.Equal(legacyFrom.AddDate(0, 6, 0)) {
+			t.Fatalf("restart %d migration=%+v err=%v", restart, legacy, err)
 		}
-		legacyGrant, err := s.GetGrant(context.Background(), "legacy", commerce.ProductTPAHub, "repository.publish", time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC))
-		if err != nil || legacyGrant.Source != "legacy" || legacyGrant.PurchaseID != "" || legacyGrant.ValidUntil != nil {
-			t.Fatalf("restart %d migrated grandfather grant=%+v err=%v", restart, legacyGrant, err)
+		legacyGrant, err := s.GetGrant(context.Background(), "legacy", commerce.ProductTPAHub, "repository.publish", legacyFrom.Add(time.Hour))
+		if err != nil || legacyGrant.Source != "migration" || legacyGrant.PurchaseID != "" || legacyGrant.ValidUntil == nil || legacyGrant.Limits.StorageBytes != tpahubproduct.NanoStorageBytes {
+			t.Fatalf("restart %d migration grant=%+v err=%v", restart, legacyGrant, err)
 		}
 		paid, err := s.Entitlement(context.Background(), "paid")
 		if err != nil || paid.ValidFrom != "2026-09-15T00:00:00Z" || paid.ValidUntil != "2027-09-15T00:00:00Z" {
@@ -265,50 +268,6 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	}
 }
 
-func TestPurchasePreservesGrandfatheredGrant(t *testing.T) {
-	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	ctx := context.Background()
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	until := now.AddDate(1, 0, 0)
-	if err = s.CreateAccount(ctx, Account{ID: "grandfathered", Email: "grandfathered@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}, commerce.Grant{CustomerID: "grandfathered", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	purchase := BillingPurchase{ID: "grandfathered-purchase", AccountID: "grandfathered", ProductID: string(commerce.ProductTPAHub), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_grandfathered", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
-	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual}, commerce.GrantTemplate{CapabilityID: "repository.download", Period: commerce.PeriodAnnual}); err != nil {
-		t.Fatal(err)
-	}
-	transition := commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-grandfathered", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: purchase.Provider, Environment: purchase.BillingEnvironment, Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}
-	if err = s.ApplyPaymentTransition(ctx, transition); err != nil {
-		t.Fatal(err)
-	}
-	var legacySource, legacyPurchase string
-	var legacyStorage int64
-	if err = s.db.QueryRow(`SELECT source,purchase_id,storage_limit_bytes FROM product_grants WHERE customer_id=? AND capability_id=?`, "grandfathered", "repository.publish").Scan(&legacySource, &legacyPurchase, &legacyStorage); err != nil || legacySource != "legacy" || legacyPurchase != "" || legacyStorage != 0 {
-		t.Fatalf("grandfathered row source=%s purchase=%s storage=%d err=%v", legacySource, legacyPurchase, legacyStorage, err)
-	}
-	var retained int
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE customer_id=? AND capability_id=? AND source='legacy'`, "grandfathered", "repository.publish").Scan(&retained); err != nil || retained != 1 {
-		t.Fatalf("grandfathered row count=%d err=%v", retained, err)
-	}
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id=? AND capability_id=? AND purchase_id=?`, "grandfathered", "repository.publish", purchase.ID).Scan(&retained); err != nil || retained != 1 {
-		t.Fatalf("purchased same-capability row count=%d err=%v", retained, err)
-	}
-	purchased, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.download", now)
-	if err != nil || purchased.Source != "purchase" || purchased.PurchaseID != purchase.ID || purchased.ValidUntil == nil || !purchased.ValidUntil.Equal(until) {
-		t.Fatalf("purchased grant validity/provenance=%+v err=%v", purchased, err)
-	}
-	if _, err = s.db.Exec(`UPDATE purchase_grant_instances SET valid_until=? WHERE purchase_id=? AND capability_id=?`, now.Add(-time.Minute).Format(time.RFC3339Nano), purchase.ID, "repository.publish"); err != nil {
-		t.Fatal(err)
-	}
-	if effective, err := s.GetGrant(ctx, "grandfathered", commerce.ProductTPAHub, "repository.publish", now); err != nil || effective.Source != "legacy" {
-		t.Fatalf("grandfathered fallback after purchase expiry=%+v err=%v", effective, err)
-	}
-}
-
 func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
@@ -384,9 +343,11 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt_snapshot", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, ValidFrom: now, ValidUntil: until}); err != nil {
 		t.Fatal(err)
 	}
-	grant, err := s.GetGrant(ctx, "snapshot", "test-product", "test.execute", now)
-	if err != nil || grant.OfferID != purchase.PlanCode || grant.Period != template.Period || grant.Limits != template.Limits || grant.PurchaseID != purchase.ID {
-		t.Fatalf("activated grant=%+v err=%v", grant, err)
+	var offerID, cadence, metric, purchaseID string
+	var storageBytes, egressBytes, operationCount int64
+	err = s.db.QueryRow(`SELECT offer_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,purchase_id FROM purchase_grant_instances WHERE purchase_id=? AND capability_id=?`, purchase.ID, template.CapabilityID).Scan(&offerID, &cadence, &storageBytes, &egressBytes, &metric, &operationCount, &purchaseID)
+	if err != nil || offerID != purchase.PlanCode || cadence != string(template.Period) || storageBytes != template.Limits.StorageBytes || egressBytes != template.Limits.EgressBytes || metric != string(template.Limits.OperationMetric) || operationCount != template.Limits.OperationCount || purchaseID != purchase.ID {
+		t.Fatalf("activated instance=%s/%s/%d/%d/%s/%d/%s err=%v", offerID, cadence, storageBytes, egressBytes, metric, operationCount, purchaseID, err)
 	}
 	unchanged, err := s.GetGrant(ctx, "snapshot", "test-product", "unrelated", now)
 	if err != nil || unchanged != unrelated {
@@ -452,6 +413,9 @@ func TestPaymentGrantActivationRollsBackPartialGrantSet(t *testing.T) {
 	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), templates...); err != nil {
 		t.Fatal(err)
 	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/partial", purchase.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.db.Exec(`CREATE TRIGGER reject_partial_grant BEFORE INSERT ON purchase_grant_instances WHEN NEW.capability_id='reject' BEGIN SELECT RAISE(ABORT,'injected grant failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -483,6 +447,9 @@ func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T
 	until := now.AddDate(1, 0, 0)
 	purchase := BillingPurchase{ID: "late-success-purchase", AccountID: "late-success", ProductID: "late-product", PlanCode: "late-offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_late_success", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	if _, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodMonthly}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/late", purchase.UpdatedAt); err != nil {
 		t.Fatal(err)
 	}
 	base := func(id string, kind commerce.PaymentEventType) commerce.PaymentTransition {
@@ -518,6 +485,9 @@ func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T
 	expiredPurchase.ProductID = "late-expired-product"
 	expiredPurchase.ProviderReference = "cs_late_expired"
 	if _, err = s.CreatePendingPurchase(ctx, expiredPurchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodAnnual}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, expiredPurchase.ID, expiredPurchase.ProviderReference, "https://checkout.invalid/expired", expiredPurchase.UpdatedAt); err != nil {
 		t.Fatal(err)
 	}
 	expiredEvent := commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-late-expired", OperationID: expiredPurchase.ID, Type: commerce.PaymentExpired, ProviderReference: expiredPurchase.ProviderReference, AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, OccurredAt: now}, Provider: expiredPurchase.Provider, Environment: expiredPurchase.BillingEnvironment, Kind: "expired", AmountMinor: expiredPurchase.AmountMinor, Currency: expiredPurchase.Currency, ValidFrom: now, ValidUntil: until}
@@ -618,12 +588,12 @@ func TestFreshSchemaContainsEntitlementValidity(t *testing.T) {
 	}
 	defer s.Close()
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	grantInput := commerce.Grant{ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}, Source: "legacy", CreatedAt: created, UpdatedAt: created}
+	grantInput := commerce.Grant{ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}, Source: "local", CreatedAt: created, UpdatedAt: created}
 	if err = s.CreateAccount(context.Background(), Account{ID: "fresh", Email: "fresh@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}, grantInput); err != nil {
 		t.Fatal(err)
 	}
 	entitlement, err := s.Entitlement(context.Background(), "fresh")
-	if err != nil || entitlement.ValidFrom != "2026-01-01T00:00:00Z" || entitlement.ValidUntil != "" || entitlement.Source != "legacy" {
+	if err != nil || entitlement.ValidFrom != "2026-01-01T00:00:00Z" || entitlement.ValidUntil != "" || entitlement.Source != "local" {
 		t.Fatalf("entitlement=%+v err=%v", entitlement, err)
 	}
 	grant, err := s.GetGrant(context.Background(), "fresh", commerce.ProductTPAHub, "repository.publish", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))

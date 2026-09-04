@@ -62,7 +62,7 @@ func TestLocalRegistrationExplicitlyProvisionsTPAGrants(t *testing.T) {
 		t.Fatalf("registration status=%d account=%q err=%v", response.StatusCode, out.AccountID, err)
 	}
 	grant, err := s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), commerce.ProductID(TPAHubProductID), CapabilityRepositoryPublish, s.currentTime())
-	if err != nil || grant.Source != "legacy" || grant.OfferID != "nano" {
+	if err != nil || grant.Source != "local" || grant.OfferID != "nano" {
 		t.Fatalf("local registration grant=%+v err=%v", grant, err)
 	}
 }
