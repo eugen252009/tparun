@@ -855,6 +855,13 @@ func (s *server) reconcilePublicationState() error {
 		}
 		repositoryRoot := filepath.Join(root, entry.Name())
 		pointer := filepath.Join(repositoryRoot, "current")
+		// Temporary pointers are never authoritative. Remove only the
+		// reconciliation/publish names, then rebuild current from durable state.
+		for _, suffix := range []string{".reconcile"} {
+			if err = os.Remove(pointer + suffix); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove stale publication pointer: %w", err)
+			}
+		}
 		generation, generationErr := s.db.ActiveGeneration(context.Background(), entry.Name())
 		if generationErr != nil {
 			if errors.Is(generationErr, store.ErrNotFound) {
