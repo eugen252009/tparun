@@ -494,6 +494,12 @@ func scanPurchase(row interface{ Scan(...any) error }) (BillingPurchase, error) 
 
 const purchaseColumns = `id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,tax_classification,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,provider_reference,checkout_url,checkout_request_version,created_at,updated_at,paid_at,failed_at,expired_at`
 
+func (s *Store) PurchaseGrantInstanceCount(c context.Context, customerID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(c, `SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id=?`, customerID).Scan(&count)
+	return count, err
+}
+
 func (s *Store) Purchase(c context.Context, id string) (BillingPurchase, error) {
 	return scanPurchase(s.db.QueryRowContext(c, `SELECT `+purchaseColumns+` FROM billing_purchases WHERE id=?`, id))
 }

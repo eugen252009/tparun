@@ -200,6 +200,13 @@ func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-superseded", OperationID: old.ID, Type: commerce.PaymentSucceeded, ProviderReference: old.ProviderReference, AmountMinor: old.AmountMinor, Currency: old.Currency, OccurredAt: s.currentTime()}, Provider: old.Provider, Environment: old.BillingEnvironment, Kind: "success", AmountMinor: old.AmountMinor, Currency: old.Currency, ValidFrom: s.currentTime(), ValidUntil: s.currentTime().AddDate(1, 0, 0)}); err != nil {
 		t.Fatalf("superseded payable checkout was not reconciliable: %v", err)
 	}
+	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-current", OperationID: business.ID, Type: commerce.PaymentSucceeded, ProviderReference: business.ProviderReference, AmountMinor: business.AmountMinor, Currency: business.Currency, OccurredAt: s.currentTime()}, Provider: business.Provider, Environment: business.BillingEnvironment, Kind: "success", AmountMinor: business.AmountMinor, Currency: business.Currency, ValidFrom: s.currentTime(), ValidUntil: s.currentTime().AddDate(1, 0, 0)}); err != nil {
+		t.Fatalf("second payable checkout was not reconciliable: %v", err)
+	}
+	instances, countErr := s.db.PurchaseGrantInstanceCount(ctx, "a")
+	if countErr != nil || instances < 8 {
+		t.Fatalf("paid purchase grant instances=%d err=%v", instances, countErr)
+	}
 }
 func TestStalePreTaxPurchaseGetsNewCheckoutOperation(t *testing.T) {
 	s := configuredPurchaseTestServer(t)
