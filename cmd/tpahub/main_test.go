@@ -80,6 +80,33 @@ func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	}
 }
 
+func TestStartupReconcilesPublicationPointerFromDurableState(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	root := filepath.Join(s.cfg.DataDir, "repos", "reconcile-test")
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "reconcile-test", AccountID: "a", Name: "reconcile-test", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, generation := range []string{"job-1", "job-2"} {
+		if err := os.MkdirAll(filepath.Join(root, "generations", generation), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("generations", "job-2"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetActiveGeneration(ctx, "reconcile-test", "job-1", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcilePublicationState(); err != nil {
+		t.Fatal(err)
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil || filepath.Base(target) != "job-1" {
+		t.Fatalf("reconciled target=%q err=%v", target, err)
+	}
+}
+
 func TestPublicationJobSuccessRequiresActiveGeneration(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()

@@ -79,6 +79,9 @@ func run(cfg config.Config) error {
 	if e = s.runner.Check(ctx); e != nil {
 		return e
 	}
+	if e = s.reconcilePublicationState(); e != nil {
+		return e
+	}
 	s.ctx = ctx
 	go s.worker()
 	srv := &http.Server{Addr: cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
@@ -583,6 +586,59 @@ func verifyPublicationCandidate(candidate string) error {
 	}
 	if len(entries) == 0 {
 		return fmt.Errorf("publication candidate is empty")
+	}
+	return nil
+}
+
+func (s *server) reconcilePublicationState() error {
+	root := filepath.Join(s.cfg.DataDir, "repos")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("scan repository publication state: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		repositoryRoot := filepath.Join(root, entry.Name())
+		pointer := filepath.Join(repositoryRoot, "current")
+		if _, err = os.Lstat(pointer); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		generation, generationErr := s.db.ActiveGeneration(context.Background(), entry.Name())
+		if generationErr != nil {
+			if errors.Is(generationErr, store.ErrNotFound) {
+				if err = os.Remove(pointer); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("remove uncommitted publication pointer: %w", err)
+				}
+				continue
+			}
+			return fmt.Errorf("read durable publication state: %w", generationErr)
+		}
+		target, err := filepath.EvalSymlinks(pointer)
+		if err != nil {
+			return fmt.Errorf("resolve publication pointer: %w", err)
+		}
+		if filepath.Base(target) == generation {
+			continue
+		}
+		generationPath := filepath.Join(repositoryRoot, "generations", generation)
+		if _, err = os.Stat(generationPath); err != nil {
+			return fmt.Errorf("durable publication generation missing: %w", err)
+		}
+		temporary := pointer + ".reconcile"
+		if err = os.Symlink(filepath.Join("generations", generation), temporary); err != nil {
+			return fmt.Errorf("stage publication pointer recovery: %w", err)
+		}
+		if err = atomicReplaceSymlink(temporary, pointer); err != nil {
+			_ = os.Remove(temporary)
+			return fmt.Errorf("restore durable publication pointer: %w", err)
+		}
 	}
 	return nil
 }
