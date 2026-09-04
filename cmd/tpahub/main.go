@@ -32,10 +32,15 @@ var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
 
+type publicationRunner interface {
+	Check(context.Context) error
+	Publish(context.Context, tpa.PublishRequest) error
+}
+
 type server struct {
 	cfg              config.Config
 	db               *store.Store
-	runner           tpa.Runner
+	runner           publicationRunner
 	ctx              context.Context
 	startedAt        time.Time
 	now              func() time.Time

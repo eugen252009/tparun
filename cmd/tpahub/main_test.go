@@ -33,6 +33,58 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
+
+type blockingPublicationRunner struct{ started, release chan struct{} }
+
+func (r *blockingPublicationRunner) Check(context.Context) error { return nil }
+func (r *blockingPublicationRunner) Publish(_ context.Context, request tpa.PublishRequest) error {
+	if err := os.MkdirAll(request.Output, 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(request.Output, "Packages"), []byte("valid"), 0644); err != nil {
+		return err
+	}
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.release
+	return nil
+}
+
+func TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T) {
+	s, _ := testServer(t)
+	s.ctx = context.Background()
+	repositoryID := "abababababababababababababababab"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "blocked", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	incoming := filepath.Join(s.cfg.DataDir, "incoming", "job-blocked")
+	if err := os.MkdirAll(incoming, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, "input.deb"), []byte("input"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job := store.Job{ID: "job-blocked", RepositoryID: repositoryID, State: "running", IncomingPath: incoming, CreatedAt: "now"}
+	if err := s.db.CreateJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	runner := &blockingPublicationRunner{started: make(chan struct{}, 1), release: make(chan struct{})}
+	s.runner = runner
+	done := make(chan struct{})
+	go func() { s.process(job); close(done) }()
+	<-runner.started
+	if err := s.db.SetAccountStatus(context.Background(), "a", "suspended"); err != nil {
+		t.Fatal(err)
+	}
+	close(runner.release)
+	<-done
+	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
+		t.Fatalf("suspended publication changed pointer: %v", err)
+	}
+}
+
 func TestDiskFullPublicationCheckpointPreservesPreviousGeneration(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "repo")
