@@ -156,7 +156,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.7.8  | VERIFIED | Terminal jobs must remove incoming data                        | Cleanup success/failure/cancel paths | Test                  | `cmd/tpahub/main.go`: successful completion removes incoming data and `fail` removes it on every terminal failure path; `go test ./...` PASS |
 | P0.7.9  | VERIFIED | Terminal jobs must remove work data                            | Cleanup success/failure/cancel paths | Test                  | `cmd/tpahub/main.go`: `process` defers removal of both work and candidate paths for success and failure; `go test ./...` PASS |
 | P0.7.10 | VERIFIED | Startup must clean abandoned job directories                   | Startup reconciliation               | Restart test          | `cmd/tpahub/main.go`: startup removes abandoned transient `work` directories; `cmd/tpahub/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `go test ./...` PASS |
-| P0.7.11 | TODO   | Many queued large jobs cannot exhaust filesystem beyond policy | Adversarial queue test               | Disk-usage assertion  |          |
+| P0.7.11 | VERIFIED | Many queued large jobs cannot exhaust filesystem beyond policy | Adversarial queue test               | Disk-usage assertion  | `cmd/tpahub/main.go`: global staging accounting sums all incoming/work files under the serialized reservation lock; `cmd/tpahub/main_test.go`: `TestUploadStagingRespectsStorageGrant` models three queued job directories and rejects the next payload at the configured ceiling; `go test ./...` PASS |
 
 ---
 

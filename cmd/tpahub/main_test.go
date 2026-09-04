@@ -50,8 +50,14 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, "incoming", "queued"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(s.cfg.DataDir, "incoming", "queued", "payload.deb"), []byte("123"), 0600); err != nil {
-		t.Fatal(err)
+	for _, job := range []string{"queued", "queued-2", "queued-3"} {
+		dir := filepath.Join(s.cfg.DataDir, "incoming", job)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "payload.deb"), []byte("123"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.checkStagingCapacity(context.Background(), "a", 1); err == nil {
 		t.Fatal("staging overage was accepted")
