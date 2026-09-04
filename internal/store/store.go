@@ -358,8 +358,10 @@ func (s *Store) SetEntitlement(c context.Context, x AccountEntitlement) error {
 	if _, e = tx.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, x.AccountID, x.PlanCode, x.StartedAt, x.ValidFrom, x.ValidUntil, x.CreatedAt, x.UpdatedAt, x.Source, x.PurchaseID); e != nil {
 		return e
 	}
-	if _, e = tx.ExecContext(c, `UPDATE product_grants SET offer_id=?,enabled=1,valid_from=?,valid_until=?,period_cadence=CASE WHEN ?='nano' THEN 'annual' ELSE 'monthly' END,storage_limit_bytes=CASE WHEN capability_id='repository.publish' THEN CASE ? WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END ELSE storage_limit_bytes END,egress_limit_bytes=CASE WHEN capability_id='repository.download' THEN CASE ? WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END ELSE egress_limit_bytes END,source=?,purchase_id=?,updated_at=? WHERE customer_id=? AND product_id='tpa-hub'`, x.PlanCode, x.ValidFrom, x.ValidUntil, x.PlanCode, x.PlanCode, x.PlanCode, x.Source, x.PurchaseID, x.UpdatedAt, x.AccountID); e != nil {
-		return e
+	if x.Source != "purchase" {
+		if _, e = tx.ExecContext(c, `UPDATE product_grants SET offer_id=?,enabled=1,valid_from=?,valid_until=?,period_cadence=CASE WHEN ?='nano' THEN 'annual' ELSE 'monthly' END,storage_limit_bytes=CASE WHEN capability_id='repository.publish' THEN CASE ? WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END ELSE storage_limit_bytes END,egress_limit_bytes=CASE WHEN capability_id='repository.download' THEN CASE ? WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END ELSE egress_limit_bytes END,source=?,purchase_id=?,updated_at=? WHERE customer_id=? AND product_id='tpa-hub' AND source='legacy'`, x.PlanCode, x.ValidFrom, x.ValidUntil, x.PlanCode, x.PlanCode, x.PlanCode, x.Source, x.PurchaseID, x.UpdatedAt, x.AccountID); e != nil {
+			return e
+		}
 	}
 	return tx.Commit()
 }
@@ -544,6 +546,20 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	at, parseErr := time.Parse(time.RFC3339Nano, now)
 	if parseErr != nil {
 		return BillingPurchase{}, parseErr
+	}
+	var entitlementSource, entitlementFrom, entitlementUntil string
+	if entitlementErr := tx.QueryRowContext(c, `SELECT source,valid_from,valid_until FROM account_entitlements WHERE account_id=?`, p.AccountID).Scan(&entitlementSource, &entitlementFrom, &entitlementUntil); entitlementErr != nil && entitlementErr != sql.ErrNoRows {
+		return BillingPurchase{}, entitlementErr
+	}
+	if entitlementSource == "purchase" && entitlementUntil != "" {
+		from, fromErr := parseEntitlementTime(entitlementFrom)
+		until, untilErr := parseEntitlementTime(entitlementUntil)
+		if fromErr != nil || untilErr != nil {
+			return BillingPurchase{}, fmt.Errorf("invalid purchase entitlement validity")
+		}
+		if !at.Before(from) && at.Before(until) {
+			return BillingPurchase{}, fmt.Errorf("purchase-already-active")
+		}
 	}
 	grantRows, grantErr := tx.QueryContext(c, `SELECT enabled,valid_from,valid_until FROM product_grants WHERE customer_id=? AND product_id=? AND source='purchase'`, p.AccountID, p.ProductID)
 	if grantErr != nil {

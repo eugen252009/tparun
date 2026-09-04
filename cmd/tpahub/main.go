@@ -279,6 +279,16 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") && r.ContentLength > 0 {
+		if err := s.checkDiskHeadroomFor(r.ContentLength); err != nil {
+			bad(w, http.StatusInsufficientStorage, err.Error())
+			return
+		}
+		if err := s.checkStagingCapacity(r.Context(), accountID(r), r.ContentLength); err != nil {
+			bad(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+	}
 	jobID := newID()
 	dir := filepath.Join(s.cfg.DataDir, "incoming", jobID)
 	if e := os.MkdirAll(dir, 0700); e != nil {
@@ -358,7 +368,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	if err := s.checkStagingCapacity(r.Context(), accountID(r), total); err != nil {
+	if err := s.checkStagingCapacity(r.Context(), accountID(r), 0); err != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
@@ -785,7 +795,12 @@ func (s *server) ensurePublishAccountActive(repositoryID string) error {
 	return nil
 }
 
-func (s *server) checkDiskHeadroom() error {
+func (s *server) checkDiskHeadroom() error { return s.checkDiskHeadroomFor(0) }
+
+func (s *server) checkDiskHeadroomFor(additional int64) error {
+	if additional < 0 {
+		return fmt.Errorf("invalid disk reservation")
+	}
 	if s.cfg.MinDiskFreeBytes <= 0 {
 		return nil
 	}
@@ -794,7 +809,7 @@ func (s *server) checkDiskHeadroom() error {
 		return fmt.Errorf("disk headroom unavailable: %w", err)
 	}
 	free := int64(stat.Bavail) * int64(stat.Bsize)
-	if free < s.cfg.MinDiskFreeBytes {
+	if free-additional < s.cfg.MinDiskFreeBytes {
 		return fmt.Errorf("minimum disk headroom unavailable")
 	}
 	return nil
@@ -825,10 +840,10 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 			return nil
 		})
 	}
-	if s.cfg.MaxStagingBytes > 0 && staged > s.cfg.MaxStagingBytes {
+	if s.cfg.MaxStagingBytes > 0 && staged+incoming > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging storage limit exceeded")
 	}
-	if usage.StoredBytes+staged > grant.Limits.StorageBytes {
+	if usage.StoredBytes+staged+incoming > grant.Limits.StorageBytes {
 		return fmt.Errorf("staging storage limit exceeded")
 	}
 	return nil
