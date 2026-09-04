@@ -572,13 +572,8 @@ func (s *server) process(j store.Job) {
 	if _, statErr := os.Stat(baseline); statErr != nil {
 		baseline = art
 	}
-	baselineBytes, e := fileTreeSize(baseline)
-	if e != nil {
-		s.fail(j, fmt.Errorf("baseline capacity accounting: %w", e))
-		return
-	}
 	// Reserve work, candidate, and immutable-generation expansion before copying.
-	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", baselineBytes+incomingBytes*2); e != nil {
+	if e = s.reserveCapacity(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "work", incomingBytes*2); e != nil {
 		s.fail(j, e)
 		return
 	}
