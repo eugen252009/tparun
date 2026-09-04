@@ -25,6 +25,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
 	appversion "github.com/eugen252009/tpahub/internal/version"
+	"golang.org/x/sys/unix"
 )
 
 var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -526,12 +527,7 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	if e := os.Remove(pointer); e != nil && !os.IsNotExist(e) {
-		_ = os.Remove(temporaryPointer)
-		s.fail(j, e)
-		return
-	}
-	if e := os.Rename(temporaryPointer, pointer); e != nil {
+	if e := atomicReplaceSymlink(temporaryPointer, pointer); e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
@@ -554,6 +550,18 @@ func (s *server) process(j store.Job) {
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func atomicReplaceSymlink(next, current string) error {
+	if _, err := os.Lstat(current); os.IsNotExist(err) {
+		return os.Rename(next, current)
+	} else if err != nil {
+		return err
+	}
+	if err := unix.Renameat2(unix.AT_FDCWD, next, unix.AT_FDCWD, current, unix.RENAME_EXCHANGE); err != nil {
+		return err
+	}
+	return os.Remove(next)
+}
+
 func verifyPublicationCandidate(candidate string) error {
 	info, err := os.Stat(candidate)
 	if err != nil {
