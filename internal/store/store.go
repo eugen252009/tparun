@@ -934,6 +934,12 @@ func (s *Store) AccountStagingPaths(c context.Context, accountID string) ([]stri
 	return paths, rows.Err()
 }
 
+func (s *Store) HasNonterminalJobs(c context.Context, repositoryID string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(c, `SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND state NOT IN ('succeeded','failed')`, repositoryID).Scan(&count)
+	return count > 0, err
+}
+
 func (s *Store) TerminalJobIncomingPaths(c context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(c, `SELECT incoming_path FROM publish_jobs WHERE state IN ('failed','succeeded') AND incoming_path<>''`)
 	if err != nil {

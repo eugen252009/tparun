@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -636,9 +637,60 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.collectOldGenerations(j.RepositoryID); e != nil {
+		log.Printf("generation cleanup: repository=%s: %v", j.RepositoryID, e)
+	}
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
+func (s *server) collectOldGenerations(repositoryID string) error {
+	if s.cfg.MaxGenerations <= 0 {
+		return nil
+	}
+	busy, err := s.db.HasNonterminalJobs(context.Background(), repositoryID)
+	if err != nil || busy {
+		return err
+	}
+	active, err := s.db.ActiveGeneration(context.Background(), repositoryID)
+	if err != nil {
+		return nil
+	}
+	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type generationInfo struct {
+		name string
+		mod  time.Time
+	}
+	var candidates []generationInfo
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == active {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr != nil {
+			return statErr
+		}
+		candidates = append(candidates, generationInfo{entry.Name(), info.ModTime()})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod.After(candidates[j].mod) })
+	keep := int(s.cfg.MaxGenerations) - 1
+	if keep < 0 {
+		keep = 0
+	}
+	for i := keep; i < len(candidates); i++ {
+		if err = os.RemoveAll(filepath.Join(root, candidates[i].name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *server) publicationCheckpoint(stage string) error {
 	if s.publicationFault == nil {
 		return nil
