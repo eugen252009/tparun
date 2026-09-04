@@ -113,8 +113,8 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                     | Required Work                                    | Required Verification | Evidence |
 | ------ | ------ | ----------------------------------------------------------- | ------------------------------------------------ | --------------------- | -------- |
-| P0.5.1 | TODO   | Suspended accounts must fail bearer authentication          | Preserve/verify active-account join              | Test                  |          |
-| P0.5.2 | TODO   | Suspended accounts must fail browser session authentication | Preserve/verify active-account join              | Test                  |          |
+| P0.5.1 | VERIFIED | Suspended accounts must fail bearer authentication          | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: bearer token lookup joins active accounts; `cmd/tpahub/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
+| P0.5.2 | VERIFIED | Suspended accounts must fail browser session authentication | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: session lookup joins active accounts; `cmd/tpahub/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
 | P0.5.3 | VERIFIED | Suspended accounts must fail reader-token private access    | Join reader token → repository → account status  | Test                  | `internal/store/store.go`: `ReaderRepository` joins credentials through repository ownership and requires `accounts.status='active'`; `cmd/tpahub/auth_test.go`: reader access is denied after account suspension; `go test ./...` PASS |
 | P0.5.4 | TODO   | Reader authorization must verify token is not revoked       | Preserve token revocation validation             | Test                  |          |
 | P0.5.5 | TODO   | Reader authorization must verify repository ownership       | Validate ownership/customer relationship         | Test                  |          |
