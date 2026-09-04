@@ -82,6 +82,9 @@ func run(cfg config.Config) error {
 	if e = s.reconcilePublicationState(); e != nil {
 		return e
 	}
+	if e = s.reconcileStagingState(); e != nil {
+		return e
+	}
 	s.ctx = ctx
 	go s.worker()
 	srv := &http.Server{Addr: cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
@@ -586,6 +589,23 @@ func verifyPublicationCandidate(candidate string) error {
 	}
 	if len(entries) == 0 {
 		return fmt.Errorf("publication candidate is empty")
+	}
+	return nil
+}
+
+func (s *server) reconcileStagingState() error {
+	work := filepath.Join(s.cfg.DataDir, "work")
+	entries, err := os.ReadDir(work)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("scan staging state: %w", err)
+	}
+	for _, entry := range entries {
+		if err = os.RemoveAll(filepath.Join(work, entry.Name())); err != nil {
+			return fmt.Errorf("remove abandoned staging workspace: %w", err)
+		}
 	}
 	return nil
 }

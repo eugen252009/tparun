@@ -80,6 +80,23 @@ func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	}
 }
 
+func TestStartupCleansAbandonedStagingWorkspaces(t *testing.T) {
+	s, _ := testServer(t)
+	work := filepath.Join(s.cfg.DataDir, "work", "abandoned-job")
+	if err := os.MkdirAll(work, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "partial"), []byte("incomplete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileStagingState(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(work); !os.IsNotExist(err) {
+		t.Fatalf("abandoned workspace remains: %v", err)
+	}
+}
+
 func TestStartupReconcilesPublicationPointerFromDurableState(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()
