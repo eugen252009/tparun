@@ -49,6 +49,9 @@ type publicationRunner interface {
 type boundedPublicationRunner interface {
 	PublishBounded(context.Context, tpa.PublishRequest, int64) error
 }
+type boundedPublicationRunnerWithInodes interface {
+	PublishBoundedWithInodes(context.Context, tpa.PublishRequest, int64, int64) error
+}
 
 type server struct {
 	cfg                     config.Config
@@ -596,19 +599,17 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		reserve = s.db.ReserveEgressDelivery
 	}
 	reservationLimited := false
-	if egressLimit > 0 {
-		var reserveErr error
-		reservationLimited, reserveErr = reserve(r.Context(), deliveryID, repo.ID, periodStart, periodEnd, info.Size(), egressLimit, startedAt.Format(time.RFC3339Nano))
-		if reserveErr != nil {
-			_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, reserveErr.Error())
-			bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
-			return
-		}
+	var reserveErr error
+	reservationLimited, reserveErr = reserve(r.Context(), deliveryID, repo.ID, periodStart, periodEnd, info.Size(), egressLimit, startedAt.Format(time.RFC3339Nano))
+	if reserveErr != nil {
+		_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, reserveErr.Error())
+		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
+		return
 	}
 	limited = limited || reservationLimited
 	counted := &repositoryCountingWriter{ResponseWriter: w}
 	var output http.ResponseWriter = counted
-	if limited && strings.HasSuffix(strings.ToLower(path), ".deb") {
+	if limited {
 		w.Header().Set("X-TPAHub-Egress-Limited", "true")
 		output = &rateLimitedResponseWriter{ResponseWriter: counted, rate: NanoOverageBytesPerSecond}
 	}
@@ -811,7 +812,10 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	candidateBound := ((rawCandidateBound + allocationBlock - 1) / allocationBlock) * allocationBlock
-	candidateInodes := candidateBound / allocationBlock
+	candidateInodes := s.cfg.MaxCandidateInodes
+	if candidateInodes <= 0 {
+		candidateInodes = 64
+	}
 	if candidateInodes < 64 {
 		candidateInodes = 64
 	}
@@ -830,7 +834,11 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("publication runner does not enforce an output bound"))
 		return
 	}
-	e = bounded.PublishBounded(ctx, request, candidateBound)
+	if boundedWithInodes, supportsInodes := s.runner.(boundedPublicationRunnerWithInodes); supportsInodes {
+		e = boundedWithInodes.PublishBoundedWithInodes(ctx, request, candidateBound, candidateInodes+1)
+	} else {
+		e = bounded.PublishBounded(ctx, request, candidateBound)
+	}
 	if e != nil {
 		s.fail(j, e)
 		return
@@ -1563,13 +1571,22 @@ func (s *server) reconcileStagingState() error {
 	}
 	for _, job := range pending {
 		if err = s.cleanupPublishJob(store.Job{ID: job.ID, IncomingPath: job.IncomingPath}); err != nil {
-			_ = s.db.SetCleanupRetry(context.Background(), job.ID, err, s.cleanupRetryAt(s.cleanupCurrentTime(), job.Attempts+1))
-			return fmt.Errorf("cleanup publication job %s: %w", job.ID, err)
+			if retryErr := s.db.SetCleanupRetry(context.Background(), job.ID, err, s.cleanupRetryAt(s.cleanupCurrentTime(), job.Attempts+1)); retryErr != nil {
+				return fmt.Errorf("record cleanup retry for %s: %w", job.ID, retryErr)
+			}
+			log.Printf("startup publication cleanup deferred: job=%s: %v", job.ID, err)
+			continue
 		}
 		if err = s.db.SetCleanupResult(context.Background(), job.ID, nil); err != nil {
 			return fmt.Errorf("record publication cleanup %s: %w", job.ID, err)
 		}
 	}
+	return s.reconcileOrphanedStagingState()
+}
+
+func (s *server) reconcileOrphanedStagingState() error {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
 	paths, err := s.db.TerminalJobIncomingPaths(context.Background())
 	if err != nil {
 		return fmt.Errorf("scan terminal staging state: %w", err)
@@ -1579,7 +1596,7 @@ func (s *server) reconcileStagingState() error {
 			return fmt.Errorf("cleanup terminal incoming: %w", err)
 		}
 		if err := s.removePath(path); err != nil {
-			return fmt.Errorf("remove terminal incoming workspace: %w", err)
+			log.Printf("deferred terminal incoming cleanup: path=%s: %v", path, err)
 		}
 	}
 	activePaths, err := s.db.ActiveStagingPaths(context.Background())
@@ -1606,7 +1623,7 @@ func (s *server) reconcileStagingState() error {
 			return fmt.Errorf("cleanup orphaned incoming: %w", err)
 		}
 		if err = s.removePath(path); err != nil {
-			return fmt.Errorf("remove orphaned incoming workspace: %w", err)
+			log.Printf("deferred orphaned incoming cleanup: path=%s: %v", path, err)
 		}
 	}
 	work := filepath.Join(s.cfg.DataDir, "work")
@@ -1622,7 +1639,7 @@ func (s *server) reconcileStagingState() error {
 			return fmt.Errorf("cleanup abandoned work: %w", err)
 		}
 		if err = s.removePath(filepath.Join(work, entry.Name())); err != nil {
-			return fmt.Errorf("remove abandoned staging workspace: %w", err)
+			log.Printf("deferred abandoned staging cleanup: path=%s: %v", filepath.Join(work, entry.Name()), err)
 		}
 	}
 	return nil
@@ -1692,9 +1709,15 @@ func (s *server) cleanupRetryLoop() {
 			if err := s.retryPendingCleanup(s.cleanupCurrentTime()); err != nil {
 				log.Printf("publish cleanup retry: %v", err)
 			}
+			if err := s.reconcileOrphanedStagingState(); err != nil {
+				log.Printf("orphaned staging cleanup: %v", err)
+			}
 		case <-s.cleanupWake:
 			if err := s.retryPendingCleanup(s.cleanupCurrentTime()); err != nil {
 				log.Printf("publish cleanup retry: %v", err)
+			}
+			if err := s.reconcileOrphanedStagingState(); err != nil {
+				log.Printf("orphaned staging cleanup: %v", err)
 			}
 		}
 	}

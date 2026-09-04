@@ -45,6 +45,7 @@ func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 func TestLocalRegistrationExplicitlyProvisionsTPAGrants(t *testing.T) {
 	s, h := testServer(t)
 	s.cfg.BillingPurchasesEnabled = false
+	s.cfg.LocalProvisioningEnabled = true
 	req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(`{"email":"local@example.invalid","password":"long-enough-password"}`))
 	if err != nil {
 		t.Fatal(err)

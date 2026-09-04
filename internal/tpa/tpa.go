@@ -13,6 +13,8 @@ import (
 
 type Runner struct{ Bin, GPGHome, Fingerprint string }
 
+const defaultPublicationInodes int64 = 65536
+
 func (r Runner) command(ctx context.Context, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, r.Bin, args...)
 	var out, errout bytes.Buffer
@@ -65,8 +67,17 @@ func (r Runner) publish(ctx context.Context, p PublishRequest) error {
 // completed tree is copied to the host only after the publisher succeeds, so a
 // writer cannot allocate more candidate data than the admitted bound.
 func (r Runner) PublishBounded(ctx context.Context, p PublishRequest, maximum int64) error {
+	return r.PublishBoundedWithInodes(ctx, p, maximum, defaultPublicationInodes)
+}
+
+// PublishBoundedWithInodes runs the publisher with an explicit byte bound and
+// an explicit tmpfs inode-count bound. The two resources are independent.
+func (r Runner) PublishBoundedWithInodes(ctx context.Context, p PublishRequest, maximum, inodeLimit int64) error {
 	if maximum <= 0 {
 		return fmt.Errorf("invalid publication output bound")
+	}
+	if inodeLimit <= 0 {
+		return fmt.Errorf("invalid publication inode bound")
 	}
 	if _, err := os.Lstat(p.Output); err == nil {
 		return fmt.Errorf("publication output already exists")
@@ -91,10 +102,6 @@ func (r Runner) PublishBounded(ctx context.Context, p PublishRequest, maximum in
 		}
 	}()
 	boundedOutput := filepath.Join(sandbox, "repository")
-	inodeLimit := maximum / int64(os.Getpagesize())
-	if inodeLimit < 64 {
-		inodeLimit = 64
-	}
 	args := []string{"pack", "-in", p.Input, "--atomic-publish", p.Output}
 	if r.Fingerprint != "" {
 		args = append(args, "-gpg", r.Fingerprint)

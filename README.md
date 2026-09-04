@@ -50,16 +50,18 @@ TPAHUB_GPG_FINGERPRINT        full signing fingerprint
 TPAHUB_PUBLISH_TIMEOUT        10m
 TPAHUB_MAX_UPLOAD_BYTES       512 MiB
 TPAHUB_MAX_STAGING_BYTES      4 GiB
+TPAHUB_MAX_CANDIDATE_INODES   65536 (filesystem inode count)
 TPAHUB_MIN_DISK_FREE_BYTES    100 MiB
 TPAHUB_MAX_GENERATIONS        5
-TPAHUB_REGISTRATION_ENABLED   true (set false to disable)
+TPAHUB_REGISTRATION_ENABLED   false (set true to enable with billing or local provisioning)
+TPAHUB_LOCAL_PROVISIONING_ENABLED false (set true only for an intentional local deployment)
 ```
 
 ## Website and onboarding
 
 Start at `https://tpa.lupricht.net/`, read the practical guide at `/docs`, or inspect the public installer and signing key at `/install.sh` and `/tpahub.asc`. Nano is available now; Standard and Pro are displayed as coming soon and have no activation or billing flow.
 
-The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPAHUB_REGISTRATION_ENABLED`.
+The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPAHUB_REGISTRATION_ENABLED`; public registration requires enabled billing or explicit `TPAHUB_LOCAL_PROVISIONING_ENABLED`.
 
 ## CLI workflow
 

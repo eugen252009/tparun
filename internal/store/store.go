@@ -478,7 +478,7 @@ func (s *Store) BeginEgressDelivery(c context.Context, id, repositoryID, created
 }
 
 func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, periodStart, periodEnd string, requested, limit int64, createdAt string) (bool, error) {
-	if requested < 0 || limit <= 0 || periodStart == "" || periodEnd == "" || periodStart >= periodEnd {
+	if requested < 0 || limit < 0 || periodStart == "" || periodEnd == "" || periodStart >= periodEnd {
 		return false, fmt.Errorf("invalid egress delivery reservation")
 	}
 	tx, err := s.db.BeginTx(c, nil)
@@ -487,20 +487,27 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 	}
 	defer tx.Rollback()
 	var accountID string
-	if err = tx.QueryRowContext(c, `SELECT account_id FROM repositories WHERE id=?`, repositoryID).Scan(&accountID); err != nil {
+	if err = tx.QueryRowContext(c, `SELECT COALESCE(account_id,'') FROM repositories WHERE id=?`, repositoryID).Scan(&accountID); err != nil {
 		return false, err
 	}
 	var used, reserved int64
-	if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(d.egress_bytes),0) FROM repository_egress_daily d JOIN repositories r ON r.id=d.repository_id WHERE r.account_id=? AND d.usage_date>=? AND d.usage_date<?`, accountID, periodStart, periodEnd).Scan(&used); err != nil {
-		return false, err
+	// Even an unlimited or denied grant needs the marker's period persisted so
+	// an uncertain settlement cannot later be assigned to an arbitrary date.
+	if limit > 0 {
+		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(d.egress_bytes),0) FROM repository_egress_daily d JOIN repositories r ON r.id=d.repository_id WHERE r.account_id=? AND d.usage_date>=? AND d.usage_date<?`, accountID, periodStart, periodEnd).Scan(&used); err != nil {
+			return false, err
+		}
+		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(u.reserved_bytes),0) FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? AND u.period_start=? AND u.period_end=? AND u.state IN ('streaming','uncertain')`, accountID, periodStart, periodEnd).Scan(&reserved); err != nil {
+			return false, err
+		}
 	}
-	if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(u.reserved_bytes),0) FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? AND u.period_start=? AND u.period_end=? AND u.state IN ('streaming','uncertain')`, accountID, periodStart, periodEnd).Scan(&reserved); err != nil {
-		return false, err
-	}
-	if used < 0 || reserved < 0 || used > limit || reserved > limit-used {
+	if limit > 0 && (used < 0 || reserved < 0 || used > limit || reserved > limit-used) {
 		reserved = limit - used
 	}
-	remaining := limit - used - reserved
+	remaining := int64(0)
+	if limit > 0 {
+		remaining = limit - used - reserved
+	}
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -522,7 +529,7 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
-	return reservation < requested, nil
+	return limit > 0 && reservation < requested, nil
 }
 
 func (s *Store) CompleteEgressDelivery(c context.Context, id, repositoryID, usageDate string, bytes int64, updatedAt string) error {
@@ -563,7 +570,7 @@ func (s *Store) MarkEgressDeliveryUncertain(c context.Context, id, repositoryID,
 }
 
 func (s *Store) EgressDeliveries(c context.Context, accountID string) ([]EgressDelivery, error) {
-	query := `SELECT u.id,r.account_id,u.repository_id,r.name,u.state,u.version,u.period_start,u.period_end,u.reserved_bytes,u.created_at,u.reason FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id`
+	query := `SELECT u.id,COALESCE(r.account_id,''),u.repository_id,r.name,u.state,u.version,u.period_start,u.period_end,u.reserved_bytes,u.created_at,u.reason FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id`
 	args := []any{}
 	if accountID != "" {
 		query += " WHERE r.account_id=?"
@@ -599,8 +606,8 @@ func (s *Store) RecoverEgressDeliveryWithAudit(c context.Context, accountID, id,
 		return err
 	}
 	defer tx.Rollback()
-	var state string
-	if err = tx.QueryRowContext(c, `SELECT u.state FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE u.id=? AND u.repository_id=? AND r.account_id=? AND u.version=?`, id, repositoryID, accountID, version).Scan(&state); err != nil {
+	var state, periodStart, periodEnd, createdAt string
+	if err = tx.QueryRowContext(c, `SELECT u.state,u.period_start,u.period_end,u.created_at FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE u.id=? AND u.repository_id=? AND (r.account_id=? OR (r.account_id IS NULL AND ?='')) AND u.version=?`, id, repositoryID, accountID, accountID, version).Scan(&state, &periodStart, &periodEnd, &createdAt); err != nil {
 		_ = insertAdminAudit(tx, id, accountID, repositoryID, "missing", version, "rejected", operator, updatedAt, err.Error())
 		if commitErr := tx.Commit(); commitErr != nil {
 			return commitErr
@@ -615,6 +622,22 @@ func (s *Store) RecoverEgressDeliveryWithAudit(c context.Context, accountID, id,
 			return commitErr
 		}
 		return fmt.Errorf("egress delivery is still active")
+	}
+	parsedDate, parseErr := time.Parse("2006-01-02", usageDate)
+	periodValid := periodStart != "" && periodEnd != "" && usageDate >= periodStart && usageDate < periodEnd
+	if periodStart == "" && periodEnd == "" {
+		created, createdErr := time.Parse(time.RFC3339Nano, createdAt)
+		periodValid = createdErr == nil && usageDate == created.UTC().Format("2006-01-02")
+	}
+	if parseErr != nil || parsedDate.Format("2006-01-02") != usageDate || !periodValid {
+		details := fmt.Sprintf("usage date outside marker period: usage_date=%s period_start=%s period_end=%s", usageDate, periodStart, periodEnd)
+		if auditErr := insertAdminAudit(tx, id, accountID, repositoryID, "uncertain", version, "rejected", operator, updatedAt, details); auditErr != nil {
+			return auditErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return commitErr
+		}
+		return fmt.Errorf("usage date must be within marker period")
 	}
 	if bytes > 0 {
 		if _, err = tx.ExecContext(c, `INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES(?,?,?,?) ON CONFLICT(repository_id,usage_date) DO UPDATE SET egress_bytes=egress_bytes+excluded.egress_bytes,updated_at=excluded.updated_at`, repositoryID, usageDate, bytes, updatedAt); err != nil {

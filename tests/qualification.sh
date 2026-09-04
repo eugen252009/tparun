@@ -25,7 +25,7 @@ cp -a "$TPA_DIR" "$TMP/tpa-source"
 (cd "$TMP/tpa-source" && TPA_VERSION=1.0.0 ./build.sh >/dev/null)
 cp "$TMP/tpa-source/dist/tpa-amd64.deb" "$TMP/tpa_1.0.0_amd64.deb"
 go build -o "$TMP/tpahub" ./cmd/tpahub
-TPAHUB_LISTEN="127.0.0.1:$PORT" TPAHUB_DATA_DIR="$DATA" TPA_BIN="$TMP/bootstrap-tpa" TPAHUB_GPG_FINGERPRINT="$KEY" GNUPGHOME="$GNUPGHOME" "$TMP/tpahub" serve >"$TMP/server.log" 2>&1 & HUB_PID=$!
+TPAHUB_LISTEN="127.0.0.1:$PORT" TPAHUB_DATA_DIR="$DATA" TPAHUB_REGISTRATION_ENABLED=true TPAHUB_LOCAL_PROVISIONING_ENABLED=true TPA_BIN="$TMP/bootstrap-tpa" TPAHUB_GPG_FINGERPRINT="$KEY" GNUPGHOME="$GNUPGHOME" "$TMP/tpahub" serve >"$TMP/server.log" 2>&1 & HUB_PID=$!
 i=0; while ! curl -sS "$SERVER/v1/repositories/nope" >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 100 ] || { cat "$TMP/server.log"; exit 1; }; sleep .1; done
 AUTH=$(curl -fsS -X POST "$SERVER/v1/accounts" -H 'content-type: application/json' -d '{"email":"qualification@example.invalid","password":"qualification-password"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 REPO=$(curl -fsS -X POST "$SERVER/v1/repositories" -H 'content-type: application/json' -H "Authorization: Bearer $AUTH" -d '{"name":"tpa","visibility":"public"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
@@ -66,7 +66,7 @@ curl -fsS -X DELETE "$SERVER/v1/repositories/$PRIVATE/reader-credentials/$READER
 READER_TOKEN=$(curl -fsS -X POST "$SERVER/v1/repositories/$PRIVATE/reader-credentials" -H "Authorization: Bearer $AUTH" -H 'content-type: application/json' -d '{"name":"qualification-new"}'|python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 # Restart persistence is tested before the client container starts.
 kill "$HUB_PID"; wait "$HUB_PID" || true; unset HUB_PID
-TPAHUB_LISTEN="127.0.0.1:$PORT" TPAHUB_DATA_DIR="$DATA" TPA_BIN="$TMP/bootstrap-tpa" TPAHUB_GPG_FINGERPRINT="$KEY" GNUPGHOME="$GNUPGHOME" "$TMP/tpahub" serve >"$TMP/server.log" 2>&1 & HUB_PID=$!
+TPAHUB_LISTEN="127.0.0.1:$PORT" TPAHUB_DATA_DIR="$DATA" TPAHUB_REGISTRATION_ENABLED=true TPAHUB_LOCAL_PROVISIONING_ENABLED=true TPA_BIN="$TMP/bootstrap-tpa" TPAHUB_GPG_FINGERPRINT="$KEY" GNUPGHOME="$GNUPGHOME" "$TMP/tpahub" serve >"$TMP/server.log" 2>&1 & HUB_PID=$!
 i=0; while ! curl -fsS "$SERVER/r/$REPO/dists/stable/InRelease" >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 100 ] || exit 1; sleep .1; done
 # The Debian client uses the real CLI, not hand-written apt configuration.
 cat >"$TMP/Dockerfile" <<EOF

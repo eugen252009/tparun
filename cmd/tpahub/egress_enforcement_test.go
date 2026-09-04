@@ -142,8 +142,23 @@ func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "package.deb"), make([]byte, 1000), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "Packages.gz"), make([]byte, 100), 0644); err != nil {
-		t.Fatal(err)
+	metadata := []struct {
+		name string
+		size int
+	}{
+		{name: "Packages", size: 40},
+		{name: "Packages.gz", size: 50},
+		{name: "Packages.xz", size: 60},
+		{name: "Release", size: 70},
+		{name: "InRelease", size: 80},
+		{name: "Release.gpg", size: 90},
+		{name: "Sources", size: 100},
+		{name: "metadata.index", size: 110},
+	}
+	for _, artifact := range metadata {
+		if err := os.WriteFile(filepath.Join(root, artifact.name), make([]byte, artifact.size), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", NanoEgressBytes-1000, "now"); err != nil {
 		t.Fatal(err)
@@ -167,12 +182,17 @@ func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {
 	if response.StatusCode != 200 || len(body) != 1000 || response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
 		t.Fatalf("limited response status=%d bytes=%d limited=%q", response.StatusCode, len(body), response.Header.Get("X-TPAHub-Egress-Limited"))
 	}
-	response = get("/r/" + id + "/Packages.gz")
-	response.Body.Close()
-	if response.Header.Get("X-TPAHub-Egress-Limited") != "" {
-		t.Fatal("metadata was rate-limited")
+	metadataBytes := 0
+	for _, artifact := range metadata {
+		response = get("/r/" + id + "/" + artifact.name)
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil || response.StatusCode != http.StatusOK || len(body) != artifact.size || response.Header.Get("X-TPAHub-Egress-Limited") != "true" {
+			t.Fatalf("artifact=%s status=%d bytes=%d err=%v limited=%q", artifact.name, response.StatusCode, len(body), readErr, response.Header.Get("X-TPAHub-Egress-Limited"))
+		}
+		metadataBytes += artifact.size
 	}
-	if got, err := s.db.RepositoryEgress(context.Background(), id, "2026-08"); err != nil || got != NanoEgressBytes+1100 {
+	if got, err := s.db.RepositoryEgress(context.Background(), id, "2026-08"); err != nil || got != NanoEgressBytes+int64(1000+metadataBytes) {
 		t.Fatalf("August egress=%d, %v", got, err)
 	}
 	clock = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

@@ -81,3 +81,14 @@ func TestProviderSafetyGuards(t *testing.T) {
 		t.Fatalf("invalid finalization not rejected: %v", err)
 	}
 }
+
+func TestPublicRegistrationRequiresExplicitProvisioningMode(t *testing.T) {
+	base := config.Config{RegistrationEnabled: true, BillingProvider: "mock", BillingEnvironment: "mock", BillingRateCard: "mock-rate-card-v1"}
+	if err := ValidateBillingConfiguration(base); err == nil {
+		t.Fatal("public registration accepted without billing or local provisioning")
+	}
+	base.LocalProvisioningEnabled = true
+	if err := ValidateBillingConfiguration(base); err != nil {
+		t.Fatalf("explicit local provisioning rejected: %v", err)
+	}
+}

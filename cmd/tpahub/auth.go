@@ -39,7 +39,7 @@ func bearer(r *http.Request) (string, bool) {
 var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 func (s *server) initialTPAGrants(createdAt string) []commerce.Grant {
-	if s.cfg.BillingPurchasesEnabled {
+	if s.cfg.BillingPurchasesEnabled || !s.cfg.LocalProvisioningEnabled {
 		return nil
 	}
 	return defaultTPAGrants(createdAt)

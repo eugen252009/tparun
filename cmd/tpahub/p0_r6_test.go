@@ -153,7 +153,7 @@ func TestEgressAdminCLIRecoversLiveSettlementFailure(t *testing.T) {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "package.deb"), []byte("payload"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "Packages.gz"), []byte("metadata"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	var deliveryID string
@@ -161,11 +161,11 @@ func TestEgressAdminCLIRecoversLiveSettlementFailure(t *testing.T) {
 		deliveryID = id
 		return errors.New("injected settlement failure")
 	}
-	response, err := http.Get(h.URL + "/r/" + repo + "/package.deb")
+	response, err := http.Get(h.URL + "/r/" + repo + "/Packages.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body, readErr := io.ReadAll(response.Body); readErr != nil || response.StatusCode != http.StatusOK || string(body) != "payload" {
+	if body, readErr := io.ReadAll(response.Body); readErr != nil || response.StatusCode != http.StatusOK || string(body) != "metadata" {
 		response.Body.Close()
 		t.Fatalf("failed settlement delivery status=%d err=%v", response.StatusCode, readErr)
 	}
@@ -186,7 +186,7 @@ func TestEgressAdminCLIRecoversLiveSettlementFailure(t *testing.T) {
 	if err = adminCLI(config.Config{DataDir: s.cfg.DataDir}, []string{"egress", "recover", deliveryID, "--version", fmt.Sprint(marker.Version), "--usage-date", time.Now().UTC().Format("2006-01-02"), "--bytes", "7"}); err != nil {
 		t.Fatal(err)
 	}
-	response, err = http.Get(h.URL + "/r/" + repo + "/package.deb")
+	response, err = http.Get(h.URL + "/r/" + repo + "/Packages.gz")
 	if err != nil {
 		t.Fatal(err)
 	}

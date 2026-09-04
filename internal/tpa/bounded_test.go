@@ -51,3 +51,17 @@ func TestPublishBoundedRejectsOverrunAndAllowsExactBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishBoundedWithInodesUsesExplicitCount(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	runner := Runner{Bin: boundedWriterScript(t, 128)}
+	if err := runner.PublishBoundedWithInodes(context.Background(), PublishRequest{Input: t.TempDir(), Output: out}, 1<<20, 17); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "blob")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.PublishBoundedWithInodes(context.Background(), PublishRequest{Input: t.TempDir(), Output: filepath.Join(t.TempDir(), "invalid")}, 1<<20, 0); err == nil {
+		t.Fatal("zero inode count accepted")
+	}
+}

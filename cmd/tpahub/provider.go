@@ -22,6 +22,9 @@ type PurchaseProvider = payments.Provider
 type providerError = payments.Error
 
 func ValidateBillingConfiguration(c config.Config) error {
+	if c.RegistrationEnabled && !c.BillingPurchasesEnabled && !c.LocalProvisioningEnabled {
+		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("public registration requires billing purchases or explicit local provisioning")}
+	}
 	if c.BillingPurchasesEnabled && c.BillingProvider != "stripe" {
 		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("purchase flow requires Stripe test provider")}
 	}
