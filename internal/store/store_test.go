@@ -274,6 +274,48 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	}
 }
 
+func TestPurchaseGrantSnapshotsAreScopedToPurchase(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(ctx, Account{ID: "snapshot-scope", Email: "snapshot-scope@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := func(id, product string) BillingPurchase {
+		return BillingPurchase{ID: id, AccountID: "snapshot-scope", ProductID: product, PlanCode: id + "-offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	}
+	if _, err = s.CreatePendingPurchase(ctx, purchase("purchase-a", "product-a"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodMonthly, Limits: commerce.Limits{OperationMetric: "a_operations", OperationCount: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CreatePendingPurchase(ctx, purchase("purchase-b", "product-b"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "execute", Period: commerce.PeriodAnnual, Limits: commerce.Limits{OperationMetric: "b_operations", OperationCount: 20}}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_snapshots WHERE capability_id=?`, "execute").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("snapshot count=%d err=%v", count, err)
+	}
+	var aPeriod, aMetric string
+	var aLimit int64
+	if err = s.db.QueryRow(`SELECT period_cadence,operation_metric,operation_limit FROM purchase_grant_snapshots WHERE purchase_id=? AND capability_id=?`, "purchase-a", "execute").Scan(&aPeriod, &aMetric, &aLimit); err != nil {
+		t.Fatal(err)
+	}
+	if aPeriod != string(commerce.PeriodMonthly) || aMetric != "a_operations" || aLimit != 10 {
+		t.Fatalf("purchase-a snapshot=%s/%s/%d", aPeriod, aMetric, aLimit)
+	}
+	var bPeriod, bMetric string
+	var bLimit int64
+	if err = s.db.QueryRow(`SELECT period_cadence,operation_metric,operation_limit FROM purchase_grant_snapshots WHERE purchase_id=? AND capability_id=?`, "purchase-b", "execute").Scan(&bPeriod, &bMetric, &bLimit); err != nil {
+		t.Fatal(err)
+	}
+	if bPeriod != string(commerce.PeriodAnnual) || bMetric != "b_operations" || bLimit != 20 {
+		t.Fatalf("purchase-b snapshot=%s/%s/%d", bPeriod, bMetric, bLimit)
+	}
+}
+
 func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
