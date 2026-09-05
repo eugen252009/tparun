@@ -77,6 +77,8 @@ type server struct {
 	freeInodes              func() (int64, error)
 	reservations            map[string]capacityReservation
 	verifyCandidate         func(candidate, work string) error
+	operatorAuth            *operatorAuthState
+	operatorInitMu          sync.Mutex
 	pointerSwap             func(next, current string) error
 	durablePublicationFault func() error
 	cleanupWake             chan struct{}
@@ -176,6 +178,15 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/login", s.loginPage)
 	m.HandleFunc("/account", s.accountPage)
 	m.HandleFunc("/ops", s.ops)
+	m.HandleFunc("/ops/login", s.operatorLoginPage)
+	m.HandleFunc("/ops/auth/login/begin", s.operatorLoginBegin)
+	m.HandleFunc("/ops/auth/login/finish", s.operatorLoginFinish)
+	m.HandleFunc("/ops/auth/register/begin", s.operatorRegisterBegin)
+	m.HandleFunc("/ops/auth/register/finish", s.operatorRegisterFinish)
+	m.HandleFunc("/ops/logout", s.operatorLogout)
+	m.HandleFunc("/ops/recover", s.operatorRecoveryPage)
+	m.HandleFunc("/ops/recover/register", s.operatorRegisterPage)
+	m.HandleFunc("/ops/passkeys/add", s.operatorRegisterPage)
 	m.HandleFunc("/account/billing/nano/purchase", s.accountNanoPurchase)
 	m.HandleFunc("/logout", s.browserLogout)
 	m.HandleFunc("/docs", s.web)

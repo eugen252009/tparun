@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/eugen252009/tpahub/internal/config"
@@ -62,7 +65,7 @@ func input(prompt string, secret bool) string {
 }
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub serve | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress list-uncertain/inspect/recover")
+		fmt.Println("tpahub serve | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
 		return nil
 	}
 	if args[0] == "admin" {
@@ -136,10 +139,15 @@ func cli(cfg config.Config, args []string) error {
 }
 
 func adminCLI(cfg config.Config, args []string) error {
-	if len(args) < 2 || (args[0] != "egress" && args[0] != "account") {
+	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator") {
 		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-at <RFC3339> --bytes <bytes> | account classify <account-id> --class <production|test|internal|unclassified>")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
+	if args[0] == "operator" && args[1] == "recovery" {
+		if _, err := os.Stat(filepath.Join(dataDir, "tpahub.db")); err != nil {
+			return fmt.Errorf("TPA Hub database not found at %s; provide the production --data-dir explicitly: %w", dataDir, err)
+		}
+	}
 	db, err := store.OpenForAdmin(dataDir)
 	if err != nil {
 		return err
@@ -147,6 +155,33 @@ func adminCLI(cfg config.Config, args []string) error {
 	defer db.Close()
 	ctx := context.Background()
 	switch args[1] {
+	case "recovery":
+		if args[0] != "operator" || len(args) < 3 {
+			return fmt.Errorf("usage: tpahub admin operator recovery issue|revoke")
+		}
+		switch args[2] {
+		case "issue":
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return err
+			}
+			code := "TPA-RCV-" + base64.RawURLEncoding.EncodeToString(secret)
+			hash := sha256.Sum256([]byte(code))
+			now := time.Now().UTC()
+			if err := db.IssueOperatorRecovery(ctx, hash[:], now.Format(time.RFC3339Nano), now.Add(15*time.Minute).Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
+			fmt.Printf("Emergency operator recovery code:\n\n%s\n\nExpires: %s\nValid for one recovery attempt only.\n", code, now.Add(15*time.Minute).Format(time.RFC3339))
+			return nil
+		case "revoke":
+			if err := db.RevokeOperatorRecovery(ctx); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stdout, "operator recovery revoked")
+			return nil
+		default:
+			return fmt.Errorf("usage: tpahub admin operator recovery issue|revoke")
+		}
 	case "classify":
 		if args[0] != "account" || len(args) < 3 {
 			return fmt.Errorf("usage: tpahub admin account classify <account-id> --class <production|test|internal|unclassified>")

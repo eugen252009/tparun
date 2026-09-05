@@ -129,7 +129,9 @@ data/{tpahub.db,incoming/<job>,work/<job>,artifacts/<repo-id>,repos/<repo-id>}
 
 ## Security and deployment status
 
-This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. Nano checkout and the account web UI are available; there is no email verification, password reset, OAuth, or administrative recovery UI yet. HTTP local development is supported; production deployment should use TLS.
+This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. Nano checkout and the account web UI are available; there is no email verification, password reset, OAuth, or customer WebAuthn. HTTP local development is supported; production deployment should use TLS.
+
+Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys are discoverable and require user verification; multiple credentials are supported. To bootstrap or recover access, use SSH and run `sudo tpahub admin operator recovery issue`, then enter the one-time 15-minute code at `/ops/recover` and register a new passkey. The code is printed once, stored only as a SHA-256 hash, consumed before enrollment, and issuing a new code invalidates the previous one. Never send recovery codes through chat or email or place them in URLs. `TPAHUB_OPERATOR_TOKEN` is deprecated and is not used for `/ops` authentication.
 
 ## VServer deployment
 

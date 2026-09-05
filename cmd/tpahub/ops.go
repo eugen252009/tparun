@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,14 +32,7 @@ type opsPageData struct {
 }
 
 func (s *server) operatorAuthorized(r *http.Request) bool {
-	if s.cfg.OperatorToken == "" {
-		return false
-	}
-	if token, ok := bearer(r); ok {
-		return subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.OperatorToken)) == 1
-	}
-	_, password, ok := r.BasicAuth()
-	return ok && subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.OperatorToken)) == 1
+	return s.requireOperatorSession(r)
 }
 
 func (s *server) ops(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +41,10 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.operatorAuthorized(r) {
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, "/ops/login", http.StatusSeeOther)
+			return
+		}
 		bad(w, http.StatusNotFound, "not found")
 		return
 	}

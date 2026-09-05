@@ -9,21 +9,28 @@ import (
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
-func TestOpsRequiresOperatorToken(t *testing.T) {
+func TestOpsRequiresPasskeySession(t *testing.T) {
 	s, _ := testServer(t)
-	s.cfg.OperatorToken = "operator-secret"
+	s.cfg.OperatorToken = "legacy-token"
 	request := httptest.NewRequest(http.MethodGet, "/ops", nil)
 	response := httptest.NewRecorder()
 	s.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
+	if response.Code != http.StatusSeeOther {
 		t.Fatalf("unauthenticated dashboard status = %d", response.Code)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/ops?scope=all", nil)
-	request.Header.Set("Authorization", "Bearer operator-secret")
+	request = httptest.NewRequest(http.MethodPost, "/ops/auth/login/begin", nil)
+	request.Header.Set("Origin", s.cfg.OperatorOrigin)
 	response = httptest.NewRecorder()
 	s.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("authenticated dashboard status = %d", response.Code)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("login without credential status = %d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/ops", nil)
+	request.Header.Set("Authorization", "Bearer legacy-token")
+	response = httptest.NewRecorder()
+	s.routes().ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("legacy token dashboard status = %d", response.Code)
 	}
 }
 
