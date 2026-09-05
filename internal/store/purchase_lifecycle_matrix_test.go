@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestReverseOrderPurchasesAreIndependentAndDeterministic(t *testing.T) {
 			if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id='orders'`).Scan(&n); err != nil || n != 2 {
 				t.Fatalf("instances=%d err=%v", n, err)
 			}
-			g, err := s.GetGrant(ctx, "orders", commerce.ProductTPAHub, "repository.publish", now)
+			g, err := s.GetGrant(ctx, "orders", tpahubproduct.ProductID, "repository.publish", now)
 			if err != nil || g.Limits.StorageBytes != 100 || g.Limits.EgressBytes != 200 || g.Limits.OperationCount != 4 {
 				t.Fatalf("effective=%+v err=%v", g, err)
 			}
@@ -71,7 +72,7 @@ func TestReverseOrderPurchasesAreIndependentAndDeterministic(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			g, err = s.GetGrant(ctx, "orders", commerce.ProductTPAHub, "repository.publish", now)
+			g, err = s.GetGrant(ctx, "orders", tpahubproduct.ProductID, "repository.publish", now)
 			if err != nil || g.Limits.StorageBytes != 100 {
 				t.Fatalf("restart effective=%+v err=%v", g, err)
 			}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"os"
 	"path/filepath"
 	"testing"
@@ -255,7 +256,7 @@ func TestRepositoryUsagePreservesLegacyRootAndDoesNotFollowNestedSymlinks(t *tes
 func setStorageLimit(t *testing.T, s *server, bytes int64) {
 	t.Helper()
 	now := s.currentTime().UTC()
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 }

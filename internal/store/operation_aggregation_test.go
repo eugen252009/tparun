@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestOperationAggregationRequiresCompatibleMetric(t *testing.T) {
 			}
 			pay(a)
 			pay(b)
-			g, err := s.GetGrant(ctx, "ops", commerce.ProductTPAHub, "repository.publish", now)
+			g, err := s.GetGrant(ctx, "ops", tpahubproduct.ProductID, "repository.publish", now)
 			if tc.wantErr {
 				if !errors.Is(err, commerce.ErrIncompatibleGrantMetrics) {
 					t.Fatalf("metric conflict err=%v grant=%+v", err, g)
@@ -95,7 +96,7 @@ func TestEffectiveGrantPeriodUsesExplicitLimitContributor(t *testing.T) {
 	monthly := makePurchase("monthly", commerce.PeriodMonthly, monthlyFrom, monthlyUntil, 200)
 	pay(annual)
 	pay(monthly)
-	grant, err := s.GetGrant(ctx, "period-basis", commerce.ProductTPAHub, "repository.download", now)
+	grant, err := s.GetGrant(ctx, "period-basis", tpahubproduct.ProductID, "repository.download", now)
 	if err != nil || grant.Effective == nil || grant.Period != "" || grant.OfferID != "" || grant.PurchaseID != "" || !grant.ValidFrom.IsZero() || grant.ValidUntil != nil {
 		t.Fatalf("mixed commercial metadata=%+v err=%v", grant, err)
 	}

@@ -15,8 +15,6 @@ type MetricID string
 type PeriodCadence string
 
 const (
-	ProductTPAHub ProductID = "tpa-hub"
-
 	PeriodAnnual     PeriodCadence = "annual"
 	PeriodMonthly    PeriodCadence = "monthly"
 	PeriodContinuous PeriodCadence = "continuous"

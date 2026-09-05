@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"log"
 	"net/http"
 	"time"
@@ -99,7 +100,7 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, e
 	if s.egressLookup != nil {
 		return s.egressLookup(accountID, now)
 	}
-	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryDownload, now)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -119,7 +120,7 @@ func (s *server) egressPeriod(accountID string, now time.Time) (string, string, 
 		start := time.Date(now.UTC().Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
 		return start.Format(time.RFC3339Nano), start.AddDate(1, 0, 0).Format(time.RFC3339Nano), nil
 	}
-	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryDownload, now)
 	if err != nil {
 		return "", "", err
 	}

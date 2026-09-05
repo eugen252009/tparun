@@ -213,7 +213,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect legacy entitlement validity: %w", err)
 	}
 	legacyEntitlements.Close()
-	legacyGrants, err := tx.Query(`SELECT customer_id,product_id,offer_id,enabled,valid_from,valid_until FROM product_grants WHERE source='legacy' AND product_id=?`, string(commerce.ProductTPAHub))
+	legacyGrants, err := tx.Query(`SELECT customer_id,product_id,offer_id,enabled,valid_from,valid_until FROM product_grants WHERE source='legacy' AND product_id=?`, string(tpahubproduct.ProductID))
 	if err != nil {
 		return fmt.Errorf("inspect legacy grant validity: %w", err)
 	}
@@ -224,7 +224,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 			legacyGrants.Close()
 			return fmt.Errorf("read legacy grant validity: %w", err)
 		}
-		if customerID == "" || productID != string(commerce.ProductTPAHub) || !knownHistoricalOffer(offerID) || !validHistoricalWindow(validFrom, validUntil) || enabled < 0 || enabled > 1 {
+		if customerID == "" || productID != string(tpahubproduct.ProductID) || !knownHistoricalOffer(offerID) || !validHistoricalWindow(validFrom, validUntil) || enabled < 0 || enabled > 1 {
 			legacyGrants.Close()
 			return fmt.Errorf("invalid legacy TPA grant: customer=%s offer=%s", customerID, offerID)
 		}
@@ -266,7 +266,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || entitlementPlan != purchasePlan || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(tpahubproduct.ProductID) || entitlementPlan != purchasePlan || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed entitlement: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
@@ -288,7 +288,7 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if accountID == "" || grantProductID != string(commerce.ProductTPAHub) || purchaseID == "" || purchaseAccount != accountID || purchaseProductID != grantProductID || purchasePlan != offerID || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || grantProductID != string(tpahubproduct.ProductID) || purchaseID == "" || purchaseAccount != accountID || purchaseProductID != grantProductID || purchasePlan != offerID || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed grant: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
@@ -403,7 +403,7 @@ func migrateLegacyAccessToSixMonthNano(db *sql.DB) error {
 	}
 	anchor := migrationNow().UTC()
 	from, until := anchor.Format(time.RFC3339Nano), anchor.AddDate(0, 6, 0).Format(time.RFC3339Nano)
-	rows, err := tx.Query(`SELECT account_id,valid_from,valid_until FROM account_entitlements WHERE source='legacy' UNION SELECT customer_id,valid_from,valid_until FROM product_grants WHERE source='legacy' AND product_id=? AND enabled=1`, string(commerce.ProductTPAHub))
+	rows, err := tx.Query(`SELECT account_id,valid_from,valid_until FROM account_entitlements WHERE source='legacy' UNION SELECT customer_id,valid_from,valid_until FROM product_grants WHERE source='legacy' AND product_id=? AND enabled=1`, string(tpahubproduct.ProductID))
 	if err != nil {
 		return err
 	}
@@ -470,7 +470,7 @@ func rebuildCompatibilityProjection(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT p.account_id,p.plan_code,p.entitlement_period_start,p.entitlement_period_end,p.paid_at,p.id FROM billing_purchases p WHERE p.product_id=? AND p.status='paid' AND p.paid_at=(SELECT MAX(p2.paid_at) FROM billing_purchases p2 WHERE p2.account_id=p.account_id AND p2.product_id=? AND p2.status='paid')`, string(commerce.ProductTPAHub), string(commerce.ProductTPAHub))
+	rows, err := tx.Query(`SELECT p.account_id,p.plan_code,p.entitlement_period_start,p.entitlement_period_end,p.paid_at,p.id FROM billing_purchases p WHERE p.product_id=? AND p.status='paid' AND p.paid_at=(SELECT MAX(p2.paid_at) FROM billing_purchases p2 WHERE p2.account_id=p.account_id AND p2.product_id=? AND p2.status='paid')`, string(tpahubproduct.ProductID), string(tpahubproduct.ProductID))
 	if err != nil {
 		return err
 	}
@@ -838,8 +838,10 @@ func (s *Store) StorageHighWater(c context.Context, accountID, period string) (i
 	}
 	return bytes, e
 }
-func (s *Store) MockBillingEventPayload(c context.Context, accountID, period, eventType string) (string, error) {
-	return s.ProductMockBillingEventPayload(c, accountID, string(commerce.ProductTPAHub), period, eventType)
+// LegacyTPAMockBillingEventPayload is a compatibility wrapper for the old
+// TPA Hub-only mock billing API. New callers must select a product explicitly.
+func (s *Store) LegacyTPAMockBillingEventPayload(c context.Context, accountID, period, eventType string) (string, error) {
+	return s.ProductMockBillingEventPayload(c, accountID, string(tpahubproduct.ProductID), period, eventType)
 }
 func (s *Store) ProductMockBillingEventPayload(c context.Context, accountID, productID, period, eventType string) (string, error) {
 	var payload string
@@ -882,8 +884,8 @@ func (s *Store) ProviderSubmission(c context.Context, accountID, productID, peri
 	return x, e
 }
 func (s *Store) SaveProviderSubmission(c context.Context, x BillingProviderSubmission) error {
-	if x.ProductID == "" {
-		x.ProductID = string(commerce.ProductTPAHub)
+	if strings.TrimSpace(x.ProductID) == "" {
+		return fmt.Errorf("provider submission product ID is empty")
 	}
 	_, e := s.db.ExecContext(c, `INSERT INTO billing_provider_submissions(account_id,product_id,period,provider,environment,finalization_id,status,provider_reference,attempted_at,completed_at,last_error) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,product_id,period,provider,environment) DO UPDATE SET finalization_id=excluded.finalization_id,status=excluded.status,provider_reference=excluded.provider_reference,attempted_at=excluded.attempted_at,completed_at=excluded.completed_at,last_error=excluded.last_error`, x.AccountID, x.ProductID, x.Period, x.Provider, x.Environment, x.FinalizationID, x.Status, x.ProviderReference, x.AttemptedAt, x.CompletedAt, x.LastError)
 	return e
@@ -1023,7 +1025,7 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 		} else {
 			// Permanent historical legacy rows are audit-only after the bounded
 			// migration. They never participate in runtime authorization.
-			if base.Source == "legacy" && base.ProductID == commerce.ProductTPAHub {
+			if base.Source == "legacy" && base.ProductID == tpahubproduct.ProductID {
 				base.Enabled = false
 			}
 			seen = true
@@ -1116,6 +1118,9 @@ func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, produc
 	return contributors[0], nil
 }
 func (s *Store) PutGrant(c context.Context, grant commerce.Grant) error {
+	if strings.TrimSpace(string(grant.ProductID)) == "" {
+		return fmt.Errorf("grant product ID is empty")
+	}
 	validUntil := ""
 	if grant.ValidUntil != nil {
 		validUntil = grant.ValidUntil.UTC().Format(time.RFC3339Nano)
@@ -1318,8 +1323,8 @@ func (s *Store) ApplyPaymentTransition(c context.Context, transition commerce.Pa
 	return s.applyBillingProviderEvent(c, billingProviderEvent{Provider: transition.Provider, Environment: transition.Environment, ProviderEventID: transition.Event.ProviderEventID, EventType: string(transition.Event.Type), ReceivedAt: received}, transition.Event.OperationID, transition.Event.ProviderReference, transition.Kind, transition.AmountMinor, transition.Currency, received, transition.ValidFrom.UTC().Format(time.RFC3339Nano), transition.ValidUntil.UTC().Format(time.RFC3339Nano))
 }
 func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now string, templates ...commerce.GrantTemplate) (BillingPurchase, error) {
-	if p.ProductID == "" {
-		p.ProductID = string(commerce.ProductTPAHub)
+	if strings.TrimSpace(p.ProductID) == "" {
+		return BillingPurchase{}, fmt.Errorf("purchase product ID is empty")
 	}
 	if p.CheckoutRequestVersion == "" {
 		p.CheckoutRequestVersion = "v2"
@@ -1720,7 +1725,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		}
 		// account_entitlements is a legacy compatibility projection. Hosted
 		// accounts intentionally have no row, so its absence is non-fatal.
-		if e == nil && p.ProductID == string(commerce.ProductTPAHub) {
+		if e == nil && p.ProductID == string(tpahubproduct.ProductID) {
 			_, e = tx.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, p.AccountID, p.PlanCode, entitlementStart, entitlementStart, entitlementEnd, paidAt, paidAt, "purchase", purchaseID)
 		}
 	} else if p.Status == "pending" || p.Status == "superseded" {
@@ -1741,8 +1746,10 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 	}
 	return tx.Commit()
 }
-func (s *Store) RecordMockBillingEvent(c context.Context, id, accountID, period, eventType, payload, createdAt string) error {
-	return s.RecordProductMockBillingEvent(c, id, accountID, string(commerce.ProductTPAHub), period, eventType, payload, createdAt)
+// LegacyTPARecordMockBillingEvent is a compatibility wrapper for the old
+// TPA Hub-only mock billing API. New callers must select a product explicitly.
+func (s *Store) LegacyTPARecordMockBillingEvent(c context.Context, id, accountID, period, eventType, payload, createdAt string) error {
+	return s.RecordProductMockBillingEvent(c, id, accountID, string(tpahubproduct.ProductID), period, eventType, payload, createdAt)
 }
 func (s *Store) RecordProductMockBillingEvent(c context.Context, id, accountID, productID, period, eventType, payload, createdAt string) error {
 	_, e := s.db.ExecContext(c, `INSERT INTO mock_billing_events(id,account_id,product_id,period,event_type,payload,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id,product_id,period,event_type) DO NOTHING`, id, accountID, productID, period, eventType, payload, createdAt)
@@ -1781,7 +1788,7 @@ func (s *Store) CreateAccount(c context.Context, a Account, grants ...commerce.G
 		return e
 	}
 	for _, grant := range grants {
-		if grant.ProductID != commerce.ProductTPAHub {
+		if grant.ProductID != tpahubproduct.ProductID {
 			continue
 		}
 		validUntil := ""

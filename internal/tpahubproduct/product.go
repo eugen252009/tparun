@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	ProductID = commerce.ProductTPAHub
+	ProductID commerce.ProductID = "tpa-hub"
 
 	CapabilityRepositoryCreate      commerce.CapabilityID = "repository.create"
 	CapabilityRepositoryPublish     commerce.CapabilityID = "repository.publish"

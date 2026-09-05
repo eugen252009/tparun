@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,7 +91,7 @@ func TestHostedPurchaseActivatesWithoutCompatibilityEntitlement(t *testing.T) {
 		t.Fatalf("status=%s", paid.Status)
 	}
 	for _, capability := range []commerce.CapabilityID{CapabilityRepositoryCreate, CapabilityRepositoryPublish, CapabilityRepositoryDownload, CapabilityRepositoryReadPrivate} {
-		if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(account.AccountID), commerce.ProductTPAHub, capability, s.currentTime()); err != nil {
+		if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(account.AccountID), tpahubproduct.ProductID, capability, s.currentTime()); err != nil {
 			t.Fatalf("grant %s: %v", capability, err)
 		}
 	}
@@ -199,7 +200,7 @@ func TestPurchaseEndpointRejectsCheckoutCreatedAfterValidityExpiry(t *testing.T)
 	if err != nil || paidStale.Status != "paid" || paidStale.EntitlementPeriodStart != stale.EntitlementPeriodStart || paidStale.EntitlementPeriodEnd != stale.EntitlementPeriodEnd {
 		t.Fatalf("paid stale checkout changed commercial terms: purchase=%+v err=%v", paidStale, err)
 	}
-	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now.Add(time.Hour))
+	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now.Add(time.Hour))
 	foundStale := err == nil && grant.PurchaseID == stale.ID
 	if grant.Effective != nil {
 		for _, contributor := range grant.Effective.Contributors {
@@ -298,7 +299,7 @@ func TestStalePreTaxPurchaseGetsNewCheckoutOperation(t *testing.T) {
 	s := configuredPurchaseTestServer(t)
 	ctx := context.Background()
 	now := "2026-09-15T00:00:00Z"
-	old := store.BillingPurchase{ID: "old-purchase", AccountID: "a", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: string(TaxSaaSPersonal), Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now, CheckoutRequestVersion: "v1"}
+	old := store.BillingPurchase{ID: "old-purchase", AccountID: "a", ProductID: string(tpahubproduct.ProductID), PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: string(TaxSaaSPersonal), Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now, CheckoutRequestVersion: "v1"}
 	if _, e := s.db.CreatePendingPurchase(ctx, old, now, commerce.GrantTemplate{CapabilityID: CapabilityRepositoryPublish}); e != nil {
 		t.Fatal(e)
 	}

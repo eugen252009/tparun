@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"math"
 	"time"
 
@@ -309,7 +310,7 @@ func ceilBlocks(value, block int64) int64 {
 }
 
 func (s *server) billingSnapshot(ctx context.Context, accountID string, now time.Time) (BillingUsageSnapshot, error) {
-	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryDownload, now)
 	if err != nil {
 		return BillingUsageSnapshot{}, err
 	}
@@ -342,7 +343,7 @@ func (s *server) billingSnapshot(ctx context.Context, accountID string, now time
 	if err != nil {
 		return BillingUsageSnapshot{}, err
 	}
-	return BillingUsageSnapshot{AccountID: accountID, ProductID: string(commerce.ProductTPAHub), PlanCode: grant.OfferID, Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress, EgressBytes: egress}, nil
+	return BillingUsageSnapshot{AccountID: accountID, ProductID: string(tpahubproduct.ProductID), PlanCode: grant.OfferID, Period: period, CurrentStorageBytes: usage.StoredBytes, StorageHighWaterBytes: high, MonthlyEgressBytes: egress, EgressBytes: egress}, nil
 }
 func (s *server) observeAccountStorage(ctx context.Context, repositoryID string, now time.Time) error {
 	repo, e := s.db.Repository(ctx, repositoryID)

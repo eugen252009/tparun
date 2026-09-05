@@ -25,7 +25,7 @@ func r11PurchaseFixture(t *testing.T, dir, id, account, environment string) (*St
 		s.Close()
 		t.Fatal(err)
 	}
-	p := BillingPurchase{ID: id, AccountID: account, ProductID: string(commerce.ProductTPAHub), PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: environment, Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: from.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	p := BillingPurchase{ID: id, AccountID: account, ProductID: string(tpahubproduct.ProductID), PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: environment, Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: from.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
 	templates := []commerce.GrantTemplate{
 		{CapabilityID: tpahubproduct.CapabilityRepositoryCreate, Period: commerce.PeriodAnnual},
 		{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}},
@@ -81,7 +81,7 @@ func r11AssertReconciledPayment(t *testing.T, s *Store, p BillingPurchase, refer
 		t.Fatalf("grant instances=%d err=%v", count, countErr)
 	}
 	for _, capability := range []commerce.CapabilityID{tpahubproduct.CapabilityRepositoryCreate, tpahubproduct.CapabilityRepositoryPublish, tpahubproduct.CapabilityRepositoryDownload, tpahubproduct.CapabilityRepositoryReadPrivate} {
-		if _, grantErr := s.GetGrant(ctx, commerce.CustomerID(p.AccountID), commerce.ProductTPAHub, capability, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(grantErr, commerce.ErrGrantNotFound) {
+		if _, grantErr := s.GetGrant(ctx, commerce.CustomerID(p.AccountID), tpahubproduct.ProductID, capability, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(grantErr, commerce.ErrGrantNotFound) {
 			t.Fatalf("reconciliation capability %s access=%v", capability, grantErr)
 		}
 	}
@@ -310,7 +310,7 @@ func r11PurchaseFixtureOnStore(t *testing.T, s *Store, id, account, environment 
 	if err := s.CreateAccount(ctx, Account{ID: account, Email: account + "@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: from.Format(time.RFC3339Nano)}); err != nil {
 		t.Fatal(err)
 	}
-	p := BillingPurchase{ID: id, AccountID: account, ProductID: string(commerce.ProductTPAHub), PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: environment, Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: from.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	p := BillingPurchase{ID: id, AccountID: account, ProductID: string(tpahubproduct.ProductID), PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: environment, Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: from.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
 	if _, err := s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual}); err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestProviderEvidenceColumnsExistOnUpgradedDatabase(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT purchase_id,provider_reference FROM billing_provider_events WHERE provider_event_id='evidence-event'`).Scan(&purchaseID, &reference); err != nil || purchaseID != p.ID || reference != "evidence-reference" {
 		t.Fatalf("evidence purchase=%q reference=%q err=%v", purchaseID, reference, err)
 	}
-	if _, err := s.GetGrant(context.Background(), commerce.CustomerID(p.AccountID), commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+	if _, err := s.GetGrant(context.Background(), commerce.CustomerID(p.AccountID), tpahubproduct.ProductID, tpahubproduct.CapabilityRepositoryPublish, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 }

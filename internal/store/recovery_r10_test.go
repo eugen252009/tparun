@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func recoveryPurchaseFixture(t *testing.T, dir, id string) (*Store, BillingPurch
 		s.Close()
 		t.Fatal(err)
 	}
-	p := BillingPurchase{ID: id, AccountID: "recovery-" + id, ProductID: string(commerce.ProductTPAHub), PlanCode: "offer-x", RateCardID: "rate-x", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	p := BillingPurchase{ID: id, AccountID: "recovery-" + id, ProductID: string(tpahubproduct.ProductID), PlanCode: "offer-x", RateCardID: "rate-x", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
 	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 12345}}); err != nil {
 		s.Close()
 		t.Fatal(err)
@@ -68,7 +69,7 @@ func TestRecoveredCommercialTermsIgnoreProviderAndReceiveTimes(t *testing.T) {
 			recoverAndPay(t, s, p, "event-"+occurredAt.Format("20060102"), occurredAt)
 			assertRecoveredTerms(t, s, p, from, until)
 			if occurredAt.After(until) {
-				if _, err := s.GetGrant(context.Background(), commerce.CustomerID(p.AccountID), commerce.ProductTPAHub, "repository.publish", occurredAt); err != commerce.ErrGrantInactive {
+				if _, err := s.GetGrant(context.Background(), commerce.CustomerID(p.AccountID), tpahubproduct.ProductID, "repository.publish", occurredAt); err != commerce.ErrGrantInactive {
 					t.Fatalf("expired immutable terms granted access: %v", err)
 				}
 			}
@@ -120,7 +121,7 @@ func TestRecoveryUsesPersistedSnapshotAfterLiveOfferMutation(t *testing.T) {
 	s, p, from, until := recoveryPurchaseFixture(t, t.TempDir(), "offer-mutation")
 	defer s.Close()
 	now := from.Add(time.Hour)
-	if err := s.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(p.AccountID), ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "offer-y", Enabled: true, ValidFrom: from, ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 999999}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(p.AccountID), ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "offer-y", Enabled: true, ValidFrom: from, ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 999999}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	recoverAndPay(t, s, p, "offer-mutation-event", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))

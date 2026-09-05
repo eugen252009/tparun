@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -580,7 +581,7 @@ func TestProviderCheckoutProcessDeathRecoversExactPurchase(t *testing.T) {
 	if count, err := db.PurchaseGrantInstanceCount(context.Background(), "process-account"); err != nil || count == 0 {
 		t.Fatalf("grant instances=%d err=%v", count, err)
 	}
-	grant, err := db.GetGrant(context.Background(), "process-account", commerce.ProductTPAHub, CapabilityRepositoryPublish, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	grant, err := db.GetGrant(context.Background(), "process-account", tpahubproduct.ProductID, CapabilityRepositoryPublish, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil || grant.ValidFrom.Format(time.RFC3339Nano) != wantFrom || grant.ValidUntil == nil || grant.ValidUntil.Format(time.RFC3339Nano) != wantUntil {
 		t.Fatalf("recovered grant validity=%+v err=%v", grant, err)
 	}

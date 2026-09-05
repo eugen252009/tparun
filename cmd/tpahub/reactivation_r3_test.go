@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestReactivationRestoresReaderAndNewWorkerAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, capability := range []commerce.CapabilityID{CapabilityRepositoryReadPrivate, CapabilityRepositoryPublish} {
-		grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, capability, s.currentTime())
+		grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, capability, s.currentTime())
 		if err != nil {
 			t.Fatal(err)
 		}

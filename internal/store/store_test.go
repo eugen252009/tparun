@@ -144,7 +144,7 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 		if err != nil || fromErr != nil || untilErr != nil || legacy.Source != "migration" || legacy.PlanCode != "nano" || !legacyUntil.Equal(legacyFrom.AddDate(0, 6, 0)) {
 			t.Fatalf("restart %d migration=%+v err=%v", restart, legacy, err)
 		}
-		legacyGrant, err := s.GetGrant(context.Background(), "legacy", commerce.ProductTPAHub, "repository.publish", legacyFrom.Add(time.Hour))
+		legacyGrant, err := s.GetGrant(context.Background(), "legacy", tpahubproduct.ProductID, "repository.publish", legacyFrom.Add(time.Hour))
 		if err != nil || legacyGrant.Source != "migration" || legacyGrant.PurchaseID != "" || legacyGrant.ValidUntil == nil || legacyGrant.Limits.StorageBytes != tpahubproduct.NanoStorageBytes {
 			t.Fatalf("restart %d migration grant=%+v err=%v", restart, legacyGrant, err)
 		}
@@ -153,7 +153,7 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 			t.Fatalf("restart %d paid=%+v err=%v", restart, paid, err)
 		}
 		purchase, err := s.Purchase(context.Background(), "p1")
-		if err != nil || purchase.ProductID != string(commerce.ProductTPAHub) {
+		if err != nil || purchase.ProductID != string(tpahubproduct.ProductID) {
 			t.Fatalf("restart %d purchase=%+v err=%v", restart, purchase, err)
 		}
 		if restart == 0 {
@@ -161,7 +161,7 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 				t.Fatal(err)
 			}
 		}
-		grant, err := s.GetGrant(context.Background(), "paid", commerce.ProductTPAHub, "repository.download", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+		grant, err := s.GetGrant(context.Background(), "paid", tpahubproduct.ProductID, "repository.download", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 		if err != nil || grant.Limits.EgressBytes != 12_000_000_000 || grant.Source != "purchase" || grant.PurchaseID != "p1" {
 			t.Fatalf("restart %d grant=%+v err=%v", restart, grant, err)
 		}
@@ -191,11 +191,11 @@ INSERT INTO mock_billing_events VALUES('legacy-event','commercial','2026-01','pe
 		if err != nil {
 			t.Fatal(err)
 		}
-		submission, err := s.ProviderSubmission(context.Background(), "commercial", string(commerce.ProductTPAHub), "2026-01", "stripe", "test")
-		if err != nil || submission.ProductID != string(commerce.ProductTPAHub) {
+		submission, err := s.ProviderSubmission(context.Background(), "commercial", string(tpahubproduct.ProductID), "2026-01", "stripe", "test")
+		if err != nil || submission.ProductID != string(tpahubproduct.ProductID) {
 			t.Fatalf("restart %d submission=%+v err=%v", restart, submission, err)
 		}
-		payload, err := s.ProductMockBillingEventPayload(context.Background(), "commercial", string(commerce.ProductTPAHub), "2026-01", "period-finalized")
+		payload, err := s.ProductMockBillingEventPayload(context.Background(), "commercial", string(tpahubproduct.ProductID), "2026-01", "period-finalized")
 		if err != nil || payload != "{}" {
 			t.Fatalf("restart %d payload=%q err=%v", restart, payload, err)
 		}
@@ -226,7 +226,7 @@ func TestLegacyGrantMigrationDoesNotGrantFutureNonTPAAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err = s.GetGrant(context.Background(), "other-only", commerce.ProductTPAHub, "repository.create", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(err, commerce.ErrGrantNotFound) {
+	if _, err = s.GetGrant(context.Background(), "other-only", tpahubproduct.ProductID, "repository.create", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(err, commerce.ErrGrantNotFound) {
 		t.Fatalf("restart granted TPA product to non-TPA account: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	if err != nil || testGrant.Limits.OperationMetric != commerce.MetricID("test_operations") || testGrant.Limits.OperationCount != 77 {
 		t.Fatalf("test grant=%+v err=%v", testGrant, err)
 	}
-	if _, err = s.GetGrant(ctx, "shared", commerce.ProductTPAHub, "test.execute", now); !errors.Is(err, commerce.ErrGrantNotFound) {
+	if _, err = s.GetGrant(ctx, "shared", tpahubproduct.ProductID, "test.execute", now); !errors.Is(err, commerce.ErrGrantNotFound) {
 		t.Fatalf("cross-product grant leaked: %v", err)
 	}
 	if _, err = s.GetGrant(ctx, "shared", testProduct, "repository.publish", now); !errors.Is(err, commerce.ErrGrantNotFound) {
@@ -260,7 +260,7 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "shared", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.Add(time.Hour).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", commerce.ProductTPAHub), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.CreatePendingPurchase(ctx, purchase("test-pending", testProduct), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
@@ -280,13 +280,13 @@ func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	until := now.AddDate(1, 0, 0)
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "paid-products", ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: now, ValidUntil: &until, Period: commerce.PeriodAnnual, Source: "purchase", PurchaseID: "paid-tpa", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "paid-products", ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: now, ValidUntil: &until, Period: commerce.PeriodAnnual, Source: "purchase", PurchaseID: "paid-tpa", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "paid-products", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", commerce.ProductTPAHub), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active product purchase error=%v", err)
 	}
 	if _, err = s.CreatePendingPurchase(ctx, purchase("other", "test-product"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
@@ -571,7 +571,7 @@ func TestCreateAccountEntitlementAndRequiredGrantsAreAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	required := commerce.Grant{ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: created, UpdatedAt: created}
+	required := commerce.Grant{ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: created, UpdatedAt: created}
 	err = s.CreateAccount(ctx, Account{ID: "atomic", Email: "atomic@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}, required)
 	if err == nil {
 		t.Fatal("expected grant insert failure")
@@ -588,7 +588,7 @@ func TestFreshSchemaContainsEntitlementValidity(t *testing.T) {
 	}
 	defer s.Close()
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	grantInput := commerce.Grant{ProductID: commerce.ProductTPAHub, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}, Source: "local", CreatedAt: created, UpdatedAt: created}
+	grantInput := commerce.Grant{ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}, Source: "local", CreatedAt: created, UpdatedAt: created}
 	if err = s.CreateAccount(context.Background(), Account{ID: "fresh", Email: "fresh@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}, grantInput); err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestFreshSchemaContainsEntitlementValidity(t *testing.T) {
 	if err != nil || entitlement.ValidFrom != "2026-01-01T00:00:00Z" || entitlement.ValidUntil != "" || entitlement.Source != "local" {
 		t.Fatalf("entitlement=%+v err=%v", entitlement, err)
 	}
-	grant, err := s.GetGrant(context.Background(), "fresh", commerce.ProductTPAHub, "repository.publish", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	grant, err := s.GetGrant(context.Background(), "fresh", tpahubproduct.ProductID, "repository.publish", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil || grant.Limits.StorageBytes != 5_000_000 || grant.OfferID != "nano" {
 		t.Fatalf("fresh grant=%+v err=%v", grant, err)
 	}

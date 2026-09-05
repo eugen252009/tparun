@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestDelayedSuccessUsesImmutableFinalizedValidity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := s.GetGrant(context.Background(), "finalized", commerce.ProductTPAHub, "repository.publish", from)
+	g, err := s.GetGrant(context.Background(), "finalized", tpahubproduct.ProductID, "repository.publish", from)
 	if err != nil || !g.ValidFrom.Equal(from) || g.ValidUntil == nil || !g.ValidUntil.Equal(until) {
 		t.Fatalf("activated validity=%+v err=%v", g, err)
 	}
@@ -119,7 +120,7 @@ func TestRecoveredExpiredCheckoutNeverShiftsCommercialValidity(t *testing.T) {
 	if err != nil || stored.Status != "paid" || stored.EntitlementPeriodStart != from.Format(time.RFC3339Nano) || stored.EntitlementPeriodEnd != until.Format(time.RFC3339Nano) {
 		t.Fatalf("late payment changed commercial validity: purchase=%+v err=%v", stored, err)
 	}
-	if _, err = s.GetGrant(ctx, "calendar", commerce.ProductTPAHub, "repository.publish", recoveredAt); err != commerce.ErrGrantInactive {
+	if _, err = s.GetGrant(ctx, "calendar", tpahubproduct.ProductID, "repository.publish", recoveredAt); err != commerce.ErrGrantInactive {
 		t.Fatalf("expired original terms granted current access: %v", err)
 	}
 }

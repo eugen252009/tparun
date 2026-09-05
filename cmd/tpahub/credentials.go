@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"net/http"
 	"time"
 
@@ -20,7 +21,7 @@ func (s *server) credentials(w http.ResponseWriter, r *http.Request, repo string
 		bad(w, 404, "repository not found")
 		return
 	}
-	if _, e = s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryReadPrivate, s.currentTime()); e != nil {
+	if _, e = s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), tpahubproduct.ProductID, CapabilityRepositoryReadPrivate, s.currentTime()); e != nil {
 		bad(w, http.StatusForbidden, "private repository grant unavailable")
 		return
 	}

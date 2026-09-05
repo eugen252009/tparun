@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
 	"strings"
@@ -53,7 +54,7 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 		return purchase, CheckoutResult{}, fmt.Errorf("payment provider unavailable")
 	}
 	idempotencyKey := "commerce:" + purchase.ProductID + ":purchase:" + purchase.ID + ":stripe:test:checkout:v2"
-	if purchase.ProductID == string(commerce.ProductTPAHub) {
+	if purchase.ProductID == string(tpahubproduct.ProductID) {
 		idempotencyKey = "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2"
 	}
 	checkout, err := purchaseProvider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: idempotencyKey, CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: payments.EnvironmentTest})

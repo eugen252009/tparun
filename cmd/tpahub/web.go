@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"html/template"
 	"log"
 	"net"
@@ -105,7 +106,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		if usageErr != nil {
 			log.Printf("account storage usage: %v", usageErr)
 		}
-		storageGrant, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(id), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+		storageGrant, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(id), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 		storageGrantErr = grantErr
 		if grantErr == nil {
 			storageLimit = storageGrant.Limits.StorageBytes

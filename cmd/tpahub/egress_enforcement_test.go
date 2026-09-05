@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"log"
 	"net/http"
@@ -37,7 +38,7 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	s, h := testServer(t)
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryDownload, OfferID: "custom", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: 1000}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "custom", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: 1000}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	id := "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -407,7 +408,7 @@ func TestHTTPUploadUsesLogicalBytesForCommercialQuota(t *testing.T) {
 	s.cfg.MaxStagingBytes = 1 << 30
 	s.cfg.MaxAccountStagingBytes = 1 << 30
 	s.cfg.MinDiskFreeBytes = 0
-	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +577,7 @@ func TestPerAccountLogicalQuotaAndPhysicalTransientLimitAreIndependent(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +703,7 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 	if err := s.db.CreateJob(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	grant := commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: clock.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
+	grant := commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: clock.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
 	calls := 0
 	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
 		calls++
@@ -935,7 +936,7 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 	now := time.Now().UTC()
 	until := now.AddDate(1, 0, 0)
 	s.cfg.MaxStagingBytes = 3
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Minute), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Minute), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, "incoming", "queued"), 0700); err != nil {

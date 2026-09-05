@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"log"
 	"math"
@@ -264,7 +265,7 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "name is required")
 		return
 	}
-	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryCreate, s.currentTime()); err != nil {
+	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), tpahubproduct.ProductID, CapabilityRepositoryCreate, s.currentTime()); err != nil {
 		bad(w, http.StatusForbidden, "repository creation grant unavailable")
 		return
 	}
@@ -371,7 +372,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
+	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); err != nil {
 		bad(w, http.StatusForbidden, "repository publishing grant unavailable")
 		return
 	}
@@ -572,7 +573,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repo.Visibility == "private" {
-		if _, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(repo.AccountID), commerce.ProductTPAHub, CapabilityRepositoryReadPrivate, s.currentTime()); grantErr != nil {
+		if _, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(repo.AccountID), tpahubproduct.ProductID, CapabilityRepositoryReadPrivate, s.currentTime()); grantErr != nil {
 			bad(w, http.StatusForbidden, "private repository grant unavailable")
 			return
 		}
@@ -1013,7 +1014,7 @@ func (s *server) process(j store.Job) {
 	if s.durablePublicationFault != nil {
 		e = s.durablePublicationFault()
 	} else {
-		e = s.db.CommitPublication(context.Background(), j.RepositoryID, j.ID, string(commerce.ProductTPAHub), string(CapabilityRepositoryPublish), commitTime.Format(time.RFC3339Nano), commitTime.Format(time.RFC3339Nano))
+		e = s.db.CommitPublication(context.Background(), j.RepositoryID, j.ID, string(tpahubproduct.ProductID), string(CapabilityRepositoryPublish), commitTime.Format(time.RFC3339Nano), commitTime.Format(time.RFC3339Nano))
 	}
 	if e != nil {
 		rollback(e)
@@ -2129,7 +2130,7 @@ func (s *server) ensurePublishAuthorized(repositoryID string) error {
 	if err != nil {
 		return fmt.Errorf("publication repository lookup: %w", err)
 	}
-	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime()); err != nil {
+	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); err != nil {
 		return fmt.Errorf("publication grant unavailable: %w", err)
 	}
 	return nil
@@ -2401,7 +2402,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		// candidate copies remain covered by global reservations, disk, and inode
 		// limits; the candidate storage check that follows enforces the account's
 		// logical published-byte limit without charging the active baseline twice.
-		grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+		grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 		if err != nil {
 			return fmt.Errorf("staging grant unavailable: %w", err)
 		}
@@ -2417,7 +2418,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 }
 
 func (s *server) checkAccountLogicalCapacity(ctx context.Context, accountID string, incoming int64) error {
-	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		return fmt.Errorf("staging grant unavailable: %w", err)
 	}
@@ -2478,7 +2479,7 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	if err != nil {
 		return fmt.Errorf("candidate storage usage unavailable: %w", err)
 	}
-	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		return fmt.Errorf("storage grant unavailable: %w", err)
 	}

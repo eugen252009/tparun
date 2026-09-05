@@ -18,7 +18,7 @@ func TestCommitPublicationAtomicallyRechecksAuthorizationAndJobState(t *testing.
 	defer s.Close()
 	ctx := context.Background()
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	grant := commerce.Grant{CustomerID: "account", ProductID: commerce.ProductTPAHub, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "local", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "local", CreatedAt: now, UpdatedAt: now}
+	grant := commerce.Grant{CustomerID: "account", ProductID: tpahubproduct.ProductID, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "local", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "local", CreatedAt: now, UpdatedAt: now}
 	if err = s.CreateAccount(ctx, Account{ID: "account", Email: "account@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: now.Format(time.RFC3339Nano)}, grant); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestCommitPublicationAtomicallyRechecksAuthorizationAndJobState(t *testing.
 		t.Fatal(err)
 	}
 	at := now.Format(time.RFC3339Nano)
-	if err = s.CommitPublication(ctx, "repo", "job", string(commerce.ProductTPAHub), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
+	if err = s.CommitPublication(ctx, "repo", "job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
 		t.Fatal("publication committed after authorization was disabled")
 	}
 	if _, err = s.ActiveGeneration(ctx, "repo"); !errors.Is(err, ErrNotFound) {
@@ -50,7 +50,7 @@ func TestCommitPublicationAtomicallyRechecksAuthorizationAndJobState(t *testing.
 	if err = s.PutGrant(ctx, grant); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CommitPublication(ctx, "repo", "job", string(commerce.ProductTPAHub), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
+	if err = s.CommitPublication(ctx, "repo", "job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
 		t.Fatal("publication committed after job left running state")
 	}
 	if _, err = s.ActiveGeneration(ctx, "repo"); !errors.Is(err, ErrNotFound) {
@@ -59,7 +59,7 @@ func TestCommitPublicationAtomicallyRechecksAuthorizationAndJobState(t *testing.
 	if err = s.CreateJob(ctx, Job{ID: "success-job", RepositoryID: "repo", State: "running", IncomingPath: "incoming", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CommitPublication(ctx, "repo", "success-job", string(commerce.ProductTPAHub), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err != nil {
+	if err = s.CommitPublication(ctx, "repo", "success-job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err != nil {
 		t.Fatal(err)
 	}
 	active, err := s.ActiveGeneration(ctx, "repo")

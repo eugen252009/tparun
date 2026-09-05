@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -567,7 +568,7 @@ func TestPublicationProcessDeathHelper(t *testing.T) {
 
 func TestDisabledGrantAtFinalAuthorizationCannotActivate(t *testing.T) {
 	s, repo, root, j := workerFailureFixture(t)
-	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
 		t.Fatal(err)
 	}

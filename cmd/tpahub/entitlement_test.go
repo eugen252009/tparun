@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 
 func TestNanoOfferProducesCapabilityGrants(t *testing.T) {
 	offer := tpaNanoOffer()
-	if offer.ProductID != commerce.ProductTPAHub || offer.ID != "nano" || offer.AmountMinor != 500 || len(offer.Grants) != 4 {
+	if offer.ProductID != tpahubproduct.ProductID || offer.ID != "nano" || offer.AmountMinor != 500 || len(offer.Grants) != 4 {
 		t.Fatalf("offer=%+v", offer)
 	}
 	grants := defaultTPAGrants("2026-01-01T00:00:00Z")

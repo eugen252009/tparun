@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
 	"reflect"
@@ -104,8 +105,8 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	// the Nano purchase snapshot, not whatever product grants currently exist.
 	until := now.AddDate(1, 0, 0)
 	for _, grant := range []commerce.Grant{
-		{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryPublish, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 500_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
-		{CustomerID: "a", ProductID: commerce.ProductTPAHub, CapabilityID: CapabilityRepositoryDownload, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{EgressBytes: 20_000_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
+		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 500_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
+		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{EgressBytes: 20_000_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := s.db.PutGrant(context.Background(), grant); err != nil {
 			t.Fatal(err)
@@ -137,11 +138,11 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if activeErr != nil || !active {
 		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
 	}
-	grant, grantErr := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now)
+	grant, grantErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
 	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != commerce.PeriodAnnual || grant.Limits.StorageBytes != NanoStorageBytes {
 		t.Fatalf("activated publish grant=%+v err=%v", grant, grantErr)
 	}
-	downloadGrant, downloadErr := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
+	downloadGrant, downloadErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryDownload, now)
 	if downloadErr != nil || downloadGrant.OfferID != "nano" || downloadGrant.Period != commerce.PeriodAnnual || downloadGrant.Limits.EgressBytes != NanoEgressBytes {
 		t.Fatalf("activated download grant=%+v err=%v", downloadGrant, downloadErr)
 	}
@@ -161,7 +162,7 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if !reflect.DeepEqual(entBeforeDuplicate, entAfterDuplicate) {
 		t.Fatalf("duplicate webhook mutated entitlement: before=%+v after=%+v", entBeforeDuplicate, entAfterDuplicate)
 	}
-	grantAfterDuplicate, _ := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now)
+	grantAfterDuplicate, _ := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
 	if !reflect.DeepEqual(grantBeforeDuplicate, grantAfterDuplicate) {
 		t.Fatalf("duplicate webhook mutated grant: before=%+v after=%+v", grantBeforeDuplicate, grantAfterDuplicate)
 	}

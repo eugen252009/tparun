@@ -231,11 +231,11 @@ restart replay. Direct evidence is in
 
 | ID     | Status | Requirement / Invariant                                        | Required Work                                            | Required Verification     | Evidence |
 | ------ | ------ | -------------------------------------------------------------- | -------------------------------------------------------- | ------------------------- | -------- |
-| P1.1.1 | TODO   | `internal/commerce` must not define a concrete TPA Hub product | Move `ProductTPAHub` into product-owned package          | Dependency inspection     |          |
-| P1.1.2 | TODO   | Generic APIs must reject empty product IDs                     | Add validation                                           | Unit test                 |          |
-| P1.1.3 | TODO   | Missing product ID must never silently default to TPA Hub      | Remove fallback behavior                                 | Product #2 test           |          |
-| P1.1.4 | TODO   | Legacy TPA behavior must be explicitly named                   | Restrict compatibility wrappers to migration/legacy code | Source inspection         |          |
-| P1.1.5 | TODO   | Shared persistence must not contain runtime TPA defaults       | Remove/search generic store defaults                     | Repository search + tests |          |
+| P1.1.1 | DONE — READY FOR INDEPENDENT REVIEW | `internal/commerce` must not define a concrete TPA Hub product | Move `ProductTPAHub` into product-owned package | Dependency inspection | `internal/tpahubproduct/product.go` owns `ProductID`; `internal/commerce/commerce.go` defines no concrete product identity; repository search confirms no `commerce.ProductTPAHub` references. |
+| P1.1.2 | DONE — READY FOR INDEPENDENT REVIEW | Generic APIs must reject empty product IDs | Add validation | Unit test | `internal/store/store.go`: `CreatePendingPurchase`, `PutGrant`, and `SaveProviderSubmission` reject empty product IDs; `internal/store/p1_architecture_test.go`: `TestGenericPersistenceRejectsMissingProductIdentity`. |
+| P1.1.3 | DONE — READY FOR INDEPENDENT REVIEW | Missing product ID must never silently default to TPA Hub | Remove fallback behavior | Product #2 test | Generic purchase, grant, and provider-submission persistence no longer supplies a TPA Hub fallback; missing identity is rejected by `TestGenericPersistenceRejectsMissingProductIdentity`. |
+| P1.1.4 | DONE — READY FOR INDEPENDENT REVIEW | Legacy TPA behavior must be explicitly named | Restrict compatibility wrappers to migration/legacy code | Source inspection | TPA-specific migration and compatibility projection logic references `tpahubproduct.ProductID`; generic product-aware APIs are explicit; legacy mock wrappers remain named compatibility entry points and delegate to product-aware methods. |
+| P1.1.5 | DONE — READY FOR INDEPENDENT REVIEW | Shared persistence must not contain runtime TPA defaults | Remove/search generic store defaults | Repository search + tests | `CreatePendingPurchase` and `SaveProviderSubmission` no longer default product identity; all runtime product selection is explicit, with TPA-specific migration/compatibility behavior isolated by product package identity. |
 
 ---
 
