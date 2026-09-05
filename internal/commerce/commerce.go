@@ -42,6 +42,7 @@ type GrantTemplate struct {
 type Offer struct {
 	ID          string
 	ProductID   ProductID
+	Cadence     PeriodCadence
 	Description string
 	Currency    string
 	AmountMinor int64

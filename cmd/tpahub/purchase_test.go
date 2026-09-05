@@ -63,6 +63,7 @@ func signedStripeEvent(body, secret string, at time.Time) string {
 }
 func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	s, h := testServer(t)
+	offer := tpahubproduct.NanoOffer()
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	s.cfg.BillingPurchasesEnabled = true
@@ -142,11 +143,11 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
 	}
 	grant, grantErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
-	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != commerce.PeriodAnnual || grant.Limits.StorageBytes != NanoStorageBytes {
+	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != offer.Cadence || grant.Limits.StorageBytes != NanoStorageBytes {
 		t.Fatalf("activated publish grant=%+v err=%v", grant, grantErr)
 	}
 	downloadGrant, downloadErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryDownload, now)
-	if downloadErr != nil || downloadGrant.OfferID != "nano" || downloadGrant.Period != commerce.PeriodAnnual || downloadGrant.Limits.EgressBytes != NanoEgressBytes {
+	if downloadErr != nil || downloadGrant.OfferID != "nano" || downloadGrant.Period != offer.Cadence || downloadGrant.Limits.EgressBytes != NanoEgressBytes {
 		t.Fatalf("activated download grant=%+v err=%v", downloadGrant, downloadErr)
 	}
 	grantBeforeDuplicate := grant

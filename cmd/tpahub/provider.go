@@ -104,7 +104,9 @@ func validateFinalized(f FinalizedBillingPeriod) error {
 			start, startErr = time.Parse("2006-01-02", parts[0])
 			end, endErr = time.Parse("2006-01-02", parts[1])
 		}
-		if cardErr != nil || validateRateCard(card) != nil || f.PlanCode != "nano" || f.Currency != "EUR" || f.TotalAmountMinor != tpahubproduct.NanoOffer().AmountMinor || startErr != nil || endErr != nil || !end.Equal(start.AddDate(1, 0, 0)) {
+		offer := tpahubproduct.NanoOffer()
+		expectedEnd, cadenceErr := advanceCadence(start, offer.Cadence)
+		if cardErr != nil || validateRateCard(card) != nil || f.PlanCode != offer.ID || f.Currency != offer.Currency || f.TotalAmountMinor != offer.AmountMinor || startErr != nil || endErr != nil || cadenceErr != nil || !end.Equal(expectedEnd) {
 			return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("invalid production Nano finalization")}
 		}
 	}

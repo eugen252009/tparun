@@ -106,6 +106,10 @@ func effectiveEntitlementPeriod(entitlement store.AccountEntitlement, now time.T
 }
 
 func entitlementPeriod(startedAt string, now time.Time) (EntitlementPeriod, error) {
+	return entitlementPeriodForCadence(startedAt, now, tpahubproduct.NanoCadence)
+}
+
+func entitlementPeriodForCadence(startedAt string, now time.Time, cadence commerce.PeriodCadence) (EntitlementPeriod, error) {
 	anchor, err := time.Parse(time.RFC3339Nano, startedAt)
 	if err != nil {
 		anchor, err = time.Parse("2006-01-02", startedAt)
@@ -115,17 +119,43 @@ func entitlementPeriod(startedAt string, now time.Time) (EntitlementPeriod, erro
 	}
 	anchor = time.Date(anchor.UTC().Year(), anchor.UTC().Month(), anchor.UTC().Day(), 0, 0, 0, 0, time.UTC)
 	now = now.UTC()
-	years := now.Year() - anchor.Year()
-	start := anchor.AddDate(years, 0, 0)
-	if now.Before(start) {
-		years--
+	var start time.Time
+	switch cadence {
+	case commerce.PeriodAnnual:
+		years := now.Year() - anchor.Year()
 		start = anchor.AddDate(years, 0, 0)
+		if now.Before(start) {
+			start = anchor.AddDate(years-1, 0, 0)
+		}
+	case commerce.PeriodMonthly:
+		months := (now.Year()-anchor.Year())*12 + int(now.Month()-anchor.Month())
+		start = anchor.AddDate(0, months, 0)
+		if now.Before(start) {
+			start = anchor.AddDate(0, months-1, 0)
+		}
+	default:
+		return EntitlementPeriod{}, fmt.Errorf("unsupported entitlement cadence: %s", cadence)
 	}
-	return EntitlementPeriod{Start: start, End: start.AddDate(1, 0, 0)}, nil
+	end, err := advanceCadence(start, cadence)
+	if err != nil {
+		return EntitlementPeriod{}, err
+	}
+	return EntitlementPeriod{Start: start, End: end}, nil
+}
+
+func advanceCadence(start time.Time, cadence commerce.PeriodCadence) (time.Time, error) {
+	switch cadence {
+	case commerce.PeriodAnnual:
+		return start.AddDate(1, 0, 0), nil
+	case commerce.PeriodMonthly:
+		return start.AddDate(0, 1, 0), nil
+	default:
+		return time.Time{}, fmt.Errorf("unsupported calendar cadence: %s", cadence)
+	}
 }
 
 var planCatalog = map[string]PlanDefinition{
-	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes, EgressAllowanceBytes: NanoEgressBytes, EgressCadence: CadenceAnnual, BillingCadence: CadenceAnnual, TaxClassification: TaxSaaSPersonal},
+	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes, EgressAllowanceBytes: NanoEgressBytes, EgressCadence: PlanCadence(tpahubproduct.NanoCadence), BillingCadence: PlanCadence(tpahubproduct.NanoCadence), TaxClassification: TaxSaaSPersonal},
 	"standard": {Code: "standard", BillingMode: BillingFixed, StorageCapacityBytes: 500_000_000, EgressAllowanceBytes: 20_000_000_000, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSPersonal},
 	"pro":      {Code: "pro", BillingMode: BillingUsageBased, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSBusiness, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
 }

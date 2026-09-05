@@ -10,12 +10,12 @@ import (
 func TestNanoOfferCreatesProductCapabilityGrants(t *testing.T) {
 	offer := NanoOffer()
 	grants := DefaultGrants(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if offer.ProductID != ProductID || len(grants) != 4 {
+	if offer.ProductID != ProductID || offer.Cadence != NanoCadence || len(grants) != 4 {
 		t.Fatalf("offer=%+v grants=%+v", offer, grants)
 	}
 	limits := map[commerce.CapabilityID]commerce.Limits{}
 	for _, grant := range grants {
-		if grant.ProductID != ProductID || grant.OfferID != offer.ID {
+		if grant.ProductID != ProductID || grant.OfferID != offer.ID || grant.Period != NanoCadence {
 			t.Fatalf("grant=%+v", grant)
 		}
 		limits[grant.CapabilityID] = grant.Limits

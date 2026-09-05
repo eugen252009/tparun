@@ -18,7 +18,7 @@ func TestProductionNanoRateCardIsImmutableAndFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 	offer := tpahubproduct.NanoOffer()
-	if card.Mode != RateCardProduction || card.PlanCode != offer.ID || card.Currency != offer.Currency || card.BillingCadence != CadenceAnnual || card.FixedPlanAmountsMinor[offer.ID] != offer.AmountMinor {
+	if card.Mode != RateCardProduction || card.PlanCode != offer.ID || card.Currency != offer.Currency || card.BillingCadence != PlanCadence(offer.Cadence) || card.FixedPlanAmountsMinor[offer.ID] != offer.AmountMinor {
 		t.Fatalf("card=%+v", card)
 	}
 	for _, usage := range []int64{0, 1_000_000_000, 6_000_000_000, 11_900_000_000, 12_000_000_000, 13_000_000_000} {
@@ -34,6 +34,11 @@ func TestProductionNanoRateCardIsImmutableAndFixed(t *testing.T) {
 	fresh, _ := rateCardByID("production-nano-v1")
 	if fresh.FixedPlanAmountsMinor[offer.ID] != offer.AmountMinor {
 		t.Fatal("rate card identity was mutable")
+	}
+	card = fresh
+	card.BillingCadence = CadenceMonthly
+	if err = validateRateCard(card); err == nil {
+		t.Fatal("production rate card accepted a cadence that differs from the offer")
 	}
 }
 

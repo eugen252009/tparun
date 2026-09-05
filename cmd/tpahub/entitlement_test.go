@@ -12,7 +12,7 @@ import (
 
 func TestNanoOfferProducesCapabilityGrants(t *testing.T) {
 	offer := tpaNanoOffer()
-	if offer.ProductID != tpahubproduct.ProductID || offer.ID != "nano" || offer.AmountMinor != 500 || len(offer.Grants) != 4 {
+	if offer.ProductID != tpahubproduct.ProductID || offer.ID != "nano" || offer.Cadence != tpahubproduct.NanoCadence || offer.AmountMinor != tpahubproduct.NanoPriceMinor || len(offer.Grants) != 4 {
 		t.Fatalf("offer=%+v", offer)
 	}
 	grants := defaultTPAGrants("2026-01-01T00:00:00Z")
@@ -36,6 +36,16 @@ func TestAnnualEntitlementPeriodIsAnniversaryAndDayAligned(t *testing.T) {
 	atEnd, _ := entitlementPeriod("2026-09-15", p.End)
 	if !atEnd.Start.Equal(p.End) {
 		t.Fatalf("end was not exclusive: %+v", atEnd)
+	}
+}
+
+func TestMonthlyEntitlementPeriodUsesCalendarCadence(t *testing.T) {
+	p, err := entitlementPeriodForCadence("2026-01-31", time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), commerce.PeriodMonthly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Start.Equal(time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)) || !p.End.Equal(time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("monthly period=%+v", p)
 	}
 }
 
