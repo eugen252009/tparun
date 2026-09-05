@@ -49,15 +49,10 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if purchase.ProviderReference != "" {
 		return purchase, CheckoutResult{Provider: "stripe", Environment: BillingEnvironmentTest, ProviderReference: purchase.ProviderReference, URL: purchase.CheckoutURL}, nil
 	}
-	purchaseProvider := s.purchaseProvider
-	if purchaseProvider == nil {
+	if s.purchaseProvider == nil {
 		return purchase, CheckoutResult{}, fmt.Errorf("payment provider unavailable")
 	}
-	idempotencyKey := "commerce:" + purchase.ProductID + ":purchase:" + purchase.ID + ":stripe:test:checkout:v2"
-	if purchase.ProductID == string(tpahubproduct.ProductID) {
-		idempotencyKey = "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2"
-	}
-	checkout, err := purchaseProvider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: idempotencyKey, CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: payments.EnvironmentTest})
+	checkout, err := s.createPurchaseCheckout(ctx, purchase, offer.Description)
 	if err != nil {
 		var pe providerError
 		if errors.As(err, &pe) && pe.Code == "provider-rejected-4xx" {
@@ -65,11 +60,29 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 		}
 		return purchase, CheckoutResult{}, err
 	}
-	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ProviderReference, checkout.URL, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
-		return store.BillingPurchase{}, CheckoutResult{}, err
-	}
 	purchase.ProviderReference = checkout.ProviderReference
 	return purchase, checkout, nil
+}
+
+// createPurchaseCheckout submits the already-persisted purchase authority.
+// Checkout pricing must not be reconstructed from the current product offer
+// or rate card when retrying an existing purchase.
+func (s *server) createPurchaseCheckout(ctx context.Context, purchase store.BillingPurchase, description string) (CheckoutResult, error) {
+	if s.purchaseProvider == nil {
+		return CheckoutResult{}, fmt.Errorf("payment provider unavailable")
+	}
+	idempotencyKey := "commerce:" + purchase.ProductID + ":purchase:" + purchase.ID + ":stripe:test:checkout:v2"
+	if purchase.ProductID == string(tpahubproduct.ProductID) {
+		idempotencyKey = "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2"
+	}
+	checkout, err := s.purchaseProvider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: idempotencyKey, CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: BillingEnvironmentTest})
+	if err != nil {
+		return CheckoutResult{}, err
+	}
+	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ProviderReference, checkout.URL, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
+		return CheckoutResult{}, err
+	}
+	return checkout, nil
 }
 
 func (s *server) createNanoPurchase(w http.ResponseWriter, r *http.Request) {

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/payments"
+	"github.com/eugen252009/tpahub/internal/store"
 )
 
 type checkoutTransport struct {
@@ -61,6 +63,48 @@ func signedStripeEvent(body, secret string, at time.Time) string {
 	mac.Write([]byte(ts + "." + body))
 	return "t=" + ts + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
+
+type recordingPurchaseProvider struct {
+	operations []payments.Operation
+	failFirst  bool
+}
+
+func (p *recordingPurchaseProvider) CreateCheckout(_ context.Context, operation payments.Operation) (payments.CheckoutSession, error) {
+	p.operations = append(p.operations, operation)
+	if p.failFirst && len(p.operations) == 1 {
+		return payments.CheckoutSession{}, fmt.Errorf("transient provider failure")
+	}
+	return payments.CheckoutSession{Provider: "stripe", Environment: payments.EnvironmentTest, ProviderReference: "historical-checkout", URL: "https://checkout.invalid/historical-checkout"}, nil
+}
+
+func TestHistoricalPurchaseCheckoutUsesPersistedAmountAfterPriceChange(t *testing.T) {
+	s, _ := testServer(t)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	provider := &recordingPurchaseProvider{failFirst: true}
+	s.purchaseProvider = provider
+	offer := tpahubproduct.NanoOffer()
+	purchase := store.BillingPurchase{ID: "historical-price-purchase", AccountID: "a", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: "nano-v0", RateCardID: "production-nano-v0", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 725, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err := s.db.CreatePendingPurchase(context.Background(), purchase, purchase.CreatedAt, offer.Grants...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createPurchaseCheckout(context.Background(), purchase, offer.Description); err == nil {
+		t.Fatal("first checkout unexpectedly succeeded")
+	}
+	// The current offer remains EUR 500; the durable historical purchase is EUR 725.
+	if _, err := s.createPurchaseCheckout(context.Background(), purchase, offer.Description); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.operations) != 2 {
+		t.Fatalf("provider operations=%d", len(provider.operations))
+	}
+	for _, operation := range provider.operations {
+		if operation.OperationID != purchase.ID || operation.AmountMinor != purchase.AmountMinor || operation.Currency != purchase.Currency {
+			t.Fatalf("provider operation=%+v want amount=%d currency=%s", operation, purchase.AmountMinor, purchase.Currency)
+		}
+	}
+}
+
 func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	s, h := testServer(t)
 	offer := tpahubproduct.NanoOffer()
