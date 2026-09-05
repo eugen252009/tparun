@@ -9,37 +9,39 @@ import (
 
 func TestNanoOfferCreatesProductCapabilityGrants(t *testing.T) {
 	offer := NanoOffer()
-	grants := DefaultGrants(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if offer.ProductID != ProductID || offer.ID != "nano" || offer.Version != NanoOfferVersion || offer.AmountMinor != NanoPriceMinor || offer.Currency != "EUR" || offer.Cadence != NanoCadence || len(offer.Grants) != 4 || len(grants) != 4 {
-		t.Fatalf("offer=%+v grants=%+v", offer, grants)
+	if offer.ProductID != commerce.ProductID("tpa-hub") || offer.ID != "nano" || offer.Version != "nano-v1" || offer.AmountMinor != 500 || offer.Currency != "EUR" || offer.Cadence != commerce.PeriodAnnual || offer.TaxClass != "saas-personal" {
+		t.Fatalf("offer=%+v", offer)
 	}
 	wantLimits := map[commerce.CapabilityID]commerce.Limits{
 		CapabilityRepositoryCreate:      {},
-		CapabilityRepositoryPublish:     {StorageBytes: NanoStorageBytes},
-		CapabilityRepositoryDownload:    {EgressBytes: NanoEgressBytes},
+		CapabilityRepositoryPublish:     {StorageBytes: 5_000_000},
+		CapabilityRepositoryDownload:    {EgressBytes: 12_000_000_000},
 		CapabilityRepositoryReadPrivate: {},
 	}
-	limits := map[commerce.CapabilityID]commerce.Limits{}
-	for _, grant := range grants {
-		if grant.ProductID != ProductID || grant.OfferID != offer.ID || grant.Period != NanoCadence {
+	if len(offer.Grants) != len(wantLimits) {
+		t.Fatalf("grant count=%d want=%d", len(offer.Grants), len(wantLimits))
+	}
+	seen := make(map[commerce.CapabilityID]bool, len(offer.Grants))
+	for _, grant := range offer.Grants {
+		if seen[grant.CapabilityID] {
+			t.Fatalf("duplicate capability=%s", grant.CapabilityID)
+		}
+		seen[grant.CapabilityID] = true
+		want, ok := wantLimits[grant.CapabilityID]
+		if !ok || grant.Period != commerce.PeriodAnnual || grant.Limits != want {
 			t.Fatalf("grant=%+v", grant)
 		}
-		limits[grant.CapabilityID] = grant.Limits
 	}
-	if len(limits) != len(wantLimits) {
-		t.Fatalf("limits=%+v want=%+v", limits, wantLimits)
+	if len(seen) != len(wantLimits) {
+		t.Fatalf("capabilities=%v want=%v", seen, wantLimits)
 	}
-	for capability, want := range wantLimits {
-		if limits[capability] != want {
-			t.Fatalf("limit[%s]=%+v want=%+v", capability, limits[capability], want)
+	grants := DefaultGrants(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if len(grants) != len(wantLimits) {
+		t.Fatalf("default grant count=%d", len(grants))
+	}
+	for _, grant := range grants {
+		if grant.ProductID != offer.ProductID || grant.OfferID != offer.ID || grant.Period != offer.Cadence || grant.Limits != wantLimits[grant.CapabilityID] {
+			t.Fatalf("default grant=%+v", grant)
 		}
-	}
-	for _, grant := range offer.Grants {
-		if limits[grant.CapabilityID] != grant.Limits {
-			t.Fatalf("offer limit[%s]=%+v default=%+v", grant.CapabilityID, grant.Limits, limits[grant.CapabilityID])
-		}
-	}
-	if limits[CapabilityRepositoryPublish].StorageBytes != NanoStorageBytes || limits[CapabilityRepositoryDownload].EgressBytes != NanoEgressBytes {
-		t.Fatalf("limits=%+v", limits)
 	}
 }

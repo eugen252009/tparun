@@ -576,6 +576,50 @@ func TestCurrentNanoPurchaseRequiresMatchingOfferVersion(t *testing.T) {
 	}
 }
 
+func TestHistoricalNanoPurchaseSurvivesCurrentOfferVersionChange(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := "2026-01-01T00:00:00Z"
+	until := "2027-01-01T00:00:00Z"
+	if err = s.CreateAccount(ctx, Account{ID: "historical-version", Email: "historical-version@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	offer := tpahubproduct.NanoOffer()
+	purchase := BillingPurchase{ID: "historical-version-purchase", AccountID: "historical-version", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: offer.Version, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: offer.Currency, AmountMinor: offer.AmountMinor, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: until, CreatedAt: now, UpdatedAt: now}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now, offer.Grants...); err != nil {
+		t.Fatal(err)
+	}
+	// This models durable state created by the prior deployment, whose V1 is
+	// no longer today's current version. The current product remains immutable
+	// and is not made test-mutable.
+	if _, err = s.db.Exec(`UPDATE billing_purchases SET offer_version='nano-v0' WHERE id=?`, purchase.ID); err != nil {
+		t.Fatal(err)
+	}
+	purchase.OfferVersion = "nano-v0"
+	purchase.ProviderReference = "historical-checkout"
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, purchase.ProviderReference, "https://checkout.invalid/historical", now); err != nil {
+		t.Fatalf("historical checkout finalization rejected captured version: %v", err)
+	}
+	if err = s.ApplyProviderPaymentEvent(ctx, "stripe", "test", commerce.PaymentEvent{ProviderEventID: "historical-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyProviderPaymentEvent(ctx, "stripe", "test", commerce.PaymentEvent{ProviderEventID: "historical-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || got.Status != "paid" || got.OfferVersion != "nano-v0" || got.AmountMinor != 500 || got.EntitlementPeriodStart != now || got.EntitlementPeriodEnd != until {
+		t.Fatalf("historical purchase=%+v err=%v", got, err)
+	}
+	var activated int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE purchase_id=?`, purchase.ID).Scan(&activated); err != nil || activated != len(offer.Grants) {
+		t.Fatalf("activated snapshots=%d err=%v", activated, err)
+	}
+}
+
 func TestCreateAccountEntitlementAndRequiredGrantsAreAtomic(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
