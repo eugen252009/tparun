@@ -189,21 +189,25 @@ func TestPurchaseEndpointRejectsCheckoutCreatedAfterValidityExpiry(t *testing.T)
 		t.Fatalf("stale purchase state=%+v err=%v", stale, err)
 	}
 	staleReference := "ref-" + stale.ID
-	if err = s.db.RecoverPurchaseCheckout(context.Background(), stale.ID, stale.Provider, stale.BillingEnvironment, staleReference, now, now.Format(time.RFC3339Nano)); err != nil {
+	if err = s.db.RecoverPurchaseCheckout(context.Background(), stale.ID, stale.Provider, stale.BillingEnvironment, staleReference, now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("paid stale checkout recovery: %v", err)
 	}
 	if err = s.db.ApplyPaymentTransition(context.Background(), commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-stale-expired-checkout", OperationID: stale.ID, Type: commerce.PaymentSucceeded, ProviderReference: staleReference, AmountMinor: stale.AmountMinor, Currency: stale.Currency, OccurredAt: now}, Provider: stale.Provider, Environment: stale.BillingEnvironment, Kind: "success", AmountMinor: stale.AmountMinor, Currency: stale.Currency}); err != nil {
 		t.Fatalf("paid stale checkout activation: %v", err)
 	}
+	paidStale, err := s.db.Purchase(context.Background(), stale.ID)
+	if err != nil || paidStale.Status != "paid" || paidStale.EntitlementPeriodStart != stale.EntitlementPeriodStart || paidStale.EntitlementPeriodEnd != stale.EntitlementPeriodEnd {
+		t.Fatalf("paid stale checkout changed commercial terms: purchase=%+v err=%v", paidStale, err)
+	}
 	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now.Add(time.Hour))
-	foundStale := grant.PurchaseID == stale.ID
+	foundStale := err == nil && grant.PurchaseID == stale.ID
 	if grant.Effective != nil {
 		for _, contributor := range grant.Effective.Contributors {
 			foundStale = foundStale || contributor.PurchaseID == stale.ID
 		}
 	}
-	if err != nil || !foundStale {
-		t.Fatalf("paid stale checkout did not receive current grant=%+v err=%v", grant, err)
+	if foundStale {
+		t.Fatalf("expired original checkout contributed current access: grant=%+v", grant)
 	}
 }
 
@@ -277,6 +281,10 @@ func TestPendingPurchaseIntentChangeGetsNewIdentity(t *testing.T) {
 	}
 	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-superseded", OperationID: old.ID, Type: commerce.PaymentSucceeded, ProviderReference: old.ProviderReference, AmountMinor: old.AmountMinor, Currency: old.Currency, OccurredAt: s.currentTime()}, Provider: old.Provider, Environment: old.BillingEnvironment, Kind: "success", AmountMinor: old.AmountMinor, Currency: old.Currency, ValidFrom: s.currentTime(), ValidUntil: s.currentTime().AddDate(1, 0, 0)}); err != nil {
 		t.Fatalf("superseded payable checkout was not reconciliable: %v", err)
+	}
+	paidOld, paidOldErr := s.db.Purchase(ctx, old.ID)
+	if paidOldErr != nil || paidOld.Status != "paid" || paidOld.IntentState != "superseded" || paidOld.EntitlementPeriodStart != old.EntitlementPeriodStart || paidOld.EntitlementPeriodEnd != old.EntitlementPeriodEnd {
+		t.Fatalf("superseded late success collapsed intent or terms: purchase=%+v err=%v", paidOld, paidOldErr)
 	}
 	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-current", OperationID: business.ID, Type: commerce.PaymentSucceeded, ProviderReference: business.ProviderReference, AmountMinor: business.AmountMinor, Currency: business.Currency, OccurredAt: s.currentTime()}, Provider: business.Provider, Environment: business.BillingEnvironment, Kind: "success", AmountMinor: business.AmountMinor, Currency: business.Currency, ValidFrom: s.currentTime(), ValidUntil: s.currentTime().AddDate(1, 0, 0)}); err != nil {
 		t.Fatalf("second payable checkout was not reconciliable: %v", err)

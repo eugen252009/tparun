@@ -195,7 +195,9 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state, stateErr := s.db.PurchasePaymentState(r.Context(), paymentEvent.OperationID); stateErr == nil && state.ProviderReference == "" {
-		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, paymentEvent.OccurredAt, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
+		// The event proves provider linkage only. Recovery finalizes the exact
+		// commercial terms persisted locally before the provider side effect.
+		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
 			bad(w, http.StatusBadRequest, recoverErr.Error())
 			return
 		}

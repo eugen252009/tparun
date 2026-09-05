@@ -88,7 +88,7 @@ func TestExpiredPurchaseCannotFinalizeCheckout(t *testing.T) {
 	}
 }
 
-func TestRecoveredExpiredCheckoutPreservesCalendarYearValidity(t *testing.T) {
+func TestRecoveredExpiredCheckoutNeverShiftsCommercialValidity(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -104,13 +104,23 @@ func TestRecoveredExpiredCheckoutPreservesCalendarYearValidity(t *testing.T) {
 	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual}); err != nil {
 		t.Fatal(err)
 	}
-	occurred := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
-	if err = s.RecoverPurchaseCheckout(ctx, p.ID, p.Provider, p.BillingEnvironment, "calendar-reference", occurred, occurred.Format(time.RFC3339Nano)); err != nil {
+	recoveredAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.RecoverPurchaseCheckout(ctx, p.ID, p.Provider, p.BillingEnvironment, "calendar-reference", recoveredAt.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := s.Purchase(ctx, p.ID)
-	if err != nil || stored.EntitlementPeriodStart != occurred.Format(time.RFC3339Nano) || stored.EntitlementPeriodEnd != occurred.AddDate(1, 0, 0).Format(time.RFC3339Nano) {
-		t.Fatalf("recovered calendar validity=%+v err=%v", stored, err)
+	if err != nil || stored.EntitlementPeriodStart != from.Format(time.RFC3339Nano) || stored.EntitlementPeriodEnd != until.Format(time.RFC3339Nano) {
+		t.Fatalf("recovered commercial validity drifted: purchase=%+v err=%v", stored, err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "late-calendar", OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: "calendar-reference", AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: recoveredAt}, Provider: p.Provider, Environment: p.BillingEnvironment, Kind: "success", AmountMinor: p.AmountMinor, Currency: p.Currency}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.Purchase(ctx, p.ID)
+	if err != nil || stored.Status != "paid" || stored.EntitlementPeriodStart != from.Format(time.RFC3339Nano) || stored.EntitlementPeriodEnd != until.Format(time.RFC3339Nano) {
+		t.Fatalf("late payment changed commercial validity: purchase=%+v err=%v", stored, err)
+	}
+	if _, err = s.GetGrant(ctx, "calendar", commerce.ProductTPAHub, "repository.publish", recoveredAt); err != commerce.ErrGrantInactive {
+		t.Fatalf("expired original terms granted current access: %v", err)
 	}
 }
 

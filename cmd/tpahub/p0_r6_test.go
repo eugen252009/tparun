@@ -554,7 +554,9 @@ func TestProviderCheckoutProcessDeathRecoversExactPurchase(t *testing.T) {
 		t.Fatalf("checkout requests=%d keys=%v", checkoutRequests, checkoutKeys)
 	}
 	mu.Unlock()
-	eventBody := fmt.Sprintf(`{"id":"evt_process_r6","type":"checkout.session.completed","data":{"object":{"id":"cs_process_r6","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"process-purchase"}}}}`)
+	// The provider event deliberately occurs years after the locally persisted
+	// checkout attempt. Recovery must preserve the original 2026..2027 terms.
+	eventBody := fmt.Sprintf(`{"id":"evt_process_r6","created":1893456000,"type":"checkout.session.completed","data":{"object":{"id":"cs_process_r6","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"process-purchase"}}}}`)
 	hub := &server{cfg: config.Config{DataDir: dir, BillingPurchasesEnabled: true, BillingProvider: "stripe", BillingEnvironment: "test", BillingRateCard: "production-nano-v1", StripeTestSecret: "sk_test_example", StripeWebhookSecret: "whsec_example"}, db: db, purchaseProvider: provider, paymentWebhook: provider}
 	webhook := func() *httptest.ResponseRecorder {
 		now := time.Now().UTC()
@@ -571,11 +573,16 @@ func TestProviderCheckoutProcessDeathRecoversExactPurchase(t *testing.T) {
 		t.Fatalf("replayed webhook status=%d body=%s", response.Code, response.Body.String())
 	}
 	purchase, err := db.Purchase(context.Background(), "process-purchase")
-	if err != nil || purchase.Status != "paid" || purchase.ProviderReference != "cs_process_r6" {
+	wantFrom, wantUntil := "2026-09-04T12:00:00Z", "2027-09-04T12:00:00Z"
+	if err != nil || purchase.Status != "paid" || purchase.ProviderReference != "cs_process_r6" || purchase.EntitlementPeriodStart != wantFrom || purchase.EntitlementPeriodEnd != wantUntil {
 		t.Fatalf("recovered purchase=%+v err=%v", purchase, err)
 	}
 	if count, err := db.PurchaseGrantInstanceCount(context.Background(), "process-account"); err != nil || count == 0 {
 		t.Fatalf("grant instances=%d err=%v", count, err)
+	}
+	grant, err := db.GetGrant(context.Background(), "process-account", commerce.ProductTPAHub, CapabilityRepositoryPublish, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || grant.ValidFrom.Format(time.RFC3339Nano) != wantFrom || grant.ValidUntil == nil || grant.ValidUntil.Format(time.RFC3339Nano) != wantUntil {
+		t.Fatalf("recovered grant validity=%+v err=%v", grant, err)
 	}
 }
 
