@@ -838,12 +838,16 @@ func (s *Store) StorageHighWater(c context.Context, accountID, period string) (i
 	}
 	return bytes, e
 }
+
 // LegacyTPAMockBillingEventPayload is a compatibility wrapper for the old
 // TPA Hub-only mock billing API. New callers must select a product explicitly.
 func (s *Store) LegacyTPAMockBillingEventPayload(c context.Context, accountID, period, eventType string) (string, error) {
 	return s.ProductMockBillingEventPayload(c, accountID, string(tpahubproduct.ProductID), period, eventType)
 }
 func (s *Store) ProductMockBillingEventPayload(c context.Context, accountID, productID, period, eventType string) (string, error) {
+	if strings.TrimSpace(productID) == "" {
+		return "", fmt.Errorf("mock billing event product ID is empty")
+	}
 	var payload string
 	e := s.db.QueryRowContext(c, `SELECT payload FROM mock_billing_events WHERE account_id=? AND product_id=? AND period=? AND event_type=?`, accountID, productID, period, eventType).Scan(&payload)
 	return payload, e
@@ -956,7 +960,10 @@ func scanEntitlement(row interface{ Scan(...any) error }) (AccountEntitlement, e
 	e := row.Scan(&x.AccountID, &x.PlanCode, &x.StartedAt, &x.ValidFrom, &x.ValidUntil, &x.CreatedAt, &x.UpdatedAt, &x.Source, &x.PurchaseID)
 	return x, e
 }
-func (s *Store) SetEntitlement(c context.Context, x AccountEntitlement) error {
+
+// SetLegacyTPAEntitlement persists the legacy TPA compatibility projection.
+// Current product-aware callers must use explicit product-scoped APIs instead.
+func (s *Store) SetLegacyTPAEntitlement(c context.Context, x AccountEntitlement) error {
 	if x.ValidFrom == "" {
 		x.ValidFrom = x.StartedAt
 	}
@@ -1746,12 +1753,16 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 	}
 	return tx.Commit()
 }
+
 // LegacyTPARecordMockBillingEvent is a compatibility wrapper for the old
 // TPA Hub-only mock billing API. New callers must select a product explicitly.
 func (s *Store) LegacyTPARecordMockBillingEvent(c context.Context, id, accountID, period, eventType, payload, createdAt string) error {
 	return s.RecordProductMockBillingEvent(c, id, accountID, string(tpahubproduct.ProductID), period, eventType, payload, createdAt)
 }
 func (s *Store) RecordProductMockBillingEvent(c context.Context, id, accountID, productID, period, eventType, payload, createdAt string) error {
+	if strings.TrimSpace(productID) == "" {
+		return fmt.Errorf("mock billing event product ID is empty")
+	}
 	_, e := s.db.ExecContext(c, `INSERT INTO mock_billing_events(id,account_id,product_id,period,event_type,payload,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id,product_id,period,event_type) DO NOTHING`, id, accountID, productID, period, eventType, payload, createdAt)
 	return e
 }

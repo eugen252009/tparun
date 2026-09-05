@@ -26,3 +26,46 @@ func TestGenericPersistenceRejectsMissingProductIdentity(t *testing.T) {
 		t.Fatalf("missing submission product was accepted: %v", err)
 	}
 }
+
+func TestProductAwareMockBillingRejectsMissingProductIdentity(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if _, err = s.ProductMockBillingEventPayload(ctx, "account", " ", "2026-01", "period-finalized"); err == nil || !strings.Contains(err.Error(), "product ID is empty") {
+		t.Fatalf("missing mock payload product was accepted: %v", err)
+	}
+	if err = s.RecordProductMockBillingEvent(ctx, "empty-product-event", "account", "", "2026-01", "period-finalized", `{}`, "2026-01-01T00:00:00Z"); err == nil || !strings.Contains(err.Error(), "product ID is empty") {
+		t.Fatalf("missing mock event product was accepted: %v", err)
+	}
+	var count int
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mock_billing_events WHERE id=?`, "empty-product-event").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid mock event was persisted: %d", count)
+	}
+}
+
+func TestProductAwareMockBillingRoundTripPreservesProductIdentity(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if err = s.CreateAccount(ctx, Account{ID: "account", Email: "account@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecordProductMockBillingEvent(ctx, "product-x-event", "account", "product-x", "2026-01", "period-finalized", `{"product":"x"}`, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := s.ProductMockBillingEventPayload(ctx, "account", "product-x", "2026-01", "period-finalized")
+	if err != nil || payload != `{"product":"x"}` {
+		t.Fatalf("product-aware mock roundtrip payload=%q err=%v", payload, err)
+	}
+}

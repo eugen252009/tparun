@@ -129,7 +129,7 @@ func TestEgressGracefulPackageLimitingAndAnnualPool(t *testing.T) {
 	s, h := testServer(t)
 	clock := time.Date(2026, 8, 31, 23, 59, 0, 0, time.UTC)
 	s.now = func() time.Time { return clock }
-	if err := s.db.SetEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2025-08-31T00:00:00Z", CreatedAt: "2025-08-31T00:00:00Z", UpdatedAt: "2025-08-31T00:00:00Z"}); err != nil {
+	if err := s.db.SetLegacyTPAEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2025-08-31T00:00:00Z", CreatedAt: "2025-08-31T00:00:00Z", UpdatedAt: "2025-08-31T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	id := "55555555555555555555555555555555"

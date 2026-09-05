@@ -103,7 +103,7 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	s.now = func() time.Time { return now }
 	ctx := context.Background()
 	active := store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2026-09-15T00:00:00Z", ValidFrom: "2026-09-15T00:00:00Z", ValidUntil: "2027-09-15T00:00:00Z", CreatedAt: "2026-09-15T00:00:00Z", UpdatedAt: "2026-09-15T00:00:00Z", Source: "purchase", PurchaseID: "paid-active"}
-	if err := s.db.SetEntitlement(ctx, active); err != nil {
+	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.startNanoPurchase(ctx, "a", false); err == nil || err.Error() != "purchase-already-active" {
@@ -111,7 +111,7 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	}
 	active.ValidFrom = "2025-09-15T00:00:00Z"
 	active.ValidUntil = "2026-09-15T12:00:00Z"
-	if err := s.db.SetEntitlement(ctx, active); err != nil {
+	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
 		t.Fatal(err)
 	}
 	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
