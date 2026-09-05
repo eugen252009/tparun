@@ -68,10 +68,10 @@ func TestEgressAdminCLIRecoversExactMarkerAcrossRestart(t *testing.T) {
 	if inspected.ID != "admin-marker" || inspected.AccountID != "admin-account" || inspected.RepositoryID != "admin-repo" || inspected.State != "uncertain" || inspected.Version != 2 || inspected.Reason != "settlement unavailable" {
 		t.Fatalf("inspected marker=%+v", inspected)
 	}
-	if err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "admin-marker", "--version", "2", "--usage-date", "2026-09-04", "--bytes", "42", "--data-dir", dir}); err != nil {
+	if err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "admin-marker", "--version", "2", "--usage-at", "2026-09-04T10:00:00Z", "--bytes", "42", "--data-dir", dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "admin-marker", "--version", "2", "--usage-date", "2026-09-04", "--bytes", "42"}); err == nil {
+	if err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "admin-marker", "--version", "2", "--usage-at", "2026-09-04T10:00:00Z", "--bytes", "42"}); err == nil {
 		t.Fatal("recovery was not exactly once")
 	}
 
@@ -136,7 +136,7 @@ func TestEgressAdminCLIRejectsActiveDelivery(t *testing.T) {
 		t.Fatalf("active marker listed as uncertain: %+v", listed)
 	}
 	db.Close()
-	err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "active-marker", "--version", "1", "--usage-date", "2026-09-04", "--bytes", "1"})
+	err = adminCLI(config.Config{DataDir: dir}, []string{"egress", "recover", "active-marker", "--version", "1", "--usage-at", "2026-09-04T00:00:00Z", "--bytes", "1"})
 	if err == nil || err.Error() != "egress delivery is still active" {
 		t.Fatalf("active recovery error=%v", err)
 	}
@@ -183,7 +183,7 @@ func TestEgressAdminCLIRecoversLiveSettlementFailure(t *testing.T) {
 		t.Fatalf("live settlement marker=%+v", marker)
 	}
 	s.completeEgressDelivery = nil
-	if err = adminCLI(config.Config{DataDir: s.cfg.DataDir}, []string{"egress", "recover", deliveryID, "--version", fmt.Sprint(marker.Version), "--usage-date", time.Now().UTC().Format("2006-01-02"), "--bytes", "7"}); err != nil {
+	if err = adminCLI(config.Config{DataDir: s.cfg.DataDir}, []string{"egress", "recover", deliveryID, "--version", fmt.Sprint(marker.Version), "--usage-at", marker.CreatedAt, "--bytes", "7"}); err != nil {
 		t.Fatal(err)
 	}
 	response, err = http.Get(h.URL + "/r/" + repo + "/Packages.gz")

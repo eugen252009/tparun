@@ -15,6 +15,7 @@ type Config struct {
 	PublishTimeout           time.Duration
 	MaxUpload                int64
 	MaxStagingBytes          int64
+	MaxAccountStagingBytes   int64
 	MaxCandidateInodes       int64
 	MinDiskFreeBytes         int64
 	MinFreeInodes            int64
@@ -39,6 +40,7 @@ func Load() Config {
 		PublishTimeout:           duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
 		MaxUpload:                integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		MaxStagingBytes:          integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
+		MaxAccountStagingBytes:   integer("TPAHUB_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
 		MaxCandidateInodes:       integer("TPAHUB_MAX_CANDIDATE_INODES", 65536),
 		MinDiskFreeBytes:         integer("TPAHUB_MIN_DISK_FREE_BYTES", 100<<20),
 		MinFreeInodes:            integer("TPAHUB_MIN_FREE_INODES", 1024),

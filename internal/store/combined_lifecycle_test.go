@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -142,6 +143,40 @@ func TestPurchaseBeforeBoundedMigrationRemainsIndependent(t *testing.T) {
 	}
 	if _, err = s.GetGrant(ctx, "purchase-first", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, now.AddDate(0, 6, 0)); err != nil {
 		t.Fatalf("purchase did not survive migration expiry: %v", err)
+	}
+}
+
+func TestHistoricalPaidGrantSurvivesOverlappingBoundedMigration(t *testing.T) {
+	dir := historicalFixture(t, func(db *sql.DB) error {
+		_, err := db.Exec(`UPDATE account_entitlements SET plan_code='standard',source='legacy',purchase_id=''`)
+		return err
+	})
+	anchor := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	migrationNow = func() time.Time { return anchor }
+	defer func() { migrationNow = time.Now }()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	grant, err := s.GetGrant(context.Background(), "customer-a", commerce.ProductTPAHub, tpahubproduct.CapabilityRepositoryPublish, anchor.AddDate(0, 8, 0))
+	if err != nil || grant.Source != "purchase" || grant.PurchaseID != "purchase-a" || grant.Limits.StorageBytes != 5 {
+		t.Fatalf("historical paid contributor after migration=%+v err=%v", grant, err)
+	}
+	var instances, basePurchases int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE purchase_id='purchase-a'`).Scan(&instances); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM product_grants WHERE source='purchase'`).Scan(&basePurchases); err != nil {
+		t.Fatal(err)
+	}
+	if instances != 1 || basePurchases != 0 {
+		t.Fatalf("materialized instances=%d purchase base grants=%d", instances, basePurchases)
+	}
+	fresh := BillingPurchase{ID: "duplicate", AccountID: "customer-a", ProductID: "tpa-hub", PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: anchor.Format(time.RFC3339Nano), EntitlementPeriodEnd: anchor.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: anchor.Format(time.RFC3339Nano), UpdatedAt: anchor.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(context.Background(), fresh, fresh.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish}); err == nil || err.Error() != "purchase-already-active" {
+		t.Fatalf("active historical paid instance duplicate purchase error=%v", err)
 	}
 }
 

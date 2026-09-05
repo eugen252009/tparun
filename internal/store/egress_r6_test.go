@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 )
 
 func egressR6Fixture(t *testing.T) *Store {
@@ -224,7 +225,71 @@ func TestEgressReservationPersistsPeriodWithoutAllowance(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT period_start,period_end FROM egress_accounting_uncertain WHERE id=?`, "unlimited-delivery").Scan(&start, &end); err != nil {
 		t.Fatal(err)
 	}
-	if start != "2026-09-01" || end != "2026-10-01" {
+	if start != "2026-09-01T00:00:00.000000000Z" || end != "2026-10-01T00:00:00.000000000Z" {
 		t.Fatalf("period was not persisted: %s %s", start, end)
+	}
+}
+
+func TestEgressReservationUsesExactHalfOpenInstants(t *testing.T) {
+	s := egressR6Fixture(t)
+	ctx := context.Background()
+	start := "2026-09-01T12:34:56.123456789Z"
+	end := "2026-10-01T12:34:56.123456789Z"
+	for _, tc := range []struct {
+		name, usageAt string
+		wantErr       bool
+	}{
+		{name: "same-day-before", usageAt: "2026-09-01T00:00:00Z", wantErr: true},
+		{name: "exact-start", usageAt: start},
+		{name: "last-instant", usageAt: "2026-10-01T12:34:56.123456788Z"},
+		{name: "exact-end", usageAt: end, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "exact-period-" + tc.name
+			if err := s.BeginEgressDelivery(ctx, id, "egress-repo", start); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ReserveEgressDelivery(ctx, id, "egress-repo", start, end, 10, 100, start); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MarkEgressDeliveryUncertain(ctx, id, "egress-repo", "settlement failed"); err != nil {
+				t.Fatal(err)
+			}
+			err := s.RecoverEgressDeliveryWithAudit(ctx, "egress-account", id, "egress-repo", 2, tc.usageAt, 1, start, "operator-r9")
+			if tc.wantErr && err == nil {
+				t.Fatal("out-of-period exact instant was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEgressWindowSortsFractionalInstantsAndConservativelyCountsLegacyDays(t *testing.T) {
+	s := egressR6Fixture(t)
+	ctx := context.Background()
+	start := time.Date(2026, 9, 1, 12, 34, 56, 0, time.UTC)
+	end := time.Date(2026, 10, 1, 12, 34, 56, 0, time.UTC)
+	if err := s.AddRepositoryEgressDaily(ctx, "egress-repo", "2026-09-01T12:34:56.100000000Z", 3, "now"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES('egress-repo','2026-09-01',5,'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	used, err := s.AccountEgressWindow(ctx, "egress-account", start, end)
+	if err != nil || used != 8 {
+		t.Fatalf("exact and legacy window usage=%d err=%v", used, err)
+	}
+	if err = s.BeginEgressDelivery(ctx, "fractional-reservation", "egress-repo", start.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	limited, err := s.ReserveEgressDelivery(ctx, "fractional-reservation", "egress-repo", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), 3, 10, "now")
+	if err != nil || !limited {
+		t.Fatalf("fractional reservation limited=%v err=%v", limited, err)
+	}
+	var reserved int64
+	if err = s.db.QueryRow(`SELECT reserved_bytes FROM egress_accounting_uncertain WHERE id='fractional-reservation'`).Scan(&reserved); err != nil || reserved != 2 {
+		t.Fatalf("fractional reservation bytes=%d err=%v", reserved, err)
 	}
 }

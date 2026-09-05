@@ -30,6 +30,19 @@ func TestParseWebhookNormalizesStripeEvent(t *testing.T) {
 	}
 }
 
+func TestParseWebhookUsesSignedProviderCreationTime(t *testing.T) {
+	now := time.Date(2030, 4, 5, 6, 7, 8, 0, time.UTC)
+	created := now.Add(-2 * time.Hour)
+	body := fmt.Sprintf(`{"id":"evt_created","created":%d,"type":"checkout.session.completed","data":{"object":{"id":"cs_created","payment_status":"paid","amount_total":725,"currency":"eur","metadata":{"commerce_operation_id":"purchase-created"}}}}`, created.Unix())
+	event, err := ParseWebhook([]byte(body), sign(body, "secret", now), "secret", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !event.OccurredAt.Equal(created) {
+		t.Fatalf("event occurrence=%s want=%s", event.OccurredAt, created)
+	}
+}
+
 func TestParseWebhookPreservesProviderMetadataWithoutProductInterpretation(t *testing.T) {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	body := `{"id":"evt_legacy","type":"checkout.session.expired","data":{"object":{"id":"cs_legacy","metadata":{"tpahub_purchase_id":"legacy-purchase"}}}}`

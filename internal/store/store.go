@@ -64,7 +64,7 @@ func open(dir string, reconcileRunning bool) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", e)
 	}
-	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS egress_accounting_uncertain(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),created_at TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '')`); e != nil {
+	if _, e = db.Exec(`CREATE TABLE IF NOT EXISTS repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS egress_accounting_uncertain(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),created_at TEXT NOT NULL,reason TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS generation_cleanup_tasks(repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,attempts INTEGER NOT NULL DEFAULT 0,next_retry TEXT NOT NULL,last_error TEXT NOT NULL,updated_at TEXT NOT NULL)`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize publication state: %w", e)
 	}
@@ -100,6 +100,10 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		return nil, fmt.Errorf("initialize purchase grant insert integrity: %w", e)
 	}
 	if e = migrateLegacyTPAGrants(db); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = migrateHistoricalPurchaseGrantInstances(db); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -238,19 +242,19 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect entitlement sources: %w", err)
 	}
 	sources.Close()
-	purchaseRows, err := tx.Query(`SELECT e.account_id,e.purchase_id,COALESCE(p.account_id,''),COALESCE(p.product_id,''),COALESCE(p.status,''),e.valid_from,e.valid_until FROM account_entitlements e LEFT JOIN billing_purchases p ON p.id=e.purchase_id WHERE e.source='purchase'`)
+	purchaseRows, err := tx.Query(`SELECT e.account_id,e.purchase_id,COALESCE(p.account_id,''),COALESCE(p.product_id,''),e.plan_code,COALESCE(p.plan_code,''),COALESCE(p.status,''),COALESCE(p.entitlement_period_start,''),COALESCE(p.entitlement_period_end,''),e.valid_from,e.valid_until FROM account_entitlements e LEFT JOIN billing_purchases p ON p.id=e.purchase_id WHERE e.source='purchase'`)
 	if err != nil {
 		return fmt.Errorf("inspect purchase-backed grants: %w", err)
 	}
 	for purchaseRows.Next() {
-		var accountID, purchaseID, purchaseAccount, productID, status, validFrom, validUntil string
-		if err = purchaseRows.Scan(&accountID, &purchaseID, &purchaseAccount, &productID, &status, &validFrom, &validUntil); err != nil {
+		var accountID, purchaseID, purchaseAccount, productID, entitlementPlan, purchasePlan, status, purchaseFrom, purchaseUntil, validFrom, validUntil string
+		if err = purchaseRows.Scan(&accountID, &purchaseID, &purchaseAccount, &productID, &entitlementPlan, &purchasePlan, &status, &purchaseFrom, &purchaseUntil, &validFrom, &validUntil); err != nil {
 			purchaseRows.Close()
 			return fmt.Errorf("read purchase-backed grant: %w", err)
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || entitlementPlan != purchasePlan || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed entitlement: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
@@ -260,19 +264,19 @@ func migrateLegacyTPAGrants(db *sql.DB) error {
 		return fmt.Errorf("inspect purchase-backed grants: %w", err)
 	}
 	purchaseRows.Close()
-	purchaseRows, err = tx.Query(`SELECT g.customer_id,g.purchase_id,COALESCE(p.account_id,''),COALESCE(p.product_id,''),COALESCE(p.status,''),g.valid_from,g.valid_until FROM product_grants g LEFT JOIN billing_purchases p ON p.id=g.purchase_id WHERE g.source='purchase'`)
+	purchaseRows, err = tx.Query(`SELECT g.customer_id,g.product_id,g.purchase_id,COALESCE(p.account_id,''),COALESCE(p.product_id,''),COALESCE(p.plan_code,''),COALESCE(p.status,''),COALESCE(p.entitlement_period_start,''),COALESCE(p.entitlement_period_end,''),g.offer_id,g.valid_from,g.valid_until FROM product_grants g LEFT JOIN billing_purchases p ON p.id=g.purchase_id WHERE g.source='purchase'`)
 	if err != nil {
 		return fmt.Errorf("inspect purchase-backed grants: %w", err)
 	}
 	for purchaseRows.Next() {
-		var accountID, purchaseID, purchaseAccount, productID, status, validFrom, validUntil string
-		if err = purchaseRows.Scan(&accountID, &purchaseID, &purchaseAccount, &productID, &status, &validFrom, &validUntil); err != nil {
+		var accountID, grantProductID, purchaseID, purchaseAccount, purchaseProductID, purchasePlan, status, purchaseFrom, purchaseUntil, offerID, validFrom, validUntil string
+		if err = purchaseRows.Scan(&accountID, &grantProductID, &purchaseID, &purchaseAccount, &purchaseProductID, &purchasePlan, &status, &purchaseFrom, &purchaseUntil, &offerID, &validFrom, &validUntil); err != nil {
 			purchaseRows.Close()
 			return fmt.Errorf("read purchase-backed grant: %w", err)
 		}
 		from, fromErr := time.Parse(time.RFC3339Nano, validFrom)
 		until, untilErr := time.Parse(time.RFC3339Nano, validUntil)
-		if accountID == "" || purchaseID == "" || purchaseAccount != accountID || productID != string(commerce.ProductTPAHub) || status != "paid" || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
+		if accountID == "" || grantProductID != string(commerce.ProductTPAHub) || purchaseID == "" || purchaseAccount != accountID || purchaseProductID != grantProductID || purchasePlan != offerID || status != "paid" || purchaseFrom != validFrom || purchaseUntil != validUntil || validFrom == "" || validUntil == "" || fromErr != nil || untilErr != nil || !until.After(from) {
 			purchaseRows.Close()
 			return fmt.Errorf("invalid purchase-backed grant: account=%s purchase=%s status=%s", accountID, purchaseID, status)
 		}
@@ -315,6 +319,58 @@ INSERT OR IGNORE INTO purchase_grant_snapshots(purchase_id,capability_id,period_
 		return fmt.Errorf("record legacy TPA migration: %w", err)
 	}
 	if err = migrationCheckpoint("before-commit"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func migrateHistoricalPurchaseGrantInstances(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name='historical-purchase-grant-instances-v1'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return tx.Commit()
+	}
+	if err = migrationCheckpoint("paid-instances-after-validation"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TRIGGER IF EXISTS purchase_grant_instances_no_unauthorized_insert`); err != nil {
+		return fmt.Errorf("prepare historical paid grant migration: %w", err)
+	}
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO purchase_grant_instances(customer_id,product_id,capability_id,purchase_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,created_at,updated_at)
+		SELECT g.customer_id,g.product_id,g.capability_id,g.purchase_id,g.offer_id,g.enabled,g.valid_from,g.valid_until,g.period_cadence,g.storage_limit_bytes,g.egress_limit_bytes,g.operation_metric,g.operation_limit,g.created_at,g.updated_at
+		FROM product_grants g JOIN billing_purchases p ON p.id=g.purchase_id AND p.account_id=g.customer_id AND p.product_id=g.product_id AND p.status='paid' WHERE g.source='purchase'`); err != nil {
+		return fmt.Errorf("materialize historical paid grants: %w", err)
+	}
+	if err = migrationCheckpoint("paid-instances-after-copy"); err != nil {
+		return err
+	}
+	var mismatches int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM product_grants g LEFT JOIN purchase_grant_instances i ON i.purchase_id=g.purchase_id AND i.capability_id=g.capability_id WHERE g.source='purchase' AND (i.purchase_id IS NULL OR i.customer_id<>g.customer_id OR i.product_id<>g.product_id OR i.offer_id<>g.offer_id OR i.enabled<>g.enabled OR i.valid_from<>g.valid_from OR i.valid_until<>g.valid_until OR i.period_cadence<>g.period_cadence OR i.storage_limit_bytes<>g.storage_limit_bytes OR i.egress_limit_bytes<>g.egress_limit_bytes OR i.operation_metric<>g.operation_metric OR i.operation_limit<>g.operation_limit OR i.created_at<>g.created_at OR i.updated_at<>g.updated_at)`).Scan(&mismatches); err != nil {
+		return fmt.Errorf("verify historical paid grants: %w", err)
+	}
+	if mismatches != 0 {
+		return fmt.Errorf("historical paid grant instance conflicts with source")
+	}
+	if _, err = tx.Exec(`DELETE FROM product_grants WHERE source='purchase'`); err != nil {
+		return fmt.Errorf("remove historical paid compatibility grants: %w", err)
+	}
+	if err = migrationCheckpoint("paid-instances-after-delete"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO schema_migrations(name,applied_at) VALUES('historical-purchase-grant-instances-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`CREATE TRIGGER purchase_grant_instances_no_unauthorized_insert BEFORE INSERT ON purchase_grant_instances BEGIN SELECT CASE WHEN EXISTS(SELECT 1 FROM billing_purchases p WHERE p.id=NEW.purchase_id AND p.status='paid') THEN RAISE(ABORT,'purchase grant instances are immutable after activation') END; END;`); err != nil {
+		return fmt.Errorf("restore purchase grant insert integrity: %w", err)
+	}
+	if err = migrationCheckpoint("paid-instances-before-commit"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -478,7 +534,9 @@ func (s *Store) BeginEgressDelivery(c context.Context, id, repositoryID, created
 }
 
 func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, periodStart, periodEnd string, requested, limit int64, createdAt string) (bool, error) {
-	if requested < 0 || limit < 0 || periodStart == "" || periodEnd == "" || periodStart >= periodEnd {
+	periodStart, start, startErr := normalizeEgressInstant(periodStart)
+	periodEnd, end, endErr := normalizeEgressInstant(periodEnd)
+	if requested < 0 || limit < 0 || startErr != nil || endErr != nil || !end.After(start) {
 		return false, fmt.Errorf("invalid egress delivery reservation")
 	}
 	tx, err := s.db.BeginTx(c, nil)
@@ -494,7 +552,7 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 	// Even an unlimited or denied grant needs the marker's period persisted so
 	// an uncertain settlement cannot later be assigned to an arbitrary date.
 	if limit > 0 {
-		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(d.egress_bytes),0) FROM repository_egress_daily d JOIN repositories r ON r.id=d.repository_id WHERE r.account_id=? AND d.usage_date>=? AND d.usage_date<?`, accountID, periodStart, periodEnd).Scan(&used); err != nil {
+		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(d.egress_bytes),0) FROM repository_egress_daily d JOIN repositories r ON r.id=d.repository_id WHERE r.account_id=? AND ((length(d.usage_date)=10 AND d.usage_date>=substr(?,1,10) AND (d.usage_date<substr(?,1,10) OR (d.usage_date=substr(?,1,10) AND substr(?,12)<>'00:00:00.000000000Z'))) OR (length(d.usage_date)<>10 AND d.usage_date>=? AND d.usage_date<?))`, accountID, periodStart, periodEnd, periodEnd, periodEnd, periodStart, periodEnd).Scan(&used); err != nil {
 			return false, err
 		}
 		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(u.reserved_bytes),0) FROM egress_accounting_uncertain u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? AND u.period_start=? AND u.period_end=? AND u.state IN ('streaming','uncertain')`, accountID, periodStart, periodEnd).Scan(&reserved); err != nil {
@@ -533,20 +591,31 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 }
 
 func (s *Store) CompleteEgressDelivery(c context.Context, id, repositoryID, usageDate string, bytes int64, updatedAt string) error {
-	if bytes < 0 {
-		return fmt.Errorf("negative egress delivery bytes")
+	usageDate, usageAt, usageErr := normalizeEgressInstant(usageDate)
+	if bytes < 0 || usageErr != nil {
+		return fmt.Errorf("invalid egress delivery settlement")
 	}
 	tx, err := s.db.BeginTx(c, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var state string
-	if err = tx.QueryRowContext(c, `SELECT state FROM egress_accounting_uncertain WHERE id=? AND repository_id=?`, id, repositoryID).Scan(&state); err != nil {
+	var state, periodStart, periodEnd, createdAt string
+	if err = tx.QueryRowContext(c, `SELECT state,period_start,period_end,created_at FROM egress_accounting_uncertain WHERE id=? AND repository_id=?`, id, repositoryID).Scan(&state, &periodStart, &periodEnd, &createdAt); err != nil {
 		return err
 	}
 	if state != "streaming" && state != "uncertain" {
 		return fmt.Errorf("egress delivery is not completable")
+	}
+	_, start, startErr := normalizeEgressInstant(periodStart)
+	_, end, endErr := normalizeEgressInstant(periodEnd)
+	periodValid := startErr == nil && endErr == nil && !usageAt.Before(start) && usageAt.Before(end)
+	if periodStart == "" && periodEnd == "" {
+		created, createdErr := time.Parse(time.RFC3339Nano, createdAt)
+		periodValid = createdErr == nil && usageAt.Format("2006-01-02") == created.UTC().Format("2006-01-02")
+	}
+	if !periodValid {
+		return fmt.Errorf("egress settlement instant is outside marker period")
 	}
 	if bytes > 0 {
 		if _, err = tx.ExecContext(c, `INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES(?,?,?,?) ON CONFLICT(repository_id,usage_date) DO UPDATE SET egress_bytes=egress_bytes+excluded.egress_bytes,updated_at=excluded.updated_at`, repositoryID, usageDate, bytes, updatedAt); err != nil {
@@ -598,9 +667,11 @@ func (s *Store) RecoverEgressDelivery(c context.Context, accountID, id, reposito
 }
 
 func (s *Store) RecoverEgressDeliveryWithAudit(c context.Context, accountID, id, repositoryID string, version int64, usageDate string, bytes int64, updatedAt, operator string) error {
-	if version <= 0 || bytes < 0 || usageDate == "" {
+	normalizedUsage, usageAt, usageErr := normalizeEgressInstant(usageDate)
+	if version <= 0 || bytes < 0 || usageErr != nil {
 		return fmt.Errorf("invalid egress recovery")
 	}
+	usageDate = normalizedUsage
 	tx, err := s.db.BeginTx(c, nil)
 	if err != nil {
 		return err
@@ -623,13 +694,14 @@ func (s *Store) RecoverEgressDeliveryWithAudit(c context.Context, accountID, id,
 		}
 		return fmt.Errorf("egress delivery is still active")
 	}
-	parsedDate, parseErr := time.Parse("2006-01-02", usageDate)
-	periodValid := periodStart != "" && periodEnd != "" && usageDate >= periodStart && usageDate < periodEnd
+	_, start, startErr := normalizeEgressInstant(periodStart)
+	_, end, endErr := normalizeEgressInstant(periodEnd)
+	periodValid := startErr == nil && endErr == nil && !usageAt.Before(start) && usageAt.Before(end)
 	if periodStart == "" && periodEnd == "" {
 		created, createdErr := time.Parse(time.RFC3339Nano, createdAt)
-		periodValid = createdErr == nil && usageDate == created.UTC().Format("2006-01-02")
+		periodValid = createdErr == nil && usageAt.Format("2006-01-02") == created.UTC().Format("2006-01-02")
 	}
-	if parseErr != nil || parsedDate.Format("2006-01-02") != usageDate || !periodValid {
+	if !periodValid {
 		details := fmt.Sprintf("usage date outside marker period: usage_date=%s period_start=%s period_end=%s", usageDate, periodStart, periodEnd)
 		if auditErr := insertAdminAudit(tx, id, accountID, repositoryID, "uncertain", version, "rejected", operator, updatedAt, details); auditErr != nil {
 			return auditErr
@@ -684,13 +756,34 @@ func (s *Store) AddRepositoryEgressDaily(c context.Context, repositoryID, usageD
 	if bytes <= 0 {
 		return nil
 	}
+	usageDate, _, err := normalizeEgressInstant(usageDate)
+	if err != nil {
+		return err
+	}
 	_, e := s.db.ExecContext(c, `INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES(?,?,?,?) ON CONFLICT(repository_id,usage_date) DO UPDATE SET egress_bytes=egress_bytes+excluded.egress_bytes,updated_at=excluded.updated_at`, repositoryID, usageDate, bytes, updatedAt)
 	return e
 }
 func (s *Store) AccountEgressWindow(c context.Context, accountID string, start, end time.Time) (int64, error) {
 	var total int64
-	e := s.db.QueryRowContext(c, `SELECT COALESCE(SUM(u.egress_bytes),0) FROM repository_egress_daily u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? AND u.usage_date>=? AND u.usage_date<?`, accountID, start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02")).Scan(&total)
+	startText, endText := formatEgressInstant(start), formatEgressInstant(end)
+	e := s.db.QueryRowContext(c, `SELECT COALESCE(SUM(u.egress_bytes),0) FROM repository_egress_daily u JOIN repositories r ON r.id=u.repository_id WHERE r.account_id=? AND ((length(u.usage_date)=10 AND u.usage_date>=substr(?,1,10) AND (u.usage_date<substr(?,1,10) OR (u.usage_date=substr(?,1,10) AND substr(?,12)<>'00:00:00.000000000Z'))) OR (length(u.usage_date)<>10 AND u.usage_date>=? AND u.usage_date<?))`, accountID, startText, endText, endText, endText, startText, endText).Scan(&total)
 	return total, e
+}
+
+func normalizeEgressInstant(value string) (string, time.Time, error) {
+	instant, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		instant, err = time.Parse("2006-01-02", value)
+	}
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("invalid egress instant")
+	}
+	instant = instant.UTC()
+	return formatEgressInstant(instant), instant, nil
+}
+
+func formatEgressInstant(instant time.Time) string {
+	return instant.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 func (s *Store) AccountEgress(c context.Context, accountID, period string) (int64, error) {
 	var total int64
@@ -1087,6 +1180,12 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if p.ProviderState == "" {
 		p.ProviderState = "open"
 	}
+	at, parseErr := time.Parse(time.RFC3339Nano, now)
+	from, fromErr := parseEntitlementTime(p.EntitlementPeriodStart)
+	until, untilErr := parseEntitlementTime(p.EntitlementPeriodEnd)
+	if parseErr != nil || fromErr != nil || untilErr != nil || at.Before(from) || !at.Before(until) {
+		return BillingPurchase{}, fmt.Errorf("purchase validity is not current")
+	}
 	tx, e := s.db.BeginTx(c, nil)
 	if e != nil {
 		return BillingPurchase{}, e
@@ -1095,7 +1194,8 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	var existing BillingPurchase
 	existing, e = scanPurchase(tx.QueryRowContext(c, `SELECT `+purchaseColumns+` FROM billing_purchases WHERE account_id=? AND product_id=? AND provider=? AND billing_environment=? AND status='pending'`, p.AccountID, p.ProductID, p.Provider, p.BillingEnvironment))
 	if e == nil {
-		compatible := existing.AccountID == p.AccountID && existing.ProductID == p.ProductID && existing.PlanCode == p.PlanCode && existing.RateCardID == p.RateCardID && existing.RateCardMode == p.RateCardMode && existing.TaxClassification == p.TaxClassification && existing.Currency == p.Currency && existing.AmountMinor == p.AmountMinor && existing.Provider == p.Provider && existing.BillingEnvironment == p.BillingEnvironment && existing.CheckoutRequestVersion == p.CheckoutRequestVersion && (existing.ProviderReference == "" || existing.CheckoutURL != "")
+		existingUntil, existingUntilErr := parseEntitlementTime(existing.EntitlementPeriodEnd)
+		compatible := existing.AccountID == p.AccountID && existing.ProductID == p.ProductID && existing.PlanCode == p.PlanCode && existing.RateCardID == p.RateCardID && existing.RateCardMode == p.RateCardMode && existing.TaxClassification == p.TaxClassification && existing.Currency == p.Currency && existing.AmountMinor == p.AmountMinor && existing.Provider == p.Provider && existing.BillingEnvironment == p.BillingEnvironment && existing.CheckoutRequestVersion == p.CheckoutRequestVersion && existing.EntitlementPeriodStart == p.EntitlementPeriodStart && existing.EntitlementPeriodEnd == p.EntitlementPeriodEnd && existingUntilErr == nil && at.Before(existingUntil) && (existing.ProviderReference == "" || existing.CheckoutURL != "")
 		if compatible {
 			if e = tx.Commit(); e != nil {
 				return BillingPurchase{}, e
@@ -1115,10 +1215,6 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if e != sql.ErrNoRows && e != nil {
 		return BillingPurchase{}, e
 	}
-	at, parseErr := time.Parse(time.RFC3339Nano, now)
-	if parseErr != nil {
-		return BillingPurchase{}, parseErr
-	}
 	var entitlementSource, entitlementFrom, entitlementUntil string
 	if entitlementErr := tx.QueryRowContext(c, `SELECT source,valid_from,valid_until FROM account_entitlements WHERE account_id=?`, p.AccountID).Scan(&entitlementSource, &entitlementFrom, &entitlementUntil); entitlementErr != nil && entitlementErr != sql.ErrNoRows {
 		return BillingPurchase{}, entitlementErr
@@ -1133,7 +1229,7 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 			return BillingPurchase{}, fmt.Errorf("purchase-already-active")
 		}
 	}
-	grantRows, grantErr := tx.QueryContext(c, `SELECT enabled,valid_from,valid_until FROM product_grants WHERE customer_id=? AND product_id=? AND source='purchase'`, p.AccountID, p.ProductID)
+	grantRows, grantErr := tx.QueryContext(c, `SELECT enabled,valid_from,valid_until FROM product_grants WHERE customer_id=? AND product_id=? AND source='purchase' UNION ALL SELECT enabled,valid_from,valid_until FROM purchase_grant_instances WHERE customer_id=? AND product_id=?`, p.AccountID, p.ProductID, p.AccountID, p.ProductID)
 	if grantErr != nil {
 		return BillingPurchase{}, grantErr
 	}
@@ -1205,16 +1301,25 @@ func (s *Store) UpdatePurchaseCheckout(c context.Context, id, reference, checkou
 	if strings.TrimSpace(reference) == "" {
 		return fmt.Errorf("purchase provider reference is empty")
 	}
-	purchase, err := s.Purchase(c, id)
+	at, err := time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return fmt.Errorf("purchase checkout time is invalid: %w", err)
+	}
+	tx, err := s.db.BeginTx(c, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	purchase, err := scanPurchase(tx.QueryRowContext(c, `SELECT `+purchaseColumns+` FROM billing_purchases WHERE id=?`, id))
 	if err != nil {
 		return err
 	}
 	from, fromErr := parseEntitlementTime(purchase.EntitlementPeriodStart)
 	until, untilErr := parseEntitlementTime(purchase.EntitlementPeriodEnd)
-	if fromErr != nil || untilErr != nil || !until.After(from) {
+	if fromErr != nil || untilErr != nil || at.Before(from) || !at.Before(until) {
 		return fmt.Errorf("purchase validity is invalid")
 	}
-	res, e := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND status='pending' AND snapshot_finalized=0`, reference, checkoutURL, updatedAt, id)
+	res, e := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND status='pending' AND snapshot_finalized=0`, reference, checkoutURL, updatedAt, id)
 	if e != nil {
 		return e
 	}
@@ -1223,14 +1328,14 @@ func (s *Store) UpdatePurchaseCheckout(c context.Context, id, reference, checkou
 	} else if n != 1 {
 		return fmt.Errorf("purchase checkout state changed")
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RecoverPurchaseCheckout finalizes a provider-created checkout whose local
 // reference was not persisted before a process interruption. The signed
 // provider event supplies the reference; only a still-unfinalized purchase
 // with no conflicting reference may be recovered.
-func (s *Store) RecoverPurchaseCheckout(c context.Context, id, provider, environment, reference, updatedAt string) error {
+func (s *Store) RecoverPurchaseCheckout(c context.Context, id, provider, environment, reference string, occurredAt time.Time, updatedAt string) error {
 	if strings.TrimSpace(reference) == "" {
 		return fmt.Errorf("purchase provider reference is empty")
 	}
@@ -1241,7 +1346,23 @@ func (s *Store) RecoverPurchaseCheckout(c context.Context, id, provider, environ
 	if purchase.Provider != provider || purchase.BillingEnvironment != environment || purchase.ProviderReference != "" {
 		return fmt.Errorf("purchase checkout recovery authority mismatch")
 	}
-	result, err := s.db.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND provider_reference='' AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, reference, updatedAt, id, provider, environment)
+	from, fromErr := parseEntitlementTime(purchase.EntitlementPeriodStart)
+	until, untilErr := parseEntitlementTime(purchase.EntitlementPeriodEnd)
+	occurredAt = occurredAt.UTC()
+	if fromErr != nil || untilErr != nil || !until.After(from) || occurredAt.Before(from) {
+		return fmt.Errorf("purchase checkout recovery validity mismatch")
+	}
+	if !occurredAt.Before(until) {
+		shiftedUntil := occurredAt.Add(until.Sub(from))
+		if years := until.Year() - from.Year(); years > 0 && from.AddDate(years, 0, 0).Equal(until) {
+			shiftedUntil = occurredAt.AddDate(years, 0, 0)
+		} else if months := (until.Year()-from.Year())*12 + int(until.Month()-from.Month()); months > 0 && from.AddDate(0, months, 0).Equal(until) {
+			shiftedUntil = occurredAt.AddDate(0, months, 0)
+		}
+		purchase.EntitlementPeriodStart = occurredAt.Format(time.RFC3339Nano)
+		purchase.EntitlementPeriodEnd = shiftedUntil.Format(time.RFC3339Nano)
+	}
+	result, err := s.db.ExecContext(c, `UPDATE billing_purchases SET entitlement_period_start=?,entitlement_period_end=?,provider_reference=?,checkout_url='',snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND provider_reference='' AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, purchase.EntitlementPeriodStart, purchase.EntitlementPeriodEnd, reference, updatedAt, id, provider, environment)
 	if err != nil {
 		return err
 	}
@@ -1609,6 +1730,58 @@ func (s *Store) Repositories(c context.Context, account string) ([]Repository, e
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) AllRepositories(c context.Context) ([]Repository, error) {
+	rows, err := s.db.QueryContext(c, "SELECT id,COALESCE(account_id,''),name,visibility,created_at FROM repositories ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var repositories []Repository
+	for rows.Next() {
+		var repository Repository
+		if err = rows.Scan(&repository.ID, &repository.AccountID, &repository.Name, &repository.Visibility, &repository.CreatedAt); err != nil {
+			return nil, err
+		}
+		repositories = append(repositories, repository)
+	}
+	return repositories, rows.Err()
+}
+
+type GenerationCleanupTask struct {
+	RepositoryID, NextRetry, LastError string
+	Attempts                           int64
+}
+
+func (s *Store) PendingGenerationCleanup(c context.Context) ([]GenerationCleanupTask, error) {
+	rows, err := s.db.QueryContext(c, `SELECT repository_id,attempts,next_retry,last_error FROM generation_cleanup_tasks ORDER BY updated_at,repository_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []GenerationCleanupTask
+	for rows.Next() {
+		var task GenerationCleanupTask
+		if err = rows.Scan(&task.RepositoryID, &task.Attempts, &task.NextRetry, &task.LastError); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
+}
+
+func (s *Store) SetGenerationCleanupRetry(c context.Context, repositoryID string, cleanupErr error, nextRetry, updatedAt time.Time) error {
+	if cleanupErr == nil {
+		return s.ClearGenerationCleanup(c, repositoryID)
+	}
+	_, err := s.db.ExecContext(c, `INSERT INTO generation_cleanup_tasks(repository_id,attempts,next_retry,last_error,updated_at) VALUES(?,1,?,?,?) ON CONFLICT(repository_id) DO UPDATE SET attempts=attempts+1,next_retry=excluded.next_retry,last_error=excluded.last_error,updated_at=excluded.updated_at`, repositoryID, nextRetry.UTC().Format(time.RFC3339Nano), cleanupErr.Error(), updatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ClearGenerationCleanup(c context.Context, repositoryID string) error {
+	_, err := s.db.ExecContext(c, `DELETE FROM generation_cleanup_tasks WHERE repository_id=?`, repositoryID)
+	return err
 }
 func (s *Store) CreateJob(c context.Context, j Job) error {
 	_, e := s.db.ExecContext(c, "INSERT INTO publish_jobs(id,repository_id,state,incoming_path,created_at) VALUES(?,?,?,?,?)", j.ID, j.RepositoryID, j.State, j.IncomingPath, j.CreatedAt)

@@ -36,7 +36,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var idRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
+var (
+	idRE              = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	aptArchitectureRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+)
 
 const maxUploadFiles = 64
 
@@ -85,7 +88,7 @@ type server struct {
 
 type capacityReservation struct {
 	AccountID, RepositoryID, JobID, Kind string
-	Bytes, Inodes                        int64
+	Bytes, LogicalBytes, Inodes          int64
 }
 
 func main() {
@@ -267,7 +270,26 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 	}
 	id := newID()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if e := os.MkdirAll(filepath.Join(s.cfg.DataDir, "repos", id), 0755); e != nil {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
+	allocationBlock, e := filesystemAllocationBlock(s.cfg.DataDir)
+	if e != nil {
+		bad(w, http.StatusInsufficientStorage, "repository allocation unavailable")
+		return
+	}
+	reservationID := "repository-create:" + id
+	repositoryReservation, overflow := addCapacity(allocationBlock, allocationBlock)
+	if overflow {
+		bad(w, http.StatusInsufficientStorage, "repository allocation overflow")
+		return
+	}
+	if e = s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, reservationID, "repository", repositoryReservation, 0, 2); e != nil {
+		bad(w, http.StatusInsufficientStorage, e.Error())
+		return
+	}
+	defer s.releaseCapacity(reservationID)
+	repositoryRoot := filepath.Join(s.cfg.DataDir, "repos", id)
+	if e = mkdirAllDurable(repositoryRoot, 0755); e != nil {
 		bad(w, 500, e.Error())
 		return
 	}
@@ -275,7 +297,17 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 	if visibility != "public" {
 		visibility = "private"
 	}
-	if e := s.db.CreateRepository(r.Context(), store.Repository{ID: id, AccountID: accountID(r), Name: strings.TrimSpace(in.Name), Visibility: visibility, CreatedAt: now}); e != nil {
+	if e = s.db.CreateRepository(r.Context(), store.Repository{ID: id, AccountID: accountID(r), Name: strings.TrimSpace(in.Name), Visibility: visibility, CreatedAt: now}); e != nil {
+		if cleanupErr := s.removePath(repositoryRoot); cleanupErr != nil {
+			s.signalCleanupRetry()
+			bad(w, 500, fmt.Sprintf("%v; repository root cleanup failed: %v", e, cleanupErr))
+			return
+		}
+		if cleanupSyncErr := syncDirectory(filepath.Dir(repositoryRoot)); cleanupSyncErr != nil {
+			s.signalCleanupRetry()
+			bad(w, 500, fmt.Sprintf("%v; repository root cleanup sync failed: %v", e, cleanupSyncErr))
+			return
+		}
 		bad(w, 500, e.Error())
 		return
 	}
@@ -349,7 +381,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			bad(w, http.StatusInsufficientStorage, err.Error())
 			return
 		}
-		if err := s.checkStagingCapacity(r.Context(), accountID(r), r.ContentLength, false); err != nil {
+		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), r.ContentLength); err != nil {
 			bad(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
 		}
@@ -379,7 +411,11 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	if err := s.reserveCapacityWithResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, maxUploadFiles+1); err != nil {
+	logicalReserve := int64(0)
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") && r.ContentLength > 0 {
+		logicalReserve = r.ContentLength
+	}
+	if err := s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, logicalReserve, maxUploadFiles+1); err != nil {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
@@ -469,6 +505,13 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, 400, "at least one .deb is required")
 		return
 	}
+	if logicalReserve == 0 {
+		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), total); err != nil {
+			_ = os.RemoveAll(dir)
+			bad(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+	}
 	if err := s.checkDiskHeadroom(); err != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, http.StatusInsufficientStorage, err.Error())
@@ -557,7 +600,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startedAt := s.currentTime().UTC()
-	period := startedAt.Format("2006-01-02")
+	usageAt := startedAt.Format(time.RFC3339Nano)
 	limited := false
 	egressLimit := int64(0)
 	if uncertain, err := s.db.RepositoryEgressUncertain(r.Context(), repo.ID); err != nil || uncertain {
@@ -591,8 +634,8 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
 			return
 		}
-		periodStart = time.Date(startedAt.Year(), time.January, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
-		periodEnd = time.Date(startedAt.Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		periodStart = time.Date(startedAt.Year(), time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+		periodEnd = time.Date(startedAt.Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
 	}
 	reserve := s.reserveEgressDelivery
 	if reserve == nil {
@@ -618,7 +661,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		if complete == nil {
 			complete = s.db.CompleteEgressDelivery
 		}
-		if err := complete(context.Background(), deliveryID, repo.ID, period, counted.bytes, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
+		if err := complete(context.Background(), deliveryID, repo.ID, usageAt, counted.bytes, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
 			if markErr := s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, err.Error()); markErr != nil {
 				log.Printf("repository egress uncertainty: repository=%s delivery=%s: %v", repo.ID, deliveryID, markErr)
 			}
@@ -628,7 +671,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			}
 			s.egressDegraded[repo.AccountID] = true
 			s.egressMu.Unlock()
-			log.Printf("repository egress accounting: repository=%s bytes=%d date=%s: %v", repo.ID, counted.bytes, period, err)
+			log.Printf("repository egress accounting: repository=%s bytes=%d at=%s: %v", repo.ID, counted.bytes, usageAt, err)
 		}
 	}()
 	http.ServeFile(output, r, path)
@@ -782,7 +825,7 @@ func (s *server) process(j store.Job) {
 	}
 	repositoryRoot := filepath.Join(s.cfg.DataDir, "repos", j.RepositoryID)
 	generations := filepath.Join(repositoryRoot, "generations")
-	if e := os.MkdirAll(generations, 0755); e != nil {
+	if e := mkdirAllDurable(generations, 0755); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -824,7 +867,7 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
 	}
-	if e = s.reserveCapacityWithResources(context.Background(), "", j.RepositoryID, j.ID, "candidate", candidateReservation, candidateInodes+1); e != nil {
+	if e = s.reserveCapacityWithLogicalResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "candidate", candidateReservation, 0, candidateInodes+1); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -991,21 +1034,40 @@ func (s *server) process(j store.Job) {
 	}
 	if e := s.collectOldGenerations(j.RepositoryID); e != nil {
 		log.Printf("generation cleanup: repository=%s: %v", j.RepositoryID, e)
+		s.signalCleanupRetry()
 	}
 	_ = os.RemoveAll(j.IncomingPath)
 	log.Printf("publish job succeeded id=%s", j.ID)
 }
 func (s *server) collectOldGenerations(repositoryID string) error {
+	err := s.collectOldGenerationsOnce(repositoryID)
+	if err != nil {
+		now := s.cleanupCurrentTime()
+		if retryErr := s.db.SetGenerationCleanupRetry(context.Background(), repositoryID, err, now.Add(cleanupRetryPoll), now); retryErr != nil {
+			return fmt.Errorf("%v; persist generation cleanup retry: %w", err, retryErr)
+		}
+		return err
+	}
+	return s.db.ClearGenerationCleanup(context.Background(), repositoryID)
+}
+
+func (s *server) collectOldGenerationsOnce(repositoryID string) error {
 	if s.cfg.MaxGenerations <= 0 {
 		return nil
 	}
 	busy, err := s.db.HasNonterminalJobs(context.Background(), repositoryID)
-	if err != nil || busy {
+	if err != nil {
 		return err
+	}
+	if busy {
+		return fmt.Errorf("generation cleanup deferred while publication is active")
 	}
 	active, err := s.db.ActiveGeneration(context.Background(), repositoryID)
 	if err != nil {
-		return nil
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("read active generation for cleanup: %w", err)
 	}
 	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID, "generations")
 	entries, err := os.ReadDir(root)
@@ -1042,6 +1104,12 @@ func (s *server) collectOldGenerations(repositoryID string) error {
 		if err = os.RemoveAll(filepath.Join(root, candidates[i].name)); err != nil {
 			return err
 		}
+		if err = syncDirectory(root); err != nil {
+			return fmt.Errorf("sync generation cleanup: %w", err)
+		}
+	}
+	if err = syncDirectory(root); err != nil {
+		return fmt.Errorf("sync generation directory: %w", err)
 	}
 	return nil
 }
@@ -1124,6 +1192,35 @@ func syncDirectory(path string) error {
 	return closeErr
 }
 
+func mkdirAllDurable(path string, mode os.FileMode) error {
+	path = filepath.Clean(path)
+	var missing []string
+	for current := path; ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return fmt.Errorf("no existing ancestor for %s", path)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(path, mode); err != nil {
+		return err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		if err := syncDirectory(filepath.Dir(missing[i])); err != nil {
+			return fmt.Errorf("sync parent for %s: %w", missing[i], err)
+		}
+	}
+	return nil
+}
+
 func atomicReplaceSymlink(next, current string) error {
 	if _, err := os.Lstat(current); os.IsNotExist(err) {
 		return os.Rename(next, current)
@@ -1199,6 +1296,16 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	if releaseFields["Suite"] != "stable" || releaseFields["Codename"] != "stable" || !strings.Contains(" "+releaseFields["Components"]+" ", " main ") {
 		return fmt.Errorf("publication candidate Release identity is invalid")
 	}
+	releaseArchitectures := map[string]bool{}
+	for _, architecture := range strings.Fields(releaseFields["Architectures"]) {
+		if !aptArchitectureRE.MatchString(architecture) || releaseArchitectures[architecture] {
+			return fmt.Errorf("publication candidate Release architectures are invalid")
+		}
+		releaseArchitectures[architecture] = true
+	}
+	if len(releaseArchitectures) == 0 {
+		return fmt.Errorf("publication candidate Release has no architectures")
+	}
 	if err = verifyCandidateSignature(ctx, inReleasePath, releaseBytes, cfg); err != nil {
 		return err
 	}
@@ -1217,10 +1324,16 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 		return fmt.Errorf("publication candidate missing main metadata: %w", err)
 	}
 	binaryCount := 0
+	indexedArchitectures := map[string]bool{}
 	for _, binaryDir := range binaryDirs {
 		if !binaryDir.IsDir() || !strings.HasPrefix(binaryDir.Name(), "binary-") || len(binaryDir.Name()) == len("binary-") {
 			continue
 		}
+		architecture := strings.TrimPrefix(binaryDir.Name(), "binary-")
+		if !aptArchitectureRE.MatchString(architecture) || !releaseArchitectures[architecture] {
+			return fmt.Errorf("publication candidate has undeclared architecture index: %s", architecture)
+		}
+		indexedArchitectures[architecture] = true
 		binaryCount++
 		relativePackages := filepath.ToSlash(filepath.Join("main", binaryDir.Name(), "Packages"))
 		relativeGzip := relativePackages + ".gz"
@@ -1231,7 +1344,7 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 			return fmt.Errorf("Release missing checksum for %s", relativeGzip)
 		}
 		packagesPath := filepath.Join(componentDir, binaryDir.Name(), "Packages")
-		entries, indexErr := verifyPackageIndex(ctx, candidate, packagesPath)
+		entries, indexErr := verifyPackageIndex(ctx, candidate, packagesPath, architecture)
 		if indexErr != nil {
 			return indexErr
 		}
@@ -1252,14 +1365,22 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 			return fmt.Errorf("Packages.gz does not match Packages")
 		}
 		for name, checksum := range entries {
-			if _, duplicate := indexedPayloads[name]; duplicate {
-				return fmt.Errorf("package payload indexed more than once: %s", name)
+			if existing, duplicate := indexedPayloads[name]; duplicate {
+				if checksum != existing || !strings.HasSuffix(checksum.identity, "\x00all") {
+					return fmt.Errorf("package payload indexed more than once: %s", name)
+				}
+				continue
 			}
 			indexedPayloads[name] = checksum
 		}
 	}
 	if binaryCount == 0 {
 		return fmt.Errorf("publication candidate has no binary package metadata")
+	}
+	for architecture := range releaseArchitectures {
+		if !indexedArchitectures[architecture] {
+			return fmt.Errorf("publication candidate Release architecture has no index: %s", architecture)
+		}
 	}
 	for path := range candidatePayloads {
 		if _, indexed := indexedPayloads[path]; !indexed {
@@ -1357,6 +1478,9 @@ func parseCandidateRelease(data []byte) (map[string]candidateChecksum, map[strin
 		inSHA = false
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 {
+			if _, duplicate := metadata[parts[0]]; duplicate {
+				return nil, nil, fmt.Errorf("duplicate Release field: %s", parts[0])
+			}
 			metadata[parts[0]] = strings.TrimSpace(parts[1])
 		}
 	}
@@ -1464,7 +1588,7 @@ func digestReader(ctx context.Context, reader io.Reader, maximum int64) (int64, 
 	}
 }
 
-func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (map[string]candidatePackage, error) {
+func verifyPackageIndex(ctx context.Context, candidate, packagesPath, indexArchitecture string) (map[string]candidatePackage, error) {
 	f, err := os.Open(packagesPath)
 	if err != nil {
 		return nil, err
@@ -1479,6 +1603,9 @@ func verifyPackageIndex(ctx context.Context, candidate, packagesPath string) (ma
 		name := fields["Filename"]
 		if fields["Package"] == "" || fields["Version"] == "" || fields["Architecture"] == "" || name == "" || fields["Size"] == "" || fields["SHA256"] == "" {
 			return fmt.Errorf("incomplete Packages stanza")
+		}
+		if fields["Architecture"] != indexArchitecture && fields["Architecture"] != "all" {
+			return fmt.Errorf("package architecture %s is invalid for binary-%s", fields["Architecture"], indexArchitecture)
 		}
 		if !strings.HasPrefix(name, "pool/") {
 			return fmt.Errorf("package Filename is outside pool")
@@ -1712,6 +1839,12 @@ func (s *server) cleanupRetryLoop() {
 			if err := s.reconcileOrphanedStagingState(); err != nil {
 				log.Printf("orphaned staging cleanup: %v", err)
 			}
+			if err := s.retryPendingGenerationCleanup(s.cleanupCurrentTime()); err != nil {
+				log.Printf("generation cleanup retry: %v", err)
+			}
+			if err := s.reconcileOrphanedRepositoryRoots(); err != nil {
+				log.Printf("orphaned repository cleanup: %v", err)
+			}
 		case <-s.cleanupWake:
 			if err := s.retryPendingCleanup(s.cleanupCurrentTime()); err != nil {
 				log.Printf("publish cleanup retry: %v", err)
@@ -1719,8 +1852,33 @@ func (s *server) cleanupRetryLoop() {
 			if err := s.reconcileOrphanedStagingState(); err != nil {
 				log.Printf("orphaned staging cleanup: %v", err)
 			}
+			if err := s.retryPendingGenerationCleanup(s.cleanupCurrentTime()); err != nil {
+				log.Printf("generation cleanup retry: %v", err)
+			}
+			if err := s.reconcileOrphanedRepositoryRoots(); err != nil {
+				log.Printf("orphaned repository cleanup: %v", err)
+			}
 		}
 	}
+}
+
+func (s *server) retryPendingGenerationCleanup(now time.Time) error {
+	tasks, err := s.db.PendingGenerationCleanup(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if next, parseErr := time.Parse(time.RFC3339Nano, task.NextRetry); parseErr == nil && next.After(now) {
+			continue
+		}
+		s.stagingMu.Lock()
+		err = s.collectOldGenerations(task.RepositoryID)
+		s.stagingMu.Unlock()
+		if err != nil {
+			continue
+		}
+	}
+	return nil
 }
 
 func (s *server) retryPendingCleanup(now time.Time) error {
@@ -1754,6 +1912,15 @@ func (s *server) retryPendingCleanup(now time.Time) error {
 
 func (s *server) reconcilePublicationState() error {
 	root := filepath.Join(s.cfg.DataDir, "repos")
+	repositories, err := s.db.AllRepositories(context.Background())
+	if err != nil {
+		return fmt.Errorf("load durable repositories: %w", err)
+	}
+	if len(repositories) > 0 {
+		if err = mkdirAllDurable(root, 0755); err != nil {
+			return fmt.Errorf("restore repository root: %w", err)
+		}
+	}
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
 		return nil
@@ -1761,11 +1928,27 @@ func (s *server) reconcilePublicationState() error {
 	if err != nil {
 		return fmt.Errorf("scan repository publication state: %w", err)
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	ids := make([]string, 0, len(repositories))
+	seen := make(map[string]bool, len(repositories))
+	for _, repository := range repositories {
+		ids = append(ids, repository.ID)
+		seen[repository.ID] = true
+		if err = mkdirAllDurable(filepath.Join(root, repository.ID), 0755); err != nil {
+			return fmt.Errorf("restore durable repository root %s: %w", repository.ID, err)
 		}
-		repositoryRoot := filepath.Join(root, entry.Name())
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !seen[entry.Name()] {
+			if err = s.removePath(filepath.Join(root, entry.Name())); err != nil {
+				return fmt.Errorf("remove repository root without durable row: %w", err)
+			}
+			if err = syncDirectory(root); err != nil {
+				return fmt.Errorf("sync orphaned repository cleanup: %w", err)
+			}
+		}
+	}
+	for _, repositoryID := range ids {
+		repositoryRoot := filepath.Join(root, repositoryID)
 		pointer := filepath.Join(repositoryRoot, "current")
 		// Temporary current.<job> and current.reconcile pointers are never
 		// authoritative; durable repository_publications is the only recovery source.
@@ -1784,7 +1967,7 @@ func (s *server) reconcilePublicationState() error {
 				return fmt.Errorf("remove stale publication pointer: %w", err)
 			}
 		}
-		generation, generationErr := s.db.ActiveGeneration(context.Background(), entry.Name())
+		generation, generationErr := s.db.ActiveGeneration(context.Background(), repositoryID)
 		if generationErr != nil {
 			if errors.Is(generationErr, store.ErrNotFound) {
 				if err = os.Remove(pointer); err != nil && !os.IsNotExist(err) {
@@ -1821,11 +2004,47 @@ func (s *server) reconcilePublicationState() error {
 			_ = os.Remove(temporary)
 			return fmt.Errorf("restore durable publication pointer: %w", err)
 		}
+		if err = syncDirectory(repositoryRoot); err != nil {
+			return fmt.Errorf("sync restored publication pointer: %w", err)
+		}
 		if err = s.removeFailedGenerations(repositoryRoot, generation); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *server) reconcileOrphanedRepositoryRoots() error {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
+	root := filepath.Join(s.cfg.DataDir, "repos")
+	repositories, err := s.db.AllRepositories(context.Background())
+	if err != nil {
+		return err
+	}
+	durable := make(map[string]bool, len(repositories))
+	for _, repository := range repositories {
+		durable[repository.ID] = true
+	}
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || durable[entry.Name()] {
+			continue
+		}
+		if err = s.removePath(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
+		if err = syncDirectory(root); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(root)
 }
 
 func (s *server) removeFailedGenerations(repositoryRoot, active string) error {
@@ -1940,6 +2159,14 @@ func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, j
 // are process-local; restart reconciliation treats durable filesystem state as
 // actual bytes and the statfs result as actual inode usage.
 func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes, inodes int64) error {
+	logicalBytes := int64(0)
+	if accountID != "" && kind == "incoming" {
+		logicalBytes = bytes
+	}
+	return s.reserveCapacityWithLogicalResources(ctx, accountID, repositoryID, jobID, kind, bytes, logicalBytes, inodes)
+}
+
+func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes, logicalBytes, inodes int64) error {
 	if bytes < 0 {
 		return fmt.Errorf("negative capacity reservation")
 	}
@@ -1949,16 +2176,20 @@ func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, re
 	if s.reservations == nil {
 		s.reservations = make(map[string]capacityReservation)
 	}
-	oldBytes, oldInodes := int64(0), int64(0)
+	if logicalBytes < 0 {
+		return fmt.Errorf("negative logical capacity reservation")
+	}
+	oldBytes, oldLogicalBytes, oldInodes := int64(0), int64(0), int64(0)
 	if old, ok := s.reservations[jobID]; ok {
 		oldBytes = old.Bytes
+		oldLogicalBytes = old.LogicalBytes
 		oldInodes = old.Inodes
 	}
 	// Incoming reservations are charged against the account at admission. Work
 	// reservations duplicate already-admitted input and the active baseline, so
 	// charging them again would make exact logical storage limits unattainable.
-	if accountID != "" && kind != "work" {
-		if err := s.checkStagingCapacity(ctx, accountID, bytes, false); err != nil {
+	if accountID != "" && logicalBytes > 0 {
+		if err := s.checkAccountLogicalCapacity(ctx, accountID, logicalBytes); err != nil {
 			return err
 		}
 	}
@@ -2005,6 +2236,37 @@ func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, re
 	if err = s.checkInodeHeadroomFor(additionalInodes); err != nil {
 		return err
 	}
+	if accountID != "" && s.cfg.MaxAccountStagingBytes > 0 {
+		var accountActual, accountReserved int64
+		paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
+		if pathErr != nil {
+			return fmt.Errorf("account transient usage unavailable: %w", pathErr)
+		}
+		for _, path := range paths {
+			for _, stagedPath := range []string{path, filepath.Join(s.cfg.DataDir, "work", filepath.Base(path)), filepath.Join(s.cfg.DataDir, "work", filepath.Base(path)+"-published")} {
+				allocated, sizeErr := fileTreeAllocatedSize(stagedPath)
+				if sizeErr != nil {
+					return fmt.Errorf("account transient usage unavailable: %w", sizeErr)
+				}
+				accountActual, overflow = addCapacity(accountActual, allocated)
+				if overflow {
+					return fmt.Errorf("account transient usage overflow")
+				}
+			}
+		}
+		for _, reservation := range s.reservations {
+			if reservation.AccountID == accountID {
+				accountReserved, overflow = addCapacity(accountReserved, reservation.Bytes)
+				if overflow {
+					return fmt.Errorf("account transient reservation overflow")
+				}
+			}
+		}
+		prospectiveAccount, accountOverflow := addCapacity(accountActual, accountReserved-oldBytes, bytes)
+		if accountOverflow || prospectiveAccount > s.cfg.MaxAccountStagingBytes {
+			return fmt.Errorf("account staging reservation exceeded")
+		}
+	}
 	newBytes, overflow := addCapacity(oldBytes, bytes)
 	if overflow {
 		return fmt.Errorf("capacity reservation overflow")
@@ -2013,7 +2275,11 @@ func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, re
 	if overflow {
 		return fmt.Errorf("inode reservation overflow")
 	}
-	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes, Inodes: newInodes}
+	newLogicalBytes, overflow := addCapacity(oldLogicalBytes, logicalBytes)
+	if overflow {
+		return fmt.Errorf("logical capacity reservation overflow")
+	}
+	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes, LogicalBytes: newLogicalBytes, Inodes: newInodes}
 	return nil
 }
 func (s *server) resizeCapacity(jobID string, bytes int64) error {
@@ -2106,29 +2372,12 @@ func (s *server) checkInodeHeadroomFor(additional int64) error {
 }
 
 func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64, alreadyWritten bool) error {
-	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
-	if err != nil {
-		return fmt.Errorf("staging grant unavailable: %w", err)
-	}
-	if grant.Limits.StorageBytes <= 0 {
-		return fmt.Errorf("staging grant has no capacity")
-	}
-	usage, err := s.accountUsage(ctx, accountID)
-	if err != nil {
-		return fmt.Errorf("staging usage unavailable: %w", err)
-	}
-	var staged, reservedGlobal, reservedAccount int64
+	var staged, reservedGlobal int64
 	for _, reservation := range s.reservations {
 		var overflow bool
 		reservedGlobal, overflow = addCapacity(reservedGlobal, reservation.Bytes)
 		if overflow {
 			return fmt.Errorf("global staging reservation overflow")
-		}
-		if reservation.AccountID == accountID {
-			reservedAccount, overflow = addCapacity(reservedAccount, reservation.Bytes)
-			if overflow {
-				return fmt.Errorf("account staging reservation overflow")
-			}
 		}
 	}
 	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
@@ -2152,7 +2401,42 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		// candidate copies remain covered by global reservations, disk, and inode
 		// limits; the candidate storage check that follows enforces the account's
 		// logical published-byte limit without charging the active baseline twice.
+		grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+		if err != nil {
+			return fmt.Errorf("staging grant unavailable: %w", err)
+		}
+		if grant.Limits.StorageBytes <= 0 {
+			return fmt.Errorf("staging grant has no capacity")
+		}
+		if _, err = s.accountUsage(ctx, accountID); err != nil {
+			return fmt.Errorf("staging usage unavailable: %w", err)
+		}
 		return nil
+	}
+	return s.checkAccountLogicalCapacity(ctx, accountID, incoming)
+}
+
+func (s *server) checkAccountLogicalCapacity(ctx context.Context, accountID string, incoming int64) error {
+	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		return fmt.Errorf("staging grant unavailable: %w", err)
+	}
+	if grant.Limits.StorageBytes <= 0 {
+		return fmt.Errorf("staging grant has no capacity")
+	}
+	usage, err := s.accountUsage(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("staging usage unavailable: %w", err)
+	}
+	var reservedAccount int64
+	for _, reservation := range s.reservations {
+		if reservation.AccountID == accountID {
+			var overflow bool
+			reservedAccount, overflow = addCapacity(reservedAccount, reservation.LogicalBytes)
+			if overflow {
+				return fmt.Errorf("account staging reservation overflow")
+			}
+		}
 	}
 	accountStaged := int64(0)
 	paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
@@ -2160,7 +2444,7 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		return fmt.Errorf("account staging usage unavailable: %w", pathErr)
 	}
 	for _, path := range paths {
-		treeSize, sizeErr := fileTreeAllocatedSize(path)
+		treeSize, sizeErr := fileTreeSize(path)
 		if sizeErr != nil {
 			return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
 		}
@@ -2168,17 +2452,6 @@ func (s *server) checkStagingCapacity(ctx context.Context, accountID string, inc
 		accountStaged, overflow = addCapacity(accountStaged, treeSize)
 		if overflow {
 			return fmt.Errorf("account staging usage overflow")
-		}
-		jobID := filepath.Base(path)
-		for _, workPath := range []string{filepath.Join(s.cfg.DataDir, "work", jobID)} {
-			treeSize, sizeErr = fileTreeAllocatedSize(workPath)
-			if sizeErr != nil {
-				return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
-			}
-			accountStaged, overflow = addCapacity(accountStaged, treeSize)
-			if overflow {
-				return fmt.Errorf("account staging usage overflow")
-			}
 		}
 	}
 	accountProspective, overflow := addCapacity(usage.StoredBytes, accountStaged, reservedAccount, incoming)

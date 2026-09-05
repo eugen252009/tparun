@@ -64,7 +64,7 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 		}
 		return purchase, CheckoutResult{}, err
 	}
-	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ProviderReference, checkout.URL, now.Format(time.RFC3339Nano)); err != nil {
+	if err = s.db.UpdatePurchaseCheckout(ctx, purchase.ID, checkout.ProviderReference, checkout.URL, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err
 	}
 	purchase.ProviderReference = checkout.ProviderReference
@@ -195,7 +195,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state, stateErr := s.db.PurchasePaymentState(r.Context(), paymentEvent.OperationID); stateErr == nil && state.ProviderReference == "" {
-		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
+		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, paymentEvent.OccurredAt, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
 			bad(w, http.StatusBadRequest, recoverErr.Error())
 			return
 		}

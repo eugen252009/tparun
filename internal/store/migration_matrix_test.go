@@ -87,6 +87,26 @@ func TestMalformedHistoricalMigrationMatrixFailsClosedAndRepeats(t *testing.T) {
 			_, e := db.Exec(`UPDATE billing_purchases SET product_id='other-product'`)
 			return e
 		}},
+		{"purchase entitlement wrong plan", func(db *sql.DB) error {
+			_, e := db.Exec(`UPDATE account_entitlements SET plan_code='pro'`)
+			return e
+		}},
+		{"wrong grant product", func(db *sql.DB) error {
+			_, e := db.Exec(`UPDATE product_grants SET product_id='other-product'`)
+			return e
+		}},
+		{"wrong grant offer", func(db *sql.DB) error {
+			_, e := db.Exec(`UPDATE product_grants SET offer_id='other-offer'`)
+			return e
+		}},
+		{"grant starts before purchase", func(db *sql.DB) error {
+			_, e := db.Exec(`UPDATE product_grants SET valid_from='2025-12-31T23:59:59Z'`)
+			return e
+		}},
+		{"grant ends after purchase", func(db *sql.DB) error {
+			_, e := db.Exec(`UPDATE product_grants SET valid_until='2027-01-01T00:00:01Z'`)
+			return e
+		}},
 		{"missing valid_from", func(db *sql.DB) error { _, e := db.Exec(`UPDATE product_grants SET valid_from=''`); return e }},
 		{"missing valid_until", func(db *sql.DB) error { _, e := db.Exec(`UPDATE product_grants SET valid_until=''`); return e }},
 		{"malformed valid_from", func(db *sql.DB) error {
@@ -148,8 +168,8 @@ func TestMalformedHistoricalMigrationCanBeRepairedAfterFailure(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err = s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM product_grants WHERE customer_id='customer-a'`).Scan(&n); err != nil || n == 0 {
-		t.Fatalf("repaired migration grants=%d err=%v", n, err)
+	if err = s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM purchase_grant_instances WHERE customer_id='customer-a'`).Scan(&n); err != nil || n == 0 {
+		t.Fatalf("repaired migration instances=%d err=%v", n, err)
 	}
 }
 
@@ -178,7 +198,7 @@ func TestMigrationInterruptionReopenMatrix(t *testing.T) {
 			}
 			s.Close()
 			i, g, p, marker = migrationState(t, dir)
-			if i != 0 || g != 1 || p != 1 || marker != 1 {
+			if i != 1 || g != 0 || p != 1 || marker != 1 {
 				t.Fatalf("retry state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
 			s, err = Open(dir)
@@ -189,6 +209,39 @@ func TestMigrationInterruptionReopenMatrix(t *testing.T) {
 			i2, g2, p2, marker2 := migrationState(t, dir)
 			if i2 != i || g2 != g || p2 != p || marker2 != marker {
 				t.Fatalf("non-idempotent reopen: %d/%d/%d/%d -> %d/%d/%d/%d", i, g, p, marker, i2, g2, p2, marker2)
+			}
+		})
+	}
+	migrationFault = nil
+}
+
+func TestHistoricalPaidGrantMaterializationInterruptionReopensCleanly(t *testing.T) {
+	for _, stage := range []string{"paid-instances-after-validation", "paid-instances-after-copy", "paid-instances-after-delete", "paid-instances-before-commit"} {
+		t.Run(stage, func(t *testing.T) {
+			dir := historicalFixture(t, nil)
+			migrationFault = func(found string) error {
+				if found == stage {
+					return errors.New("injected paid instance interruption")
+				}
+				return nil
+			}
+			if s, err := Open(dir); err == nil {
+				s.Close()
+				t.Fatal("interrupted paid materialization committed")
+			}
+			migrationFault = nil
+			i, g, p, marker := migrationState(t, dir)
+			if i != 0 || g != 1 || p != 1 || marker != 1 {
+				t.Fatalf("partial paid materialization state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
+			}
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			i, g, p, marker = migrationState(t, dir)
+			if i != 1 || g != 0 || p != 1 || marker != 1 {
+				t.Fatalf("reopened paid materialization state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
 		})
 	}

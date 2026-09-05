@@ -117,7 +117,7 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, e
 func (s *server) egressPeriod(accountID string, now time.Time) (string, string, error) {
 	if s.egressLookup != nil {
 		start := time.Date(now.UTC().Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
-		return start.Format("2006-01-02"), start.AddDate(1, 0, 0).Format("2006-01-02"), nil
+		return start.Format(time.RFC3339Nano), start.AddDate(1, 0, 0).Format(time.RFC3339Nano), nil
 	}
 	grant, err := s.grantService().GetGrant(context.Background(), commerce.CustomerID(accountID), commerce.ProductTPAHub, CapabilityRepositoryDownload, now)
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *server) egressPeriod(accountID string, now time.Time) (string, string, 
 	if err != nil {
 		return "", "", err
 	}
-	return start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02"), nil
+	return start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), nil
 }
 func egressLimited(used, limit int64) bool { return limit > 0 && used >= limit }
 

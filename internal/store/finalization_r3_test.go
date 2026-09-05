@@ -63,6 +63,57 @@ func TestFinalizedProviderReferenceCannotChange(t *testing.T) {
 	}
 }
 
+func TestExpiredPurchaseCannotFinalizeCheckout(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	from := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	until := from.Add(time.Hour)
+	if err = s.CreateAccount(ctx, Account{ID: "account", Email: "account@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: from.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	p := BillingPurchase{ID: "expiring-checkout", AccountID: "account", ProductID: "tpa-hub", PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, p.ID, "reference", "https://checkout.invalid", until.Format(time.RFC3339Nano)); err == nil {
+		t.Fatal("expired purchase checkout finalized")
+	}
+	stored, err := s.Purchase(ctx, p.ID)
+	if err != nil || stored.ProviderReference != "" || stored.CheckoutURL != "" {
+		t.Fatalf("expired checkout mutated purchase=%+v err=%v", stored, err)
+	}
+}
+
+func TestRecoveredExpiredCheckoutPreservesCalendarYearValidity(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	from := time.Date(2023, 3, 1, 0, 0, 0, 0, time.UTC)
+	until := from.AddDate(1, 0, 0)
+	if err = s.CreateAccount(ctx, Account{ID: "calendar", Email: "calendar@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: from.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	p := BillingPurchase{ID: "calendar-purchase", AccountID: "calendar", ProductID: "tpa-hub", PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish", Period: commerce.PeriodAnnual}); err != nil {
+		t.Fatal(err)
+	}
+	occurred := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.RecoverPurchaseCheckout(ctx, p.ID, p.Provider, p.BillingEnvironment, "calendar-reference", occurred, occurred.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.Purchase(ctx, p.ID)
+	if err != nil || stored.EntitlementPeriodStart != occurred.Format(time.RFC3339Nano) || stored.EntitlementPeriodEnd != occurred.AddDate(1, 0, 0).Format(time.RFC3339Nano) {
+		t.Fatalf("recovered calendar validity=%+v err=%v", stored, err)
+	}
+}
+
 func TestFinalizedPurchaseRejectsWrongProviderAndEnvironment(t *testing.T) {
 	for _, tc := range []struct{ name, provider, environment string }{
 		{name: "provider", provider: "other", environment: "test"},

@@ -137,7 +137,7 @@ func cli(cfg config.Config, args []string) error {
 
 func adminCLI(cfg config.Config, args []string) error {
 	if len(args) < 2 || args[0] != "egress" {
-		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-date <YYYY-MM-DD> --bytes <bytes>")
+		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-at <RFC3339> --bytes <bytes>")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	db, err := store.OpenForAdmin(dataDir)
@@ -184,9 +184,9 @@ func adminCLI(cfg config.Config, args []string) error {
 		if err != nil || bytes < 0 {
 			return fmt.Errorf("non-negative accounted bytes required")
 		}
-		usageDate := flagValue(args, "--usage-date", "")
-		if parsed, parseErr := time.Parse("2006-01-02", usageDate); parseErr != nil || parsed.Format("2006-01-02") != usageDate {
-			return fmt.Errorf("usage date must be YYYY-MM-DD")
+		usageDate := flagValue(args, "--usage-at", "")
+		if _, parseErr := time.Parse(time.RFC3339Nano, usageDate); parseErr != nil {
+			return fmt.Errorf("usage instant must be RFC3339")
 		}
 		operator := os.Getenv("TPAHUB_OPERATOR")
 		if operator == "" {

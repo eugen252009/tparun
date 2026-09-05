@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
@@ -70,6 +71,10 @@ func TestNonAuthoritativeGenerationCleanupFailureRetriesSafely(t *testing.T) {
 	if _, err := os.Stat(old); err != nil {
 		t.Fatalf("failed deletion removed old generation: %v", err)
 	}
+	tasks, err := s.db.PendingGenerationCleanup(context.Background())
+	if err != nil || len(tasks) != 1 || tasks[0].RepositoryID != repo {
+		t.Fatalf("persisted generation cleanup tasks=%+v err=%v", tasks, err)
+	}
 	assertGenerationAuthority(t, s, repo, root)
 	s.publicationFault = nil
 	if err := s.collectOldGenerations(repo); err != nil {
@@ -78,9 +83,74 @@ func TestNonAuthoritativeGenerationCleanupFailureRetriesSafely(t *testing.T) {
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatalf("retry left old generation: %v", err)
 	}
+	tasks, err = s.db.PendingGenerationCleanup(context.Background())
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("completed generation cleanup task remains=%+v err=%v", tasks, err)
+	}
 	assertGenerationAuthority(t, s, repo, root)
 	if err := s.collectOldGenerations(repo); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGenerationCleanupRetriesAutonomouslyAndAfterReopen(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live", true: "restart"}[restart], func(t *testing.T) {
+			s, repo, root := generationCleanupFixture(t)
+			old := filepath.Join(root, "generations", "M")
+			if err := os.MkdirAll(old, 0700); err != nil {
+				t.Fatal(err)
+			}
+			s.publicationFault = func(stage string) error {
+				if stage == "cleanup-old-generation" {
+					return errors.New("temporary generation cleanup failure")
+				}
+				return nil
+			}
+			if err := s.collectOldGenerations(repo); err == nil {
+				t.Fatal("cleanup failure hidden")
+			}
+			s.publicationFault = nil
+			if restart {
+				dataDir := s.cfg.DataDir
+				if err := s.db.Close(); err != nil {
+					t.Fatal(err)
+				}
+				db, err := store.Open(dataDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				s = &server{cfg: config.Config{DataDir: dataDir, MaxGenerations: 1}, db: db, ctx: context.Background()}
+				if err = s.reconcilePublicationState(); err != nil {
+					t.Fatal(err)
+				}
+				if err = s.retryPendingGenerationCleanup(time.Now().UTC().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				s.ctx = ctx
+				s.cleanupWake = make(chan struct{}, 1)
+				go s.cleanupRetryLoop()
+				s.signalCleanupRetry()
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					if _, err := os.Stat(old); os.IsNotExist(err) {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("live generation cleanup retry did not remove old generation")
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			if _, err := os.Stat(old); !os.IsNotExist(err) {
+				t.Fatalf("autonomous cleanup left old generation: %v", err)
+			}
+			assertGenerationAuthority(t, s, repo, root)
+		})
 	}
 }
 

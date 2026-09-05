@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/payments"
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
@@ -127,6 +128,83 @@ func (t *synchronizedCheckoutTransport) RoundTrip(r *http.Request) (*http.Respon
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.inner.RoundTrip(r)
+}
+
+type expiringCheckoutProvider struct {
+	now        *time.Time
+	operations []string
+}
+
+func (p *expiringCheckoutProvider) CreateCheckout(_ context.Context, operation payments.Operation) (payments.CheckoutSession, error) {
+	p.operations = append(p.operations, operation.OperationID)
+	if len(p.operations) == 1 {
+		*p.now = p.now.AddDate(1, 0, 0)
+	}
+	return payments.CheckoutSession{Provider: "stripe", Environment: payments.EnvironmentTest, ProviderReference: "ref-" + operation.OperationID, URL: "https://checkout.invalid/" + operation.OperationID}, nil
+}
+
+func TestPurchaseEndpointRejectsCheckoutCreatedAfterValidityExpiry(t *testing.T) {
+	s := configuredPurchaseTestServer(t)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	provider := &expiringCheckoutProvider{now: &now}
+	s.purchaseProvider = provider
+	h := httptest.NewServer(s.routes())
+	defer h.Close()
+
+	requestPurchase := func() (*http.Response, map[string]any) {
+		req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/purchases/nano", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer tph_s_test")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		response.Body.Close()
+		return response, body
+	}
+
+	first, _ := requestPurchase()
+	if first.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expired checkout status=%d", first.StatusCode)
+	}
+	if len(provider.operations) != 1 {
+		t.Fatalf("provider operations=%v", provider.operations)
+	}
+	stale, err := s.db.Purchase(context.Background(), provider.operations[0])
+	if err != nil || stale.ProviderReference != "" || stale.CheckoutURL != "" {
+		t.Fatalf("expired checkout persisted=%+v err=%v", stale, err)
+	}
+
+	second, body := requestPurchase()
+	if second.StatusCode != http.StatusOK || len(provider.operations) != 2 || provider.operations[0] == provider.operations[1] {
+		t.Fatalf("fresh retry status=%d operations=%v body=%v", second.StatusCode, provider.operations, body)
+	}
+	stale, err = s.db.Purchase(context.Background(), provider.operations[0])
+	if err != nil || stale.Status != "failed" {
+		t.Fatalf("stale purchase state=%+v err=%v", stale, err)
+	}
+	staleReference := "ref-" + stale.ID
+	if err = s.db.RecoverPurchaseCheckout(context.Background(), stale.ID, stale.Provider, stale.BillingEnvironment, staleReference, now, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("paid stale checkout recovery: %v", err)
+	}
+	if err = s.db.ApplyPaymentTransition(context.Background(), commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "evt-stale-expired-checkout", OperationID: stale.ID, Type: commerce.PaymentSucceeded, ProviderReference: staleReference, AmountMinor: stale.AmountMinor, Currency: stale.Currency, OccurredAt: now}, Provider: stale.Provider, Environment: stale.BillingEnvironment, Kind: "success", AmountMinor: stale.AmountMinor, Currency: stale.Currency}); err != nil {
+		t.Fatalf("paid stale checkout activation: %v", err)
+	}
+	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, now.Add(time.Hour))
+	foundStale := grant.PurchaseID == stale.ID
+	if grant.Effective != nil {
+		for _, contributor := range grant.Effective.Contributors {
+			foundStale = foundStale || contributor.PurchaseID == stale.ID
+		}
+	}
+	if err != nil || !foundStale {
+		t.Fatalf("paid stale checkout did not receive current grant=%+v err=%v", grant, err)
+	}
 }
 
 func TestConcurrentChangedIntentLeavesDeterministicPurchaseStates(t *testing.T) {

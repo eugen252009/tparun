@@ -281,6 +281,75 @@ func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
 	}
 }
 
+func TestRepositoryCreationUsesResourceAdmissionAndRollsBackRoot(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MinFreeInodes = 10
+	s.freeInodes = func() (int64, error) { return 11, nil }
+	request := func(name string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/repositories", strings.NewReader(fmt.Sprintf(`{"name":%q}`, name)))
+		r.Header.Set("Authorization", "Bearer tph_s_test")
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		return w
+	}
+	if response := request("inode-blocked"); response.Code != http.StatusInsufficientStorage {
+		t.Fatalf("inode-short repository creation status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repositories, err := s.db.Repositories(context.Background(), "a"); err != nil || len(repositories) != 0 {
+		t.Fatalf("resource-rejected repository persisted=%+v err=%v", repositories, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(s.cfg.DataDir, "repos"))
+	if err != nil && !os.IsNotExist(err) || len(entries) != 0 {
+		t.Fatalf("resource-rejected repository root entries=%v err=%v", entries, err)
+	}
+
+	s.cfg.MinFreeInodes = 0
+	block, err := filesystemAllocationBlock(s.cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MinDiskFreeBytes = 1
+	s.diskFree = func() (int64, error) { return 2 * block, nil }
+	if response := request("disk-blocked"); response.Code != http.StatusInsufficientStorage {
+		t.Fatalf("disk-short repository creation status=%d body=%s", response.Code, response.Body.String())
+	}
+	s.diskFree = func() (int64, error) { return 2*block + 1, nil }
+	if response := request("unique"); response.Code != http.StatusOK {
+		t.Fatalf("repository creation status=%d body=%s", response.Code, response.Body.String())
+	}
+	entries, err = os.ReadDir(filepath.Join(s.cfg.DataDir, "repos"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("created repository roots=%v err=%v", entries, err)
+	}
+	if response := request("unique"); response.Code != http.StatusInternalServerError {
+		t.Fatalf("duplicate repository status=%d body=%s", response.Code, response.Body.String())
+	}
+	after, err := os.ReadDir(filepath.Join(s.cfg.DataDir, "repos"))
+	if err != nil || len(after) != 1 || after[0].Name() != entries[0].Name() {
+		t.Fatalf("failed DB insert leaked root before=%v after=%v err=%v", entries, after, err)
+	}
+	cleanupFailed := false
+	s.removeAll = func(path string) error {
+		if !cleanupFailed {
+			cleanupFailed = true
+			return errors.New("temporary repository root cleanup failure")
+		}
+		return os.RemoveAll(path)
+	}
+	if response := request("unique"); response.Code != http.StatusInternalServerError || !cleanupFailed {
+		t.Fatalf("cleanup-fault repository status=%d body=%s cleanup_failed=%v", response.Code, response.Body.String(), cleanupFailed)
+	}
+	s.removeAll = nil
+	if err = s.reconcileOrphanedRepositoryRoots(); err != nil {
+		t.Fatal(err)
+	}
+	after, err = os.ReadDir(filepath.Join(s.cfg.DataDir, "repos"))
+	if err != nil || len(after) != 1 || after[0].Name() != entries[0].Name() {
+		t.Fatalf("deferred DB-failure root cleanup before=%v after=%v err=%v", entries, after, err)
+	}
+}
+
 func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MaxUpload = 10
@@ -329,6 +398,43 @@ func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	}
 	if count := countJobs(t, s); count != 2 {
 		t.Fatalf("rejected upload created a job: %d", count)
+	}
+}
+
+func TestHTTPUploadUsesLogicalBytesForCommercialQuota(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxUpload = 1 << 20
+	s.cfg.MaxStagingBytes = 1 << 30
+	s.cfg.MaxAccountStagingBytes = 1 << 30
+	s.cfg.MinDiskFreeBytes = 0
+	grant, err := s.db.GetGrant(context.Background(), "a", commerce.ProductTPAHub, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.Limits.StorageBytes = 1
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return grant, nil
+	})
+	repo := "logical-http-repo"
+	if err = s.db.CreateRepository(context.Background(), store.Repository{ID: repo, AccountID: "a", Name: repo, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(filename string) int {
+		r := httptest.NewRequest(http.MethodPost, "/?filename="+filename, bytes.NewReader([]byte("x")))
+		r.ContentLength = 1
+		r = r.WithContext(context.WithValue(r.Context(), accountKey, "a"))
+		w := httptest.NewRecorder()
+		s.upload(w, r, repo)
+		return w.Code
+	}
+	if status := upload("one.deb"); status != http.StatusAccepted {
+		t.Fatalf("one logical byte upload status=%d", status)
+	}
+	if allocated, err := fileTreeAllocatedSize(filepath.Join(s.cfg.DataDir, "incoming")); err != nil || allocated <= 1 {
+		t.Fatalf("test did not exceed logical quota physically: allocated=%d err=%v", allocated, err)
+	}
+	if status := upload("two.deb"); status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("second logical byte upload status=%d", status)
 	}
 }
 
@@ -462,7 +568,7 @@ func TestCapacityReservationReconstructsFromFilesystemAfterRestart(t *testing.T)
 	}
 }
 
-func TestPerAccountStagingUsesPhysicalAllocation(t *testing.T) {
+func TestPerAccountLogicalQuotaAndPhysicalTransientLimitAreIndependent(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MinDiskFreeBytes = 0
 	s.cfg.MaxStagingBytes = 1 << 30
@@ -494,8 +600,15 @@ func TestPerAccountStagingUsesPhysicalAllocation(t *testing.T) {
 	if err = s.db.CreateJob(context.Background(), store.Job{ID: "physical-account-job", RepositoryID: repo, State: "queued", IncomingPath: path, CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.checkStagingCapacity(context.Background(), "a", block, false); err == nil {
-		t.Fatal("per-account physical staging overage was accepted")
+	if err = s.checkStagingCapacity(context.Background(), "a", block, false); err != nil {
+		t.Fatalf("physical allocation was charged to logical storage quota: %v", err)
+	}
+	s.cfg.MaxAccountStagingBytes = 2 * block
+	s.stagingMu.Lock()
+	err = s.reserveCapacityWithLogicalResources(context.Background(), "a", repo, "physical-account-next", "incoming", block, 1, 1)
+	s.stagingMu.Unlock()
+	if err == nil {
+		t.Fatal("per-account transient physical staging overage was accepted")
 	}
 }
 
@@ -763,11 +876,14 @@ func TestGenerationRetentionPreservesActiveAndRecentHistory(t *testing.T) {
 	if err := s.db.CreateJob(ctx, store.Job{ID: "job-1", RepositoryID: repositoryID, State: "queued", IncomingPath: "incoming", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.collectOldGenerations(repositoryID); err != nil {
-		t.Fatal(err)
+	if err := s.collectOldGenerations(repositoryID); err == nil {
+		t.Fatal("cleanup with a nonterminal publication was not deferred")
 	}
 	if _, err := os.Stat(filepath.Join(root, "job-1")); err != nil {
 		t.Fatalf("nonterminal generation collected: %v", err)
+	}
+	if tasks, err := s.db.PendingGenerationCleanup(ctx); err != nil || len(tasks) != 1 || tasks[0].RepositoryID != repositoryID {
+		t.Fatalf("deferred generation cleanup task=%+v err=%v", tasks, err)
 	}
 }
 
@@ -939,6 +1055,16 @@ func signSemanticCandidate(t *testing.T, candidate string, cfg config.Config) {
 	}
 }
 
+func resignSemanticRelease(t *testing.T, candidate string, cfg config.Config) {
+	t.Helper()
+	releasePath := filepath.Join(candidate, "dists", "stable", "Release")
+	inRelease := filepath.Join(candidate, "dists", "stable", "InRelease")
+	cmd := exec.Command("gpg", "--batch", "--yes", "--homedir", cfg.GPGHome, "--local-user", cfg.GPGFingerprint, "--clearsign", "--output", inRelease, releasePath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("resign candidate Release: %v: %s", err, output)
+	}
+}
+
 func omitSemanticPackage(t *testing.T, candidate, name string, cfg config.Config) {
 	t.Helper()
 	packages := filepath.Join(candidate, "dists", "stable", "main", "binary-amd64", "Packages")
@@ -981,6 +1107,26 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 	valid := makeCandidate(t)
 	if err := verifyPublicationCandidate(valid, work, cfg); err != nil {
 		t.Fatalf("valid candidate rejected: %v", err)
+	}
+	allWork := filepath.Join(t.TempDir(), "all-work")
+	if err := os.Mkdir(allWork, 0755); err != nil {
+		t.Fatal(err)
+	}
+	buildSemanticTestDebForArchitecture(t, filepath.Join(allWork, "all.deb"), "all")
+	allCandidate := filepath.Join(t.TempDir(), "all-candidate")
+	writeSemanticCandidate(t, allCandidate, allWork, cfg)
+	allPackages := filepath.Join(allCandidate, "dists", "stable", "main", "binary-amd64", "Packages")
+	allIndex, err := os.ReadFile(allPackages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allIndex = bytes.Replace(allIndex, []byte("Architecture: amd64"), []byte("Architecture: all"), 1)
+	if err = os.WriteFile(allPackages, allIndex, 0644); err != nil {
+		t.Fatal(err)
+	}
+	signSemanticCandidate(t, allCandidate, cfg)
+	if err := verifyPublicationCandidate(allCandidate, allWork, cfg); err != nil {
+		t.Fatalf("Architecture: all candidate rejected from binary-amd64: %v", err)
 	}
 	wrongKey := testCandidateSigningConfig(t)
 	wrongKeyCandidate := makeCandidate(t)
@@ -1027,6 +1173,49 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 			}
 			signSemanticCandidate(t, p, cfg)
 		}},
+		{"package-architecture-mismatch", func(t *testing.T, p string) {
+			path := filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages")
+			data, _ := os.ReadFile(path)
+			data = bytes.Replace(data, []byte("Architecture: amd64"), []byte("Architecture: arm64"), 1)
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			signSemanticCandidate(t, p, cfg)
+		}},
+		{"release-architecture-mismatch", func(t *testing.T, p string) {
+			path := filepath.Join(p, "dists", "stable", "Release")
+			data, _ := os.ReadFile(path)
+			data = bytes.Replace(data, []byte("Architectures: amd64"), []byte("Architectures: arm64"), 1)
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			resignSemanticRelease(t, p, cfg)
+		}},
+		{"declared-architecture-without-index", func(t *testing.T, p string) {
+			path := filepath.Join(p, "dists", "stable", "Release")
+			data, _ := os.ReadFile(path)
+			data = bytes.Replace(data, []byte("Architectures: amd64"), []byte("Architectures: amd64 arm64"), 1)
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			resignSemanticRelease(t, p, cfg)
+		}},
+		{"undeclared-architecture-index", func(t *testing.T, p string) {
+			source := filepath.Join(p, "dists", "stable", "main", "binary-amd64")
+			target := filepath.Join(p, "dists", "stable", "main", "binary-arm64")
+			if err := os.MkdirAll(target, 0755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"Packages", "Packages.gz"} {
+				data, err := os.ReadFile(filepath.Join(source, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(target, name), data, 0644); err != nil {
+					t.Fatalf("copy undeclared index %s: %v", name, err)
+				}
+			}
+		}},
 		{"missing-new-package", func(t *testing.T, p string) {
 			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte(""), 0644)
 		}},
@@ -1043,12 +1232,16 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 }
 
 func buildSemanticTestDeb(t *testing.T, path string) {
+	buildSemanticTestDebForArchitecture(t, path, "amd64")
+}
+
+func buildSemanticTestDebForArchitecture(t *testing.T, path, architecture string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "semantic-deb")
 	if err := os.MkdirAll(filepath.Join(root, "DEBIAN"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	control := "Package: test\nVersion: 1\nArchitecture: amd64\nMaintainer: TPA Hub test <test@example.invalid>\nDescription: semantic fixture\n"
+	control := "Package: test\nVersion: 1\nArchitecture: " + architecture + "\nMaintainer: TPA Hub test <test@example.invalid>\nDescription: semantic fixture\n"
 	if err := os.WriteFile(filepath.Join(root, "DEBIAN", "control"), []byte(control), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1085,6 +1278,38 @@ func TestRepositoryGenerationsUseActivePointer(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(s.activeRepositoryRoot(root), "Packages"))
 	if err != nil || string(data) != "generation-1" {
 		t.Fatalf("active generation data=%q err=%v", data, err)
+	}
+}
+
+func TestPublicationReconciliationEnumeratesDurableRepositoriesBeforeFilesystem(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	unpublished := "durable-unpublished"
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: unpublished, AccountID: "a", Name: unpublished, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(s.cfg.DataDir, "repos")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcilePublicationState(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(s.cfg.DataDir, "repos", unpublished)); err != nil || !info.IsDir() {
+		t.Fatalf("durable unpublished repository root was skipped: info=%v err=%v", info, err)
+	}
+
+	published := "durable-published"
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: published, AccountID: "a", Name: published, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetActiveGeneration(ctx, published, "missing-generation", "now"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(s.cfg.DataDir, "repos", published)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcilePublicationState(); err == nil {
+		t.Fatal("missing durable publication generation was skipped with absent repository root")
 	}
 }
 

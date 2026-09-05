@@ -165,9 +165,10 @@ func taxCode(class payments.TaxClass) string {
 }
 
 type webhookEnvelope struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Data struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Created int64  `json:"created"`
+	Data    struct {
 		Object struct {
 			ID            string            `json:"id"`
 			PaymentStatus string            `json:"payment_status"`
@@ -202,7 +203,11 @@ func ParseWebhook(body []byte, signature, secret string, now time.Time) (commerc
 	case "checkout.session.expired":
 		eventType = commerce.PaymentExpired
 	}
-	return commerce.PaymentEvent{ProviderEventID: envelope.ID, OperationID: operationID, Type: eventType, ProviderReference: envelope.Data.Object.ID, AmountMinor: envelope.Data.Object.AmountTotal, Currency: strings.ToUpper(envelope.Data.Object.Currency), OccurredAt: now.UTC(), Metadata: envelope.Data.Object.Metadata}, nil
+	occurredAt := now.UTC()
+	if envelope.Created > 0 {
+		occurredAt = time.Unix(envelope.Created, 0).UTC()
+	}
+	return commerce.PaymentEvent{ProviderEventID: envelope.ID, OperationID: operationID, Type: eventType, ProviderReference: envelope.Data.Object.ID, AmountMinor: envelope.Data.Object.AmountTotal, Currency: strings.ToUpper(envelope.Data.Object.Currency), OccurredAt: occurredAt, Metadata: envelope.Data.Object.Metadata}, nil
 }
 
 func VerifySignature(header string, body []byte, secret string, now time.Time) error {
