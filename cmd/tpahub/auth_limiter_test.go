@@ -22,22 +22,24 @@ func TestAuthLimiterIsBoundedAndExpires(t *testing.T) {
 
 func TestOperatorStaticAssetAndHeaders(t *testing.T) {
 	s, _ := testServer(t)
-	r := httptest.NewRequest("GET", "/static/ops-auth.js", nil)
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != 200 || w.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
-		t.Fatalf("asset status=%d content-type=%q", w.Code, w.Header().Get("Content-Type"))
-	}
-	expected, err := websiteFiles.ReadFile("static/ops-auth.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(w.Body.Bytes()) != string(expected) {
-		t.Fatal("served auth asset differs from embedded asset")
+	for _, asset := range []string{"ops-auth.js", "ops.js"} {
+		r := httptest.NewRequest("GET", "/static/"+asset, nil)
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		if w.Code != 200 || w.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+			t.Fatalf("%s status=%d content-type=%q", asset, w.Code, w.Header().Get("Content-Type"))
+		}
+		expected, err := websiteFiles.ReadFile("static/" + asset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(w.Body.Bytes()) != string(expected) {
+			t.Fatalf("served %s differs from embedded asset", asset)
+		}
 	}
 	for _, path := range []string{"/ops", "/ops/login", "/ops/recover"} {
-		r = httptest.NewRequest("GET", path, nil)
-		w = httptest.NewRecorder()
+		r := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("%s missing security headers", path)

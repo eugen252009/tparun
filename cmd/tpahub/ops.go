@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,10 +12,35 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
+type resourceLimit struct {
+	Bytes int64
+	State string
+}
+
+const (
+	resourceLimitFinite = "finite"
+	resourceLimitNone   = "none"
+	resourceLimitMixed  = "mixed"
+)
+
+func mergeResourceLimit(total *resourceLimit, next resourceLimit) {
+	if total.State == "" {
+		*total = next
+		return
+	}
+	if total.State != next.State || total.State != resourceLimitFinite {
+		total.State = resourceLimitMixed
+		return
+	}
+	total.Bytes += next.Bytes
+}
+
 type opsAccountRow struct {
-	ID, Class                               string
-	Repositories                            int
-	StorageBytes, StorageLimit, EgressBytes, EgressLimit int64
+	ID, Class                 string
+	Repositories              int
+	StorageBytes, EgressBytes int64
+	StorageLimit, EgressLimit resourceLimit
+	EgressPeriod              string
 }
 type opsRepositoryRow struct {
 	ID, Name, AccountID, Class string
@@ -24,7 +50,8 @@ type opsPageData struct {
 	GeneratedAt, Scope, BillingEnvironment                                                  string
 	TotalAccounts, ProductionAccounts, TestAccounts, InternalAccounts, UnclassifiedAccounts int
 	TotalRepositories, ProductionRepositories                                               int
-	StorageBytes, StorageLimit, EgressBytes, EgressLimit, Attention                         int64
+	StorageBytes, EgressBytes, Attention                                                    int64
+	StorageLimit, EgressLimit                                                               resourceLimit
 	Pending, Paid, Failed, Expired, Reconciliation                                          int
 	Accounts                                                                                []opsAccountRow
 	Repositories                                                                            []opsRepositoryRow
@@ -100,18 +127,29 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		}
 		page.TotalRepositories += account.RepositoryCount
 		page.StorageBytes += usage.StoredBytes
-		egressUsed, egressLimit, egressErr := s.accountEgress(account.ID, now)
-		if egressErr != nil {
-			bad(w, 500, "dashboard egress unavailable")
+		storageLimit := resourceLimit{State: resourceLimitNone}
+		if grant, grantErr := s.grantService().GetGrant(ctx, commerce.CustomerID(account.ID), tpahubproduct.ProductID, CapabilityRepositoryPublish, now); grantErr == nil {
+			storageLimit = resourceLimit{Bytes: grant.Limits.StorageBytes, State: resourceLimitFinite}
+		} else if !errors.Is(grantErr, commerce.ErrGrantNotFound) && !errors.Is(grantErr, commerce.ErrGrantInactive) {
+			bad(w, 500, "dashboard storage unavailable")
 			return
 		}
-		page.EgressBytes += egressUsed
-		page.EgressLimit += egressLimit
-		row := opsAccountRow{ID: account.ID, Class: account.AccountClass, Repositories: account.RepositoryCount, StorageBytes: usage.StoredBytes, EgressBytes: egressUsed, EgressLimit: egressLimit}
-		if grant, grantErr := s.grantService().GetGrant(ctx, commerce.CustomerID(account.ID), tpahubproduct.ProductID, CapabilityRepositoryPublish, now); grantErr == nil {
-			row.StorageLimit = grant.Limits.StorageBytes
-			page.StorageLimit += grant.Limits.StorageBytes
+		mergeResourceLimit(&page.StorageLimit, storageLimit)
+		egressUsed, egressBytes, egressErr := s.accountEgress(account.ID, now)
+		egressLimit := resourceLimit{State: resourceLimitNone}
+		egressPeriod := "no applicable entitlement; trailing 30-day usage"
+		if egressErr == nil {
+			egressLimit = resourceLimit{Bytes: egressBytes, State: resourceLimitFinite}
+			egressPeriod = "current entitlement period"
+		} else if !errors.Is(egressErr, commerce.ErrGrantNotFound) && !errors.Is(egressErr, commerce.ErrGrantInactive) {
+			bad(w, 500, "dashboard egress unavailable")
+			return
+		} else {
+			egressUsed = account.EgressBytes
 		}
+		page.EgressBytes += egressUsed
+		mergeResourceLimit(&page.EgressLimit, egressLimit)
+		row := opsAccountRow{ID: account.ID, Class: account.AccountClass, Repositories: account.RepositoryCount, StorageBytes: usage.StoredBytes, StorageLimit: storageLimit, EgressBytes: egressUsed, EgressLimit: egressLimit, EgressPeriod: egressPeriod}
 		page.Accounts = append(page.Accounts, row)
 	}
 	for _, repository := range repositories {

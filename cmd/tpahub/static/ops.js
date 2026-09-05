@@ -5,7 +5,8 @@
   };
   const formatBytes = value => {
     const n = toBigInt(value);
-    if (n === null || n < 0n) return String(value) + ' B';
+    if (n === null) return null;
+    if (n < 0n) return n.toString() + ' B';
     let unit = 0;
     let divisor = 1n;
     while (unit < units.length - 1 && n >= divisor * 1000n) { divisor *= 1000n; unit++; }
@@ -26,9 +27,18 @@
   };
   document.querySelectorAll('.resource-usage').forEach(e => {
     const used = e.dataset.usedBytes, limit = e.dataset.limitBytes;
-    e.textContent = formatBytes(used) + ' / ' + formatBytes(limit);
+    const usedText = formatBytes(used);
+    if (usedText === null) return;
+    if (e.dataset.limitState === 'none' || e.dataset.limitState === 'mixed') {
+      e.textContent = usedText + ' / no applicable limit';
+      return;
+    }
+    if (e.dataset.limitState !== 'finite') return;
+    const limitText = formatBytes(limit);
+    if (limitText === null) return;
+    e.textContent = usedText + ' / ' + limitText;
     const percent = formatPercent(used, limit);
     if (percent) e.textContent += ' (' + percent + ')';
   });
-  document.querySelectorAll('.js-bytes').forEach(e => { e.textContent = formatBytes(e.dataset.bytes); });
+  document.querySelectorAll('.js-bytes').forEach(e => { const text = formatBytes(e.dataset.bytes); if (text !== null) e.textContent = text; });
 })();

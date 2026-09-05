@@ -15,15 +15,41 @@ import (
 func TestOpsResourceValuesRemainStructuredForClientFormatting(t *testing.T) {
 	s, _ := testServer(t)
 	token, err := s.newOperatorSession()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/ops?scope=all", nil)
 	r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token})
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusOK { t.Fatalf("dashboard status=%d", w.Code) }
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d", w.Code)
+	}
 	body := w.Body.String()
 	if !strings.Contains(body, `data-used-bytes="0"`) || !strings.Contains(body, `data-limit-bytes="5000000"`) {
 		t.Fatalf("dashboard omitted raw resource values: %s", body)
+	}
+}
+
+func TestOpsMissingLimitsRenderWithoutFailing(t *testing.T) {
+	s, _ := testServer(t)
+	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "no-grant", Email: "no-grant@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.newOperatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/ops?scope=all", nil)
+	r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `data-limit-state="none"`) || !strings.Contains(body, "no applicable limit") {
+		t.Fatalf("missing limit state not represented: %s", body)
 	}
 }
 
@@ -52,9 +78,19 @@ func TestOpsRequiresPasskeySession(t *testing.T) {
 }
 
 func TestOperatorSessionDoesNotSurviveStateReconstruction(t *testing.T) {
-	s, _ := testServer(t); token, err := s.newOperatorSession(); if err != nil { t.Fatal(err) }
-	restarted := &server{cfg: s.cfg, db: s.db}; r := httptest.NewRequest(http.MethodGet, "/ops", nil); r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token}); w := httptest.NewRecorder(); restarted.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusSeeOther { t.Fatalf("reconstructed session status=%d", w.Code) }
+	s, _ := testServer(t)
+	token, err := s.newOperatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := &server{cfg: s.cfg, db: s.db}
+	r := httptest.NewRequest(http.MethodGet, "/ops", nil)
+	r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	restarted.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("reconstructed session status=%d", w.Code)
+	}
 }
 
 func TestRecoveryRejectsQuerySecrets(t *testing.T) {
