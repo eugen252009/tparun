@@ -1790,6 +1790,11 @@ func (s *Store) RepositoryEgress(c context.Context, repositoryID, period string)
 	return total, e
 }
 func (s *Store) CreateAccount(c context.Context, a Account, grants ...commerce.Grant) error {
+	for _, grant := range grants {
+		if strings.TrimSpace(string(grant.ProductID)) == "" {
+			return fmt.Errorf("grant product ID is empty")
+		}
+	}
 	tx, e := s.db.BeginTx(c, nil)
 	if e != nil {
 		return e
