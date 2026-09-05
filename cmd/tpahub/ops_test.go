@@ -99,8 +99,8 @@ func TestOpsMissingLimitsRenderWithoutFailing(t *testing.T) {
 		t.Fatalf("dashboard status=%d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `data-limit-state="none"`) || !strings.Contains(body, "no applicable limit") {
-		t.Fatalf("missing limit state not represented: %s", body)
+	if !strings.Contains(body, `data-limit-state="finite" data-limit-bytes="5000000"`) || !strings.Contains(body, `data-limit-state="finite" data-limit-bytes="12000000000"`) {
+		t.Fatalf("Nano floor state not represented: %s", body)
 	}
 }
 

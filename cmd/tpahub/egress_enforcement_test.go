@@ -38,7 +38,7 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	s, h := testServer(t)
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "custom", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: 1000}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "custom", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: tpahubproduct.NanoEgressBytes}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	id := "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
@@ -52,7 +52,7 @@ func TestEgressEnforcementUsesGrantLimit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "package.deb"), make([]byte, 10), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", 1000, "now"); err != nil {
+	if err := s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", tpahubproduct.NanoEgressBytes, "now"); err != nil {
 		t.Fatal(err)
 	}
 	response, err := http.Get(h.URL + "/r/" + id + "/package.deb")

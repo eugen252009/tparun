@@ -130,7 +130,7 @@ func (s *server) egressPeriod(accountID string, now time.Time) (string, string, 
 	}
 	return start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), nil
 }
-func egressLimited(used, limit int64) bool { return limit > 0 && used >= limit }
+func egressLimited(used, limit int64) bool { return limit >= 0 && used >= limit }
 
 func egressCapacityMessage(used, limit int64) string {
 	if used == limit {

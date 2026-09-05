@@ -642,10 +642,14 @@ func (s *Store) BeginEgressDelivery(c context.Context, id, repositoryID, created
 	return err
 }
 
+// UnlimitedEgressLimit is used by callers when no applicable entitlement
+// exists. Zero remains a finite allowance and therefore reserves zero bytes.
+const UnlimitedEgressLimit int64 = -1
+
 func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, periodStart, periodEnd string, requested, limit int64, createdAt string) (bool, error) {
 	periodStart, start, startErr := normalizeEgressInstant(periodStart)
 	periodEnd, end, endErr := normalizeEgressInstant(periodEnd)
-	if requested < 0 || limit < 0 || startErr != nil || endErr != nil || !end.After(start) {
+	if requested < 0 || limit < UnlimitedEgressLimit || startErr != nil || endErr != nil || !end.After(start) {
 		return false, fmt.Errorf("invalid egress delivery reservation")
 	}
 	tx, err := s.db.BeginTx(c, nil)
@@ -660,7 +664,7 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 	var used, reserved int64
 	// Even an unlimited or denied grant needs the marker's period persisted so
 	// an uncertain settlement cannot later be assigned to an arbitrary date.
-	if limit > 0 {
+	if limit >= 0 {
 		if err = tx.QueryRowContext(c, `SELECT COALESCE(SUM(d.egress_bytes),0) FROM repository_egress_daily d JOIN repositories r ON r.id=d.repository_id WHERE r.account_id=? AND ((length(d.usage_date)=10 AND d.usage_date>=substr(?,1,10) AND (d.usage_date<substr(?,1,10) OR (d.usage_date=substr(?,1,10) AND substr(?,12)<>'00:00:00.000000000Z'))) OR (length(d.usage_date)<>10 AND d.usage_date>=? AND d.usage_date<?))`, accountID, periodStart, periodEnd, periodEnd, periodEnd, periodStart, periodEnd).Scan(&used); err != nil {
 			return false, err
 		}
@@ -668,11 +672,11 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 			return false, err
 		}
 	}
-	if limit > 0 && (used < 0 || reserved < 0 || used > limit || reserved > limit-used) {
+	if limit >= 0 && (used < 0 || reserved < 0 || used > limit || reserved > limit-used) {
 		reserved = limit - used
 	}
 	remaining := int64(0)
-	if limit > 0 {
+	if limit >= 0 {
 		remaining = limit - used - reserved
 	}
 	if remaining < 0 {
@@ -696,7 +700,7 @@ func (s *Store) ReserveEgressDelivery(c context.Context, id, repositoryID, perio
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
-	return limit > 0 && reservation < requested, nil
+	return limit >= 0 && reservation < requested, nil
 }
 
 func (s *Store) CompleteEgressDelivery(c context.Context, id, repositoryID, usageDate string, bytes int64, updatedAt string) error {

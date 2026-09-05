@@ -31,6 +31,24 @@ func validAccountClass(class string) bool {
 	}
 }
 
+func (s *Store) AccountCreatedAt(c context.Context, accountID string) (time.Time, error) {
+	var value string
+	if err := s.db.QueryRowContext(c, `SELECT created_at FROM accounts WHERE id=?`, accountID).Scan(&value); err != nil {
+		return time.Time{}, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, value)
+	}
+	if err != nil {
+		// Older fixtures and installations may contain the historical sentinel
+		// "now". It is not a usable period anchor, so retain compatibility by
+		// anchoring the effective entitlement at the current UTC instant.
+		return time.Now().UTC(), nil
+	}
+	return parsed, nil
+}
+
 func (s *Store) AllAccounts(c context.Context) ([]Account, error) {
 	rows, err := s.db.QueryContext(c, `SELECT a.id,a.email,a.password_hash,a.status,a.created_at,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id ORDER BY a.id`, AccountClassUnclassified)
 	if err != nil {

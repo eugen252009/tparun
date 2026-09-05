@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -76,11 +77,54 @@ func grantDenied(err error) bool {
 	return errors.Is(err, commerce.ErrGrantNotFound) || errors.Is(err, commerce.ErrGrantDisabled) || errors.Is(err, commerce.ErrGrantInactive)
 }
 
+type nanoFloorGrantService struct{ server *server }
+
+func (g nanoFloorGrantService) GetGrant(ctx context.Context, customer commerce.CustomerID, product commerce.ProductID, capability commerce.CapabilityID, at time.Time) (commerce.Grant, error) {
+	grant, err := g.server.db.GetGrant(ctx, customer, product, capability, at)
+	if product != tpahubproduct.ProductID || !tpahubproduct.ValidCapability(capability) {
+		return grant, err
+	}
+	created, createdErr := g.server.db.AccountCreatedAt(ctx, string(customer))
+	if createdErr != nil {
+		return commerce.Grant{}, createdErr
+	}
+	var floor commerce.Grant
+	for _, candidate := range tpahubproduct.DefaultGrants(created) {
+		if candidate.CapabilityID == capability {
+			floor = candidate
+			floor.CustomerID = customer
+			break
+		}
+	}
+	if floor.CapabilityID == "" {
+		return grant, err
+	}
+	if err != nil {
+		if errors.Is(err, commerce.ErrGrantNotFound) || errors.Is(err, commerce.ErrGrantDisabled) || errors.Is(err, commerce.ErrGrantInactive) {
+			return floor, nil
+		}
+		return commerce.Grant{}, err
+	}
+	// Negative persisted limits are corruption, not a below-floor entitlement;
+	// leave them visible so resource-specific callers fail closed.
+	if grant.Limits.StorageBytes < 0 || grant.Limits.EgressBytes < 0 {
+		return grant, nil
+	}
+	if grant.Limits.StorageBytes >= floor.Limits.StorageBytes && grant.Limits.EgressBytes >= floor.Limits.EgressBytes {
+		return grant, nil
+	}
+	grant.Limits.StorageBytes = max(grant.Limits.StorageBytes, floor.Limits.StorageBytes)
+	grant.Limits.EgressBytes = max(grant.Limits.EgressBytes, floor.Limits.EgressBytes)
+	grant.Source, grant.OfferID, grant.Period = "effective", floor.OfferID, floor.Period
+	grant.ValidFrom, grant.ValidUntil, grant.Effective = floor.ValidFrom, nil, nil
+	return grant, nil
+}
+
 func (s *server) grantService() commerce.GrantService {
 	if s.grants != nil {
 		return s.grants
 	}
-	return s.db
+	return nanoFloorGrantService{server: s}
 }
 
 func effectiveEntitlementPeriod(entitlement store.AccountEntitlement, now time.Time) (EntitlementPeriod, error) {

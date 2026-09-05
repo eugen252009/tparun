@@ -626,6 +626,9 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	}
 	if used, limit, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
 		limited = grantDenied(err)
+		if limited {
+			egressLimit = store.UnlimitedEgressLimit
+		} // -1 is the explicit no-applicable-limit sentinel for reservation.
 		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
 		if !limited {
 			bad(w, http.StatusServiceUnavailable, "egress authority unavailable")

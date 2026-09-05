@@ -218,7 +218,7 @@ func TestEgressReservationPersistsPeriodWithoutAllowance(t *testing.T) {
 	if err := s.BeginEgressDelivery(ctx, "unlimited-delivery", "egress-repo", "2026-09-04T10:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if limited, err := s.ReserveEgressDelivery(ctx, "unlimited-delivery", "egress-repo", "2026-09-01", "2026-10-01", 100, 0, "now"); err != nil || limited {
+	if limited, err := s.ReserveEgressDelivery(ctx, "unlimited-delivery", "egress-repo", "2026-09-01", "2026-10-01", 100, UnlimitedEgressLimit, "now"); err != nil || limited {
 		t.Fatalf("unlimited reservation limited=%v err=%v", limited, err)
 	}
 	var start, end string
@@ -227,6 +227,16 @@ func TestEgressReservationPersistsPeriodWithoutAllowance(t *testing.T) {
 	}
 	if start != "2026-09-01T00:00:00.000000000Z" || end != "2026-10-01T00:00:00.000000000Z" {
 		t.Fatalf("period was not persisted: %s %s", start, end)
+	}
+	if err := s.BeginEgressDelivery(ctx, "zero-delivery", "egress-repo", "2026-09-04T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if limited, err := s.ReserveEgressDelivery(ctx, "zero-delivery", "egress-repo", "2026-09-01", "2026-10-01", 100, 0, "now"); err != nil || !limited {
+		t.Fatalf("zero reservation limited=%v err=%v", limited, err)
+	}
+	var reserved int64
+	if err := s.db.QueryRow(`SELECT reserved_bytes FROM egress_accounting_uncertain WHERE id='zero-delivery'`).Scan(&reserved); err != nil || reserved != 0 {
+		t.Fatalf("zero reservation bytes=%d err=%v", reserved, err)
 	}
 }
 
