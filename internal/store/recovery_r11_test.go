@@ -412,6 +412,61 @@ func TestFinalizedCommercialAuthorityRemainsImmutableR11(t *testing.T) {
 	}
 }
 
+func TestIncompleteAuthorityProviderEventIsAtomicAtFormerRecoveryBoundary(t *testing.T) {
+	dir := t.TempDir()
+	s, p := r11PurchaseFixture(t, dir, "atomic-boundary", "atomic-boundary-account", "test")
+	r11DropSnapshotMutationTriggers(t, s)
+	if _, err := s.db.Exec(`DELETE FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	providerEventFault = func(stage string) error {
+		if stage == "after-reconciliation" {
+			return errors.New("injected former-boundary failure")
+		}
+		return nil
+	}
+	defer func() { providerEventFault = nil }()
+	event := commerce.PaymentEvent{ProviderEventID: "atomic-boundary-event", OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: "atomic-boundary-reference", AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: time.Date(2040, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if err := s.ApplyProviderPaymentEvent(context.Background(), p.Provider, p.BillingEnvironment, event); err == nil {
+		t.Fatal("injected transaction failure was ignored")
+	}
+	stored, err := s.Purchase(context.Background(), p.ID)
+	if err != nil || stored.Status != "pending" || stored.ProviderReference != "" || stored.ProviderState == "provider_success_unreconciled" {
+		t.Fatalf("partial state committed: purchase=%+v err=%v", stored, err)
+	}
+	var events int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM billing_provider_events WHERE purchase_id=?`, p.ID).Scan(&events); err != nil || events != 0 {
+		t.Fatalf("partial provider evidence events=%d err=%v", events, err)
+	}
+	providerEventFault = nil
+	if err = s.ApplyProviderPaymentEvent(context.Background(), p.Provider, p.BillingEnvironment, event); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.Purchase(context.Background(), p.ID)
+	if err != nil || stored.Status != "reconciliation_required" || stored.ProviderReference != event.ProviderReference || stored.ProviderState != "provider_success_unreconciled" || stored.ReconciliationReason == "" {
+		t.Fatalf("replayed reconciliation state=%+v err=%v", stored, err)
+	}
+	var evidencePurchase, evidenceReference, evidenceType, evidenceStatus string
+	if err = s.db.QueryRow(`SELECT purchase_id,provider_reference,event_type,status FROM billing_provider_events WHERE provider_event_id=?`, event.ProviderEventID).Scan(&evidencePurchase, &evidenceReference, &evidenceType, &evidenceStatus); err != nil || evidencePurchase != p.ID || evidenceReference != event.ProviderReference || evidenceType != string(event.Type) || evidenceStatus != "reconciliation_required" {
+		t.Fatalf("durable evidence purchase=%q reference=%q type=%q status=%q err=%v", evidencePurchase, evidenceReference, evidenceType, evidenceStatus, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.ApplyProviderPaymentEvent(context.Background(), p.Provider, p.BillingEnvironment, event); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.Purchase(context.Background(), p.ID)
+	if err != nil || stored.Status != "reconciliation_required" || stored.ProviderState != "provider_success_unreconciled" {
+		t.Fatalf("restart replay state=%+v err=%v", stored, err)
+	}
+}
+
 func TestProviderEvidenceColumnsExistOnUpgradedDatabase(t *testing.T) {
 	s, p := r11PurchaseFixture(t, t.TempDir(), "evidence-columns", "evidence-columns-account", "test")
 	defer s.Close()

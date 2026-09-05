@@ -194,18 +194,10 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if state, stateErr := s.db.PurchasePaymentState(r.Context(), paymentEvent.OperationID); stateErr == nil && state.ProviderReference == "" {
-		// The event proves provider linkage only. Recovery finalizes the exact
-		// commercial terms persisted locally before the provider side effect.
-		if recoverErr := s.db.RecoverPurchaseCheckout(r.Context(), paymentEvent.OperationID, "stripe", string(payments.EnvironmentTest), paymentEvent.ProviderReference, s.currentTime().UTC().Format(time.RFC3339Nano)); recoverErr != nil {
-			bad(w, http.StatusBadRequest, recoverErr.Error())
-			return
-		}
-	}
-	// Provider events prove payment state; the store activates the immutable
-	// commercial validity finalized with the checkout.
-	paymentService := commerce.PaymentService{Repository: s.db}
-	if err = paymentService.Process(r.Context(), "stripe", string(payments.EnvironmentTest), paymentEvent, time.Time{}, time.Time{}); err != nil {
+	// Correlation, recovery, authority validation, and provider evidence are
+	// applied by the store in one transaction. Provider event times remain
+	// evidence only; local purchased terms remain authoritative.
+	if err = s.db.ApplyProviderPaymentEvent(r.Context(), "stripe", string(payments.EnvironmentTest), paymentEvent); err != nil {
 		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -33,7 +33,15 @@ type Store struct{ db *sql.DB }
 
 var ErrNotFound = sql.ErrNoRows
 var migrationFault func(string) error
+var providerEventFault func(string) error
 var migrationNow = time.Now
+
+func providerEventCheckpoint(stage string) error {
+	if providerEventFault != nil {
+		return providerEventFault(stage)
+	}
+	return nil
+}
 
 func migrationCheckpoint(stage string) error {
 	if migrationFault != nil {
@@ -1281,6 +1289,23 @@ func markPurchaseReconciliationRequired(c context.Context, tx *sql.Tx, purchase 
 	return nil
 }
 
+// ApplyProviderPaymentEvent correlates and applies a verified provider event in
+// one transaction. In particular, operation-ID webhook recovery must not commit
+// reconciliation before its provider event evidence.
+func (s *Store) ApplyProviderPaymentEvent(c context.Context, provider, environment string, event commerce.PaymentEvent) error {
+	if strings.TrimSpace(provider) == "" || strings.TrimSpace(environment) == "" || strings.TrimSpace(event.OperationID) == "" || strings.TrimSpace(event.ProviderEventID) == "" || strings.TrimSpace(event.ProviderReference) == "" {
+		return fmt.Errorf("provider event correlation is incomplete")
+	}
+	kind := map[commerce.PaymentEventType]string{commerce.PaymentSucceeded: "success", commerce.PaymentFailed: "failed", commerce.PaymentExpired: "expired"}[event.Type]
+	if kind == "" {
+		return fmt.Errorf("unsupported-payment-event")
+	}
+	// The store transaction below reloads the purchase and verifies amount,
+	// currency, provider, environment, and reference against that same view;
+	// do not perform a preflight read in a separate transaction.
+	return s.applyBillingProviderEvent(c, billingProviderEvent{Provider: provider, Environment: environment, ProviderEventID: event.ProviderEventID, EventType: string(event.Type), ReceivedAt: event.OccurredAt.UTC().Format(time.RFC3339Nano)}, event.OperationID, event.ProviderReference, kind, event.AmountMinor, event.Currency, event.OccurredAt.UTC().Format(time.RFC3339Nano), "", "")
+}
+
 func (s *Store) ApplyPaymentTransition(c context.Context, transition commerce.PaymentTransition) error {
 	state, err := s.PurchasePaymentState(c, transition.Event.OperationID)
 	if err != nil {
@@ -1545,6 +1570,32 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 	}
 	if p.Provider != event.Provider || p.BillingEnvironment != event.Environment || (p.ProviderReference != "" && p.ProviderReference != providerReference) {
 		return fmt.Errorf("provider-reference-mismatch")
+	}
+	if e = providerEventCheckpoint("after-event-insert"); e != nil {
+		return e
+	}
+	if p.ProviderReference == "" && p.Status != "reconciliation_required" {
+		_, authorityErr := validatePurchaseCommercialAuthority(c, tx, p, false)
+		if authorityErr != nil {
+			if e = markPurchaseReconciliationRequired(c, tx, p, providerReference, event.ReceivedAt, authorityErr); e != nil {
+				return e
+			}
+			if e = providerEventCheckpoint("after-reconciliation"); e != nil {
+				return e
+			}
+			providerState := "provider_" + kind + "_unreconciled"
+			if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET provider_state=?,updated_at=? WHERE id=? AND status='reconciliation_required'`, providerState, event.ReceivedAt, purchaseID); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(c, `UPDATE billing_provider_events SET processed_at=?,status='reconciliation_required',error=? WHERE provider=? AND environment=? AND provider_event_id=?`, event.ReceivedAt, authorityErr.Error(), event.Provider, event.Environment, event.ProviderEventID); e != nil {
+				return e
+			}
+			return tx.Commit()
+		}
+		if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',snapshot_finalized=1,provider_state='checkout_created',reconciliation_reason='',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND provider_reference='' AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, providerReference, event.ReceivedAt, purchaseID, event.Provider, event.Environment); e != nil {
+			return e
+		}
+		p.ProviderReference = providerReference
 	}
 	if p.Status == "reconciliation_required" {
 		providerState := "provider_" + kind + "_unreconciled"

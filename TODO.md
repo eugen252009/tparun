@@ -213,6 +213,18 @@ DB with duplicates fails explicitly without changing either purchase. Direct
 evidence is in `internal/store/recovery_r11_test.go`, updated corruption tests,
 and `docs/payment-checkout-recovery.md`. Independent re-audit remains required.
 
+# P0-R12 — Atomic Incomplete-Authority Provider Evidence
+
+The production operation-ID webhook now sends provider correlation, complete
+commercial-authority validation, reconciliation, and provider-event evidence
+through one store transaction. Incomplete authority therefore commits
+`reconciliation_required`, provider linkage, immutable failure reason,
+`provider_success_unreconciled`, and event identity/type together, while
+remaining zero-access and checkout-blocked. A test-only store checkpoint proves
+rollback at the former recovery/payment transaction boundary and deterministic
+restart replay. Direct evidence is in
+`internal/store/recovery_r11_test.go`; independent re-audit remains required.
+
 # P1 — Architecture Hardening
 
 ## P1.1 — Remove TPA Identity from Shared Commerce

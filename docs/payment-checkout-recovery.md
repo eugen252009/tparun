@@ -28,12 +28,12 @@ snapshot triggers prevent later changes.
 If a historical/incomplete purchase lacks a valid durable interval or complete
 activatable snapshot authority, the provider reference is retained and the
 purchase enters `reconciliation_required` without being falsely finalized.
-Provider events record the purchase ID, provider/environment, provider
-reference, event ID/type, positive payment state, and the specific authority
-failure. No grant instance or compatibility projection is created, and new
-checkout creation for the same account/product/provider environment is blocked.
-Positive payment evidence wins over later failure or expiry notifications and
-survives restart.
+The operation-ID webhook persists the purchase state, provider correlation,
+provider event ID/type, positive payment state, and specific authority failure
+in the same SQLite transaction. No grant instance or compatibility projection
+is created, and new checkout creation for the same account/product/provider
+environment is blocked. Positive payment evidence wins over later failure or
+expiry notifications and survives restart.
 
 Provider references are unique for each provider/environment pair when non-empty.
 Database opening explicitly rejects historical duplicate non-empty references;
