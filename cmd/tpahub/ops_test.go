@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 func TestOpsResourceValuesRemainStructuredForClientFormatting(t *testing.T) {
@@ -28,6 +30,55 @@ func TestOpsResourceValuesRemainStructuredForClientFormatting(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `data-used-bytes="0"`) || !strings.Contains(body, `data-limit-bytes="5000000"`) {
 		t.Fatalf("dashboard omitted raw resource values: %s", body)
+	}
+}
+
+func TestOpsExplicitZeroEgressGrantRendersFiniteZero(t *testing.T) {
+	s, _ := testServer(t)
+	now := s.currentTime()
+	s.grants = grantServiceFunc(func(_ context.Context, customer commerce.CustomerID, product commerce.ProductID, capability commerce.CapabilityID, _ time.Time) (commerce.Grant, error) {
+		if product != tpahubproduct.ProductID || customer != "a" {
+			return commerce.Grant{}, commerce.ErrGrantNotFound
+		}
+		limit := int64(5_000_000)
+		if capability == CapabilityRepositoryDownload {
+			limit = 0
+		}
+		return commerce.Grant{CustomerID: customer, ProductID: product, CapabilityID: capability, Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: limit, EgressBytes: limit}}, nil
+	})
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: "zero-egress-repo", AccountID: "a", Name: "zero-egress", Visibility: "public", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.AddRepositoryEgressDaily(context.Background(), "zero-egress-repo", now.Format("2006-01-02"), 100, "now"); err != nil {
+		t.Fatal(err)
+	}
+	if used, limit, err := s.accountEgress("a", now); err != nil || used != 100 || limit != 0 {
+		t.Fatalf("zero egress result used=%d limit=%d err=%v", used, limit, err)
+	}
+	token, err := s.newOperatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/ops?scope=all", nil)
+	r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `data-limit-state="finite" data-limit-bytes="0"`) || strings.Contains(body, "no applicable entitlement") {
+		t.Fatalf("zero egress was not finite: %s", body)
+	}
+}
+
+func TestAccountEgressRejectsNegativeGrant(t *testing.T) {
+	s, _ := testServer(t)
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return commerce.Grant{Enabled: true, ValidFrom: s.currentTime().Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: -1}}, nil
+	})
+	if _, _, err := s.accountEgress("a", s.currentTime()); err == nil {
+		t.Fatal("negative egress grant accepted")
 	}
 }
 

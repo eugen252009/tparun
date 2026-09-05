@@ -104,8 +104,8 @@ func (s *server) accountEgress(accountID string, now time.Time) (int64, int64, e
 	if err != nil {
 		return 0, 0, err
 	}
-	if grant.Limits.EgressBytes <= 0 {
-		return 0, 0, fmt.Errorf("egress grant has no allowance")
+	if grant.Limits.EgressBytes < 0 {
+		return 0, 0, fmt.Errorf("egress grant has invalid negative allowance")
 	}
 	start, end, err := grant.PeriodAt(now)
 	if err != nil {
