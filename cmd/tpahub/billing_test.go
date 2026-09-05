@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 func TestStorageHighWaterTracksRiseFallAndNewPeriod(t *testing.T) {
@@ -67,7 +68,7 @@ func TestProRatingBoundariesAndNanoFixedPlan(t *testing.T) {
 
 func TestMockBillingPreviewIsDeterministicAndIdempotent(t *testing.T) {
 	s, _ := testServer(t)
-	snapshot := BillingUsageSnapshot{AccountID: "a", PlanCode: "pro", Period: "2026-08", StorageHighWaterBytes: 1_210_000_000, MonthlyEgressBytes: 53_000_000_000}
+	snapshot := BillingUsageSnapshot{AccountID: "a", ProductID: string(tpahubproduct.ProductID), PlanCode: "pro", Period: "2026-08", StorageHighWaterBytes: 1_210_000_000, MonthlyEgressBytes: 53_000_000_000}
 	provider := s.billingProvider()
 	first, err := provider.Preview(context.Background(), snapshot)
 	if err != nil {
@@ -83,7 +84,7 @@ func TestMockBillingPreviewIsDeterministicAndIdempotent(t *testing.T) {
 	if first.TotalAmountMinor != 1400 || len(first.LineItems) != 3 || first.RateCardID != "mock-rate-card-v1" || !first.IsVirtual {
 		t.Fatalf("unexpected Pro monetary preview: %+v", first)
 	}
-	nano, err := (MockBillingProvider{Store: s.db, RateCard: mockRateCardV1}).Preview(context.Background(), BillingUsageSnapshot{AccountID: "a", PlanCode: "nano", Period: "2026-08", StorageHighWaterBytes: 4_000_000, MonthlyEgressBytes: 800_000_000})
+	nano, err := (MockBillingProvider{Store: s.db, RateCard: mockRateCardV1}).Preview(context.Background(), BillingUsageSnapshot{AccountID: "a", ProductID: string(tpahubproduct.ProductID), PlanCode: "nano", Period: "2026-08", StorageHighWaterBytes: 4_000_000, MonthlyEgressBytes: 800_000_000})
 	if err != nil || nano.TotalAmountMinor != 440 || nano.StorageBlocks != 0 {
 		t.Fatalf("unexpected Nano monetary preview: %+v, %v", nano, err)
 	}
