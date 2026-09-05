@@ -4,14 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
 )
 
 func TestOpsRequiresPasskeySession(t *testing.T) {
 	s, _ := testServer(t)
-	s.cfg.OperatorToken = "legacy-token"
 	request := httptest.NewRequest(http.MethodGet, "/ops", nil)
 	response := httptest.NewRecorder()
 	s.routes().ServeHTTP(response, request)
@@ -31,6 +32,69 @@ func TestOpsRequiresPasskeySession(t *testing.T) {
 	s.routes().ServeHTTP(response, request)
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("legacy token dashboard status = %d", response.Code)
+	}
+}
+
+func TestOperatorSessionDoesNotSurviveStateReconstruction(t *testing.T) {
+	s, _ := testServer(t); token, err := s.newOperatorSession(); if err != nil { t.Fatal(err) }
+	restarted := &server{cfg: s.cfg, db: s.db}; r := httptest.NewRequest(http.MethodGet, "/ops", nil); r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token}); w := httptest.NewRecorder(); restarted.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther { t.Fatalf("reconstructed session status=%d", w.Code) }
+}
+
+func TestRecoveryRejectsQuerySecrets(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.OperatorOrigin = "https://tpa.lupricht.net"
+	r := httptest.NewRequest(http.MethodPost, "/ops/recover?recovery_code=TPA-RCV-invalid", nil)
+	r.Header.Set("Origin", s.cfg.OperatorOrigin)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("query recovery status=%d", w.Code)
+	}
+}
+
+func TestRecoveryEnrollmentSessionIsSingleUseConcurrently(t *testing.T) {
+	s, _ := testServer(t)
+	st, err := s.operatorState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.mu.Lock()
+	st.recoverySessions[hashOpaque("recovery-test")] = s.currentTime().Add(time.Minute)
+	st.mu.Unlock()
+	var wg sync.WaitGroup
+	results := make(chan bool, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/ops/auth/register/begin", nil)
+			r.AddCookie(&http.Cookie{Name: operatorRecoveryCookie, Value: "recovery-test"})
+			_, ok := s.takeRecoveryEnrollment(r)
+			results <- ok
+		}()
+	}
+	wg.Wait()
+	close(results)
+	count := 0
+	for ok := range results {
+		if ok {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("recovery enrollment grants=%d", count)
+	}
+}
+
+func TestOperatorWebAuthnInitFailureIsNotCached(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.OperatorRelyingPartyID = ":invalid"
+	if _, err := s.operatorState(); err == nil {
+		t.Fatal("invalid RP accepted")
+	}
+	if st, err := s.operatorState(); err == nil || st != nil {
+		t.Fatalf("failed verifier cached: state=%v err=%v", st, err)
 	}
 }
 

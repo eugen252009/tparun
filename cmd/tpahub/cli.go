@@ -144,8 +144,12 @@ func adminCLI(cfg config.Config, args []string) error {
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	if args[0] == "operator" && args[1] == "recovery" {
+		if flagValue(args, "--data-dir", "") == "" && os.Getenv("TPAHUB_DATA_DIR") == "" {
+			return fmt.Errorf("operator recovery requires explicit --data-dir or TPAHUB_DATA_DIR")
+		}
+		fmt.Fprintf(os.Stderr, "TPA Hub data directory: %s\n", dataDir)
 		if _, err := os.Stat(filepath.Join(dataDir, "tpahub.db")); err != nil {
-			return fmt.Errorf("TPA Hub database not found at %s; provide the production --data-dir explicitly: %w", dataDir, err)
+			return fmt.Errorf("TPA Hub database not found at %s: %w", dataDir, err)
 		}
 	}
 	db, err := store.OpenForAdmin(dataDir)

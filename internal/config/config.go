@@ -28,7 +28,6 @@ type Config struct {
 	StripeTestSecret         string
 	StripeWebhookSecret      string
 	BillingPurchasesEnabled  bool
-	OperatorToken            string // Deprecated; not used for /ops authentication.
 	OperatorRelyingPartyID   string
 	OperatorOrigin           string
 }
@@ -56,7 +55,6 @@ func Load() Config {
 		StripeTestSecret:         os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
 		StripeWebhookSecret:      os.Getenv("TPAHUB_STRIPE_WEBHOOK_SECRET"),
 		BillingPurchasesEnabled:  os.Getenv("TPAHUB_BILLING_PURCHASES_ENABLED") == "true",
-		OperatorToken:            os.Getenv("TPAHUB_OPERATOR_TOKEN"),
 		OperatorRelyingPartyID:   env("TPAHUB_OPERATOR_RP_ID", "tpa.lupricht.net"),
 		OperatorOrigin:           env("TPAHUB_OPERATOR_ORIGIN", "https://tpa.lupricht.net"),
 	}

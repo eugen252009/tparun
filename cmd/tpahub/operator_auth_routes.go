@@ -11,6 +11,8 @@ import (
 	webauthn "github.com/go-webauthn/webauthn/webauthn"
 )
 
+var operatorRecoveryRate = newAuthLimiter(2048, 10, time.Minute)
+
 func (s *server) operatorRecoveryPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.operatorRecover(w, r)
@@ -19,6 +21,7 @@ func (s *server) operatorRecoveryPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	operatorSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = websiteTemplates.ExecuteTemplate(w, "ops-recover.html", nil)
 }
@@ -27,7 +30,7 @@ func (s *server) operatorRecover(w http.ResponseWriter, r *http.Request) {
 		bad(w, 403, "invalid request")
 		return
 	}
-	if !webRateAllowed(r.RemoteAddr) {
+	if !operatorRecoveryRate.allow(r.RemoteAddr, s.currentTime()) {
 		bad(w, http.StatusTooManyRequests, "too many recovery attempts")
 		return
 	}
@@ -36,7 +39,11 @@ func (s *server) operatorRecover(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "invalid recovery request")
 		return
 	}
-	code := strings.TrimSpace(r.FormValue("recovery_code"))
+	if r.URL.RawQuery != "" {
+		bad(w, 400, "invalid recovery request")
+		return
+	}
+	code := strings.TrimSpace(r.PostForm.Get("recovery_code"))
 	if len(code) < 40 {
 		bad(w, 401, "invalid recovery code")
 		return
@@ -76,6 +83,7 @@ func (s *server) operatorRegisterPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	operatorSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = websiteTemplates.ExecuteTemplate(w, "ops-register.html", nil)
 }
@@ -89,29 +97,58 @@ func (s *server) recoverySessionValid(r *http.Request) bool {
 	s.cleanupOperatorState(s.currentTime())
 	return s.consumeCookieSession(r, operatorRecoveryCookie, st.recoverySessions)
 }
-func (s *server) registerBinding(r *http.Request) (string, bool) {
-	if c, e := r.Cookie(operatorRecoveryCookie); e == nil {
-		st, err := s.operatorState()
-		if err == nil {
-			st.mu.Lock()
-			valid := s.consumeCookieSession(r, operatorRecoveryCookie, st.recoverySessions)
-			st.mu.Unlock()
-			if valid {
-				return "recovery:" + hashOpaque(c.Value), true
-			}
-		}
+func (s *server) takeRecoveryEnrollment(r *http.Request) (string, bool) {
+	c, err := r.Cookie(operatorRecoveryCookie)
+	if err != nil {
+		return "", false
 	}
+	st, err := s.operatorState()
+	if err != nil {
+		return "", false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	key := hashOpaque(c.Value)
+	expires, ok := st.recoverySessions[key]
+	if !ok || !expires.After(s.currentTime()) {
+		delete(st.recoverySessions, key)
+		return "", false
+	}
+	delete(st.recoverySessions, key)
+	return "recovery:" + key, true
+}
+func (s *server) registerBinding(r *http.Request) (string, bool) {
 	if c, e := r.Cookie(operatorSessionCookie); e == nil && s.requireOperatorSession(r) {
 		return "operator:" + hashOpaque(c.Value), true
 	}
 	return "", false
+}
+func (s *server) ceremonyBinding(r *http.Request, kind string) (string, bool) {
+	c, err := r.Cookie(operatorCeremonyCookie)
+	if err != nil {
+		return "", false
+	}
+	st, err := s.operatorState()
+	if err != nil {
+		return "", false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	x, ok := st.ceremonies[hashOpaque(c.Value)]
+	if !ok || x.Kind != kind || !x.Expires.After(s.currentTime()) {
+		return "", false
+	}
+	return x.Binding, true
 }
 func (s *server) operatorRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !s.exactOperatorOrigin(r) {
 		bad(w, 403, "invalid request")
 		return
 	}
-	binding, ok := s.registerBinding(r)
+	binding, ok := s.takeRecoveryEnrollment(r)
+	if !ok {
+		binding, ok = s.registerBinding(r)
+	}
 	if !ok {
 		bad(w, 401, "registration unavailable")
 		return
@@ -144,7 +181,7 @@ func (s *server) operatorRegisterFinish(w http.ResponseWriter, r *http.Request) 
 		bad(w, 403, "invalid request")
 		return
 	}
-	binding, ok := s.registerBinding(r)
+	binding, ok := s.ceremonyBinding(r, "registration")
 	if !ok {
 		bad(w, 401, "registration unavailable")
 		return
@@ -155,15 +192,10 @@ func (s *server) operatorRegisterFinish(w http.ResponseWriter, r *http.Request) 
 		bad(w, 401, "registration failed")
 		return
 	}
-	st, stateErr := s.operatorState()
-	if stateErr != nil {
+	st, err := s.operatorState()
+	if err != nil {
 		bad(w, 500, "registration unavailable")
 		return
-	}
-	if strings.HasPrefix(binding, "recovery:") {
-		st.mu.Lock()
-		delete(st.recoverySessions, strings.TrimPrefix(binding, "recovery:"))
-		st.mu.Unlock()
 	}
 	user, err := s.operatorUser(r.Context())
 	if err != nil {

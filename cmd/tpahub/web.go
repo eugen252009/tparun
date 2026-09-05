@@ -9,10 +9,8 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"html/template"
 	"log"
-	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
@@ -20,13 +18,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed templates/*.html static/site.css
+//go:embed templates/*.html static/site.css static/ops-auth.js
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
-var webRate = struct {
-	sync.Mutex
-	hits map[string][]time.Time
-}{hits: make(map[string][]time.Time)}
+var customerAuthRate = newAuthLimiter(4096, 10, time.Minute)
 
 type pageData struct {
 	Title, Email          string
@@ -139,12 +134,22 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(egressLimit), EgressStatus: egressCapacityMessage(egressBytes, egressLimit), HasEgressUsage: egressErr == nil, BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/static/site.css" {
+	if r.Method != http.MethodGet {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	asset := strings.TrimPrefix(r.URL.Path, "/")
+	switch asset {
+	case "static/site.css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case "static/ops-auth.js":
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	default:
 		notFoundPage(w)
 		return
 	}
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	b, _ := websiteFiles.ReadFile("static/site.css")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	b, _ := websiteFiles.ReadFile(asset)
 	w.Write(b)
 }
 func notFoundPage(w http.ResponseWriter) {
@@ -285,28 +290,7 @@ func (s *server) webError(w http.ResponseWriter, r *http.Request, msg string) {
 func setBrowserCookie(w http.ResponseWriter, t string) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: t, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
 }
-func webRateAllowed(remote string) bool {
-	host, _, e := net.SplitHostPort(remote)
-	if e != nil {
-		host = remote
-	}
-	now := time.Now()
-	webRate.Lock()
-	defer webRate.Unlock()
-	old := webRate.hits[host]
-	keep := old[:0]
-	for _, t := range old {
-		if now.Sub(t) < time.Minute {
-			keep = append(keep, t)
-		}
-	}
-	if len(keep) >= 10 {
-		webRate.hits[host] = keep
-		return false
-	}
-	webRate.hits[host] = append(keep, now)
-	return true
-}
+func webRateAllowed(remote string) bool { return customerAuthRate.allow(remote, time.Now()) }
 func clearBrowserCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: "", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }

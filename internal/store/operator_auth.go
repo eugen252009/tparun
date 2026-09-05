@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -83,14 +84,7 @@ func (s *Store) TouchOperatorCredential(ctx context.Context, id, data []byte, us
 }
 
 func (s *Store) DeleteOperatorCredential(ctx context.Context, id []byte) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM operator_credentials`).Scan(&count); err != nil {
-		return err
-	}
-	if count <= 1 {
-		return fmt.Errorf("cannot remove the last operator credential")
-	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM operator_credentials WHERE credential_id=?`, id)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM operator_credentials WHERE credential_id=? AND (SELECT COUNT(*) FROM operator_credentials)>1`, id)
 	if err != nil {
 		return err
 	}
@@ -102,9 +96,60 @@ func (s *Store) DeleteOperatorCredential(ctx context.Context, id []byte) error {
 	return nil
 }
 
+func migrateOperatorRecoveryTimes(db *sql.DB) error {
+	if _, err := db.Exec(`ALTER TABLE operator_recovery ADD COLUMN expires_at_unix_nanos INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	rows, err := db.Query(`SELECT id,expires_at,expires_at_unix_nanos FROM operator_recovery`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id    int
+		text  string
+		nanos int64
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.text, &r.nanos); err != nil {
+			return err
+		}
+		if r.nanos == 0 {
+			t, e := time.Parse(time.RFC3339Nano, r.text)
+			if e != nil {
+				pending = append(pending, row{id: r.id, nanos: -1})
+			} else {
+				pending = append(pending, row{id: r.id, nanos: t.UnixNano()})
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range pending {
+		if r.nanos < 0 {
+			if _, err := db.Exec(`DELETE FROM operator_recovery WHERE id=?`, r.id); err != nil {
+				return err
+			}
+		} else if _, err := db.Exec(`UPDATE operator_recovery SET expires_at_unix_nanos=? WHERE id=?`, r.nanos, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) IssueOperatorRecovery(ctx context.Context, hash []byte, createdAt, expiresAt string) error {
 	if len(hash) == 0 || createdAt == "" || expiresAt == "" {
 		return fmt.Errorf("invalid operator recovery")
+	}
+	expiry, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		return fmt.Errorf("invalid recovery expiry: %w", err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -114,7 +159,7 @@ func (s *Store) IssueOperatorRecovery(ctx context.Context, hash []byte, createdA
 	if _, err = tx.ExecContext(ctx, `DELETE FROM operator_recovery`); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO operator_recovery(id,token_hash,created_at,expires_at) VALUES(1,?,?,?)`, hash, createdAt, expiresAt); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO operator_recovery(id,token_hash,created_at,expires_at,expires_at_unix_nanos) VALUES(1,?,?,?,?)`, hash, createdAt, expiresAt, expiry.UnixNano()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -126,14 +171,18 @@ func (s *Store) RevokeOperatorRecovery(ctx context.Context) error {
 }
 
 func (s *Store) ConsumeOperatorRecovery(ctx context.Context, hash []byte, now string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM operator_recovery WHERE id=1 AND token_hash=? AND expires_at>?`, hash, now)
+	current, err := time.Parse(time.RFC3339Nano, now)
+	if err != nil {
+		return fmt.Errorf("invalid recovery time: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM operator_recovery WHERE id=1 AND token_hash=? AND expires_at_unix_nanos>?`, hash, current.UnixNano())
 	if err != nil {
 		return err
 	}
 	if n, err := result.RowsAffected(); err != nil {
 		return err
 	} else if n != 1 {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM operator_recovery WHERE id=1 AND expires_at<=?`, now)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM operator_recovery WHERE id=1 AND expires_at_unix_nanos<=?`, current.UnixNano())
 		return fmt.Errorf("invalid or expired recovery code")
 	}
 	return nil

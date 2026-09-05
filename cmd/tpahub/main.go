@@ -124,6 +124,9 @@ func run(cfg config.Config) error {
 	}
 	defer db.Close()
 	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), cleanupWake: make(chan struct{}, 1)}
+	if _, e = s.operatorState(); e != nil {
+		return fmt.Errorf("invalid operator WebAuthn configuration: %w", e)
+	}
 	if cfg.BillingPurchasesEnabled {
 		paymentProvider, providerErr := NewStripeBillingProvider(db, cfg.StripeTestSecret, BillingEnvironment(cfg.BillingEnvironment))
 		if providerErr != nil {
@@ -252,6 +255,7 @@ func (s *server) version(w http.ResponseWriter, r *http.Request) {
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(v)
 }
 func bad(w http.ResponseWriter, status int, msg string) { http.Error(w, msg, status) }

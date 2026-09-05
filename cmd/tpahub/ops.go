@@ -36,6 +36,7 @@ func (s *server) operatorAuthorized(r *http.Request) bool {
 }
 
 func (s *server) ops(w http.ResponseWriter, r *http.Request) {
+	operatorSecurityHeaders(w)
 	if r.Method != http.MethodGet {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

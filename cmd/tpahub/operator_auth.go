@@ -25,6 +25,8 @@ const (
 	recoveryCodeTTL        = 15 * time.Minute
 )
 
+var operatorLoginRate = newAuthLimiter(2048, 10, time.Minute)
+
 type operatorUser struct {
 	ID          []byte
 	Credentials []webauthn.Credential
@@ -55,14 +57,15 @@ func (s *server) operatorState() (*operatorAuthState, error) {
 	if s.operatorAuth != nil {
 		return s.operatorAuth, nil
 	}
-	s.operatorAuth = &operatorAuthState{sessions: make(map[string]time.Time), recoverySessions: make(map[string]time.Time), ceremonies: make(map[string]operatorCeremony)}
+	state := &operatorAuthState{sessions: make(map[string]time.Time), recoverySessions: make(map[string]time.Time), ceremonies: make(map[string]operatorCeremony)}
 	cfg := &webauthn.Config{RPDisplayName: "TPA Hub", RPID: s.cfg.OperatorRelyingPartyID, RPOrigins: []string{s.cfg.OperatorOrigin}, AttestationPreference: protocol.PreferNoAttestation, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, RequireResidentKey: protocol.ResidentKeyRequired(), UserVerification: protocol.VerificationRequired}, Timeouts: webauthn.TimeoutsConfig{Login: webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyTTL}, Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: ceremonyTTL}}}
 	w, err := webauthn.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-	s.operatorAuth.webAuthn = w
-	return s.operatorAuth, nil
+	state.webAuthn = w
+	s.operatorAuth = state
+	return state, nil
 }
 
 func randomOpaque(prefix string) (string, error) {
@@ -100,7 +103,10 @@ func (s *server) newOperatorSession() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	st, _ := s.operatorState()
+	st, err := s.operatorState()
+	if err != nil {
+		return "", err
+	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	s.cleanupOperatorState(s.currentTime())
@@ -206,14 +212,18 @@ func (s *server) takeCeremony(r *http.Request, kind, binding string) (webauthn.S
 	return x.Session, true
 }
 
+func operatorSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
 func (s *server) operatorLoginPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	operatorSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = websiteTemplates.ExecuteTemplate(w, "ops-login.html", nil)
 }
@@ -222,7 +232,7 @@ func (s *server) operatorLoginBegin(w http.ResponseWriter, r *http.Request) {
 		bad(w, 403, "invalid request")
 		return
 	}
-	if !webRateAllowed(r.RemoteAddr) {
+	if !operatorLoginRate.allow(r.RemoteAddr, s.currentTime()) {
 		bad(w, http.StatusTooManyRequests, "too many authentication attempts")
 		return
 	}
