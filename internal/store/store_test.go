@@ -576,6 +576,44 @@ func TestCurrentNanoPurchaseRequiresMatchingOfferVersion(t *testing.T) {
 	}
 }
 
+func TestFreshNanoPurchaseSnapshotSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	offer := tpahubproduct.NanoOffer()
+	if err = s.CreateAccount(ctx, Account{ID: "snapshot-reopen", Email: "snapshot-reopen@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "snapshot-reopen-purchase", AccountID: "snapshot-reopen", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: offer.Version, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: offer.Currency, AmountMinor: offer.AmountMinor, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err = s.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, offer.Grants...); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, err := s.Purchase(ctx, purchase.ID)
+	if err != nil || got.ProductID != purchase.ProductID || got.PlanCode != purchase.PlanCode || got.OfferVersion != purchase.OfferVersion || got.AmountMinor != purchase.AmountMinor || got.Currency != purchase.Currency || got.EntitlementPeriodStart != purchase.EntitlementPeriodStart || got.EntitlementPeriodEnd != purchase.EntitlementPeriodEnd {
+		t.Fatalf("purchase=%+v err=%v", got, err)
+	}
+	var count, expected int
+	var digest string
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_snapshots WHERE purchase_id=?`, purchase.ID).Scan(&count); err != nil || count != len(offer.Grants) {
+		t.Fatalf("snapshot count=%d err=%v", count, err)
+	}
+	if err = s.db.QueryRow(`SELECT expected_count,capability_digest FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, purchase.ID).Scan(&expected, &digest); err != nil || expected != len(offer.Grants) || digest == "" {
+		t.Fatalf("snapshot set count=%d digest=%q err=%v", expected, digest, err)
+	}
+}
+
 func TestHistoricalNanoPurchaseSurvivesCurrentOfferVersionChange(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

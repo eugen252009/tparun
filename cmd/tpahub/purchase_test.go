@@ -102,8 +102,8 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if purchase.Status != "pending" || purchase.OfferVersion != tpahubproduct.NanoOfferVersion {
 		t.Fatalf("status=%s offer_version=%q", purchase.Status, purchase.OfferVersion)
 	}
-	if purchase.AmountMinor != tpahubproduct.NanoOffer().AmountMinor {
-		t.Fatalf("checkout amount=%d want=%d", purchase.AmountMinor, tpahubproduct.NanoOffer().AmountMinor)
+	if purchase.ProductID != string(offer.ProductID) || purchase.PlanCode != offer.ID || purchase.OfferVersion != offer.Version || purchase.AmountMinor != offer.AmountMinor || purchase.Currency != offer.Currency || purchase.EntitlementPeriodStart != "2026-09-15T00:00:00Z" || purchase.EntitlementPeriodEnd != "2027-09-15T00:00:00Z" {
+		t.Fatalf("purchase commercial snapshot=%+v", purchase)
 	}
 	// Simulate inherited Standard limits at webhook time. Activation must use
 	// the Nano purchase snapshot, not whatever product grants currently exist.
