@@ -658,6 +658,57 @@ func TestHistoricalNanoPurchaseSurvivesCurrentOfferVersionChange(t *testing.T) {
 	}
 }
 
+func TestHistoricalNanoActivationUsesPersistedSnapshotAfterReopen(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	offer := tpahubproduct.NanoOffer()
+	if err = s.CreateAccount(ctx, Account{ID: "historical-activation", Email: "historical-activation@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "historical-activation-purchase", AccountID: "historical-activation", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: "nano-v0", RateCardID: "historical-nano-v0", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 725, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	historical := append([]commerce.GrantTemplate(nil), offer.Grants...)
+	historical[0].Period = commerce.PeriodMonthly
+	historical[1].Limits.StorageBytes = 123
+	historical[2].Limits.EgressBytes = 456
+	historical[3].Limits.OperationMetric = "historical_operations"
+	historical[3].Limits.OperationCount = 7
+	if _, err = s.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, historical...); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, "historical-activation-reference", "https://checkout.invalid/historical", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyProviderPaymentEvent(ctx, "stripe", "test", commerce.PaymentEvent{ProviderEventID: "historical-activation-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: "historical-activation-reference", AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE purchase_id=?`, purchase.ID).Scan(&count); err != nil || count != len(historical) {
+		t.Fatalf("activated count=%d err=%v", count, err)
+	}
+	for _, want := range historical {
+		var got commerce.GrantTemplate
+		if err = s.db.QueryRow(`SELECT capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit FROM purchase_grant_instances WHERE purchase_id=? AND capability_id=?`, purchase.ID, want.CapabilityID).Scan(&got.CapabilityID, &got.Period, &got.Limits.StorageBytes, &got.Limits.EgressBytes, &got.Limits.OperationMetric, &got.Limits.OperationCount); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("activated snapshot=%+v want=%+v", got, want)
+		}
+	}
+}
+
 func TestCreateAccountEntitlementAndRequiredGrantsAreAtomic(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
