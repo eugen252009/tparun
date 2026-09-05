@@ -14,7 +14,7 @@ import (
 type opsAccountRow struct {
 	ID, Class                               string
 	Repositories                            int
-	StorageBytes, StorageLimit, EgressBytes int64
+	StorageBytes, StorageLimit, EgressBytes, EgressLimit int64
 }
 type opsRepositoryRow struct {
 	ID, Name, AccountID, Class string
@@ -24,7 +24,7 @@ type opsPageData struct {
 	GeneratedAt, Scope, BillingEnvironment                                                  string
 	TotalAccounts, ProductionAccounts, TestAccounts, InternalAccounts, UnclassifiedAccounts int
 	TotalRepositories, ProductionRepositories                                               int
-	StorageBytes, StorageLimit, EgressBytes, Attention                                      int64
+	StorageBytes, StorageLimit, EgressBytes, EgressLimit, Attention                         int64
 	Pending, Paid, Failed, Expired, Reconciliation                                          int
 	Accounts                                                                                []opsAccountRow
 	Repositories                                                                            []opsRepositoryRow
@@ -100,8 +100,14 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		}
 		page.TotalRepositories += account.RepositoryCount
 		page.StorageBytes += usage.StoredBytes
-		page.EgressBytes += account.EgressBytes
-		row := opsAccountRow{ID: account.ID, Class: account.AccountClass, Repositories: account.RepositoryCount, StorageBytes: usage.StoredBytes, EgressBytes: account.EgressBytes}
+		egressUsed, egressLimit, egressErr := s.accountEgress(account.ID, now)
+		if egressErr != nil {
+			bad(w, 500, "dashboard egress unavailable")
+			return
+		}
+		page.EgressBytes += egressUsed
+		page.EgressLimit += egressLimit
+		row := opsAccountRow{ID: account.ID, Class: account.AccountClass, Repositories: account.RepositoryCount, StorageBytes: usage.StoredBytes, EgressBytes: egressUsed, EgressLimit: egressLimit}
 		if grant, grantErr := s.grantService().GetGrant(ctx, commerce.CustomerID(account.ID), tpahubproduct.ProductID, CapabilityRepositoryPublish, now); grantErr == nil {
 			row.StorageLimit = grant.Limits.StorageBytes
 			page.StorageLimit += grant.Limits.StorageBytes

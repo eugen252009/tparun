@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed templates/*.html static/site.css static/ops-auth.js
+//go:embed templates/*.html static/site.css static/ops-auth.js static/ops.js
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
 var customerAuthRate = newAuthLimiter(4096, 10, time.Minute)
@@ -142,7 +142,7 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	switch asset {
 	case "static/site.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case "static/ops-auth.js":
+	case "static/ops-auth.js", "static/ops.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	default:
 		notFoundPage(w)

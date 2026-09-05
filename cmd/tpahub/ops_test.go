@@ -4,12 +4,28 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func TestOpsResourceValuesRemainStructuredForClientFormatting(t *testing.T) {
+	s, _ := testServer(t)
+	token, err := s.newOperatorSession()
+	if err != nil { t.Fatal(err) }
+	r := httptest.NewRequest(http.MethodGet, "/ops?scope=all", nil)
+	r.AddCookie(&http.Cookie{Name: operatorSessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusOK { t.Fatalf("dashboard status=%d", w.Code) }
+	body := w.Body.String()
+	if !strings.Contains(body, `data-used-bytes="0"`) || !strings.Contains(body, `data-limit-bytes="5000000"`) {
+		t.Fatalf("dashboard omitted raw resource values: %s", body)
+	}
+}
 
 func TestOpsRequiresPasskeySession(t *testing.T) {
 	s, _ := testServer(t)
