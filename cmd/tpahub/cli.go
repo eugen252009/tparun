@@ -136,8 +136,8 @@ func cli(cfg config.Config, args []string) error {
 }
 
 func adminCLI(cfg config.Config, args []string) error {
-	if len(args) < 2 || args[0] != "egress" {
-		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-at <RFC3339> --bytes <bytes>")
+	if len(args) < 2 || (args[0] != "egress" && args[0] != "account") {
+		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-at <RFC3339> --bytes <bytes> | account classify <account-id> --class <production|test|internal|unclassified>")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	db, err := store.OpenForAdmin(dataDir)
@@ -147,6 +147,15 @@ func adminCLI(cfg config.Config, args []string) error {
 	defer db.Close()
 	ctx := context.Background()
 	switch args[1] {
+	case "classify":
+		if args[0] != "account" || len(args) < 3 {
+			return fmt.Errorf("usage: tpahub admin account classify <account-id> --class <production|test|internal|unclassified>")
+		}
+		if err := db.SetAccountClass(ctx, args[2], flagValue(args, "--class", "")); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "account classification updated")
+		return nil
 	case "list-uncertain":
 		all, err := db.EgressDeliveries(ctx, "")
 		if err != nil {

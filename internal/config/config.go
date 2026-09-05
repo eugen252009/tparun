@@ -28,6 +28,7 @@ type Config struct {
 	StripeTestSecret         string
 	StripeWebhookSecret      string
 	BillingPurchasesEnabled  bool
+	OperatorToken            string
 }
 
 func Load() Config {
@@ -53,6 +54,7 @@ func Load() Config {
 		StripeTestSecret:         os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
 		StripeWebhookSecret:      os.Getenv("TPAHUB_STRIPE_WEBHOOK_SECRET"),
 		BillingPurchasesEnabled:  os.Getenv("TPAHUB_BILLING_PURCHASES_ENABLED") == "true",
+		OperatorToken:            os.Getenv("TPAHUB_OPERATOR_TOKEN"),
 	}
 }
 func env(k, fallback string) string {
