@@ -23,6 +23,9 @@ func TestNanoOfferProducesCapabilityGrants(t *testing.T) {
 	if limits[CapabilityRepositoryPublish].StorageBytes != NanoStorageBytes || limits[CapabilityRepositoryDownload].EgressBytes != NanoEgressBytes {
 		t.Fatalf("limits=%+v", limits)
 	}
+	if planCatalog["nano"].StorageCapacityBytes != offer.Grants[1].Limits.StorageBytes || planCatalog["nano"].EgressAllowanceBytes != offer.Grants[2].Limits.EgressBytes {
+		t.Fatalf("catalog=%+v offer=%+v", planCatalog["nano"], offer.Grants)
+	}
 }
 
 func TestAnnualEntitlementPeriodIsAnniversaryAndDayAligned(t *testing.T) {

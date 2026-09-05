@@ -154,8 +154,17 @@ func advanceCadence(start time.Time, cadence commerce.PeriodCadence) (time.Time,
 	}
 }
 
+func nanoOfferLimits(capability commerce.CapabilityID) commerce.Limits {
+	for _, grant := range tpahubproduct.NanoOffer().Grants {
+		if grant.CapabilityID == capability {
+			return grant.Limits
+		}
+	}
+	panic("Nano offer is missing capability " + string(capability))
+}
+
 var planCatalog = map[string]PlanDefinition{
-	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: NanoStorageBytes, MonthlyEgressBytes: NanoEgressBytes, EgressAllowanceBytes: NanoEgressBytes, EgressCadence: PlanCadence(tpahubproduct.NanoCadence), BillingCadence: PlanCadence(tpahubproduct.NanoCadence), TaxClassification: TaxSaaSPersonal},
+	"nano":     {Code: "nano", BillingMode: BillingFixed, Available: true, StorageCapacityBytes: nanoOfferLimits(CapabilityRepositoryPublish).StorageBytes, MonthlyEgressBytes: nanoOfferLimits(CapabilityRepositoryDownload).EgressBytes, EgressAllowanceBytes: nanoOfferLimits(CapabilityRepositoryDownload).EgressBytes, EgressCadence: PlanCadence(tpahubproduct.NanoCadence), BillingCadence: PlanCadence(tpahubproduct.NanoCadence), TaxClassification: TaxSaaSPersonal},
 	"standard": {Code: "standard", BillingMode: BillingFixed, StorageCapacityBytes: 500_000_000, EgressAllowanceBytes: 20_000_000_000, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSPersonal},
 	"pro":      {Code: "pro", BillingMode: BillingUsageBased, EgressCadence: CadenceMonthly, BillingCadence: CadenceMonthly, TaxClassification: TaxSaaSBusiness, StorageBlockBytes: 500_000_000, EgressBlockBytes: 20_000_000_000},
 }
