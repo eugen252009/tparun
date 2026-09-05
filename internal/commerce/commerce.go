@@ -41,6 +41,7 @@ type GrantTemplate struct {
 }
 type Offer struct {
 	ID          string
+	Version     string
 	ProductID   ProductID
 	Cadence     PeriodCadence
 	Description string

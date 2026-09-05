@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	ProductID      commerce.ProductID     = "tpa-hub"
-	NanoCadence    commerce.PeriodCadence = commerce.PeriodAnnual
-	NanoPriceMinor int64                  = 500
+	ProductID        commerce.ProductID     = "tpa-hub"
+	NanoOfferVersion string                 = "nano-v1"
+	NanoCadence      commerce.PeriodCadence = commerce.PeriodAnnual
+	NanoPriceMinor   int64                  = 500
 
 	CapabilityRepositoryCreate      commerce.CapabilityID = "repository.create"
 	CapabilityRepositoryPublish     commerce.CapabilityID = "repository.publish"
@@ -31,7 +32,7 @@ func ValidCapability(capability commerce.CapabilityID) bool {
 }
 
 func NanoOffer() commerce.Offer {
-	return commerce.Offer{ID: "nano", ProductID: ProductID, Cadence: NanoCadence, Description: "TPA Hub Nano annual plan", Currency: "EUR", AmountMinor: NanoPriceMinor, TaxClass: "saas-personal", Grants: []commerce.GrantTemplate{
+	return commerce.Offer{ID: "nano", Version: NanoOfferVersion, ProductID: ProductID, Cadence: NanoCadence, Description: "TPA Hub Nano annual plan", Currency: "EUR", AmountMinor: NanoPriceMinor, TaxClass: "saas-personal", Grants: []commerce.GrantTemplate{
 		{CapabilityID: CapabilityRepositoryCreate, Period: NanoCadence},
 		{CapabilityID: CapabilityRepositoryPublish, Period: NanoCadence, Limits: commerce.Limits{StorageBytes: NanoStorageBytes}},
 		{CapabilityID: CapabilityRepositoryDownload, Period: NanoCadence, Limits: commerce.Limits{EgressBytes: NanoEgressBytes}},

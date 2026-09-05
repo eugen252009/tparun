@@ -551,12 +551,28 @@ func TestCreatePendingPurchasePropagatesEntitlementQueryError(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := "2026-09-15T00:00:00Z"
-	purchase := BillingPurchase{ID: "guard-purchase", AccountID: "guard", PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now}
+	purchase := BillingPurchase{ID: "guard-purchase", AccountID: "guard", PlanCode: "nano", OfferVersion: tpahubproduct.NanoOfferVersion, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now}
 	if _, err = s.CreatePendingPurchase(ctx, purchase, now, commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil {
 		t.Fatal("grant query error was discarded")
 	}
 	if _, lookupErr := s.Purchase(ctx, purchase.ID); lookupErr != sql.ErrNoRows {
 		t.Fatalf("purchase persisted after guard error: %v", lookupErr)
+	}
+}
+
+func TestCurrentNanoPurchaseRequiresMatchingOfferVersion(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	purchase := BillingPurchase{ID: "version-required", AccountID: "version-account", ProductID: string(tpahubproduct.ProductID), PlanCode: "nano", RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: "2026-01-01T00:00:00Z", EntitlementPeriodEnd: "2027-01-01T00:00:00Z", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z"}
+	if _, err = s.CreatePendingPurchase(context.Background(), purchase, purchase.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish}); err == nil {
+		t.Fatal("current Nano purchase accepted without offer version")
+	}
+	purchase.OfferVersion = "wrong-version"
+	if _, err = s.CreatePendingPurchase(context.Background(), purchase, purchase.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish}); err == nil {
+		t.Fatal("current Nano purchase accepted with wrong offer version")
 	}
 }
 

@@ -603,7 +603,7 @@ func TestProviderCheckoutProcessDeathHelper(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	offer := tpaNanoOffer()
-	purchase := store.BillingPurchase{ID: "process-purchase", AccountID: "process-account", ProductID: string(offer.ProductID), PlanCode: offer.ID, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: string(TaxSaaSPersonal), Currency: "EUR", AmountMinor: 500, CheckoutRequestVersion: "v2", BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	purchase := store.BillingPurchase{ID: "process-purchase", AccountID: "process-account", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: offer.Version, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: string(TaxSaaSPersonal), Currency: "EUR", AmountMinor: 500, CheckoutRequestVersion: "v2", BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	if _, err = db.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, offer.Grants...); err != nil {
 		os.Exit(43)
 	}
