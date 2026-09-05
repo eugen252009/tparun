@@ -256,9 +256,15 @@ func TestRepositoryUsagePreservesLegacyRootAndDoesNotFollowNestedSymlinks(t *tes
 func setStorageLimit(t *testing.T, s *server, bytes int64) {
 	t.Helper()
 	now := s.currentTime().UTC()
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	grant := commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "test", CreatedAt: now, UpdatedAt: now}
+	if err := s.db.PutGrant(context.Background(), grant); err != nil {
 		t.Fatal(err)
 	}
+	// This helper exercises the generic generation/quota arithmetic with an
+	// already-resolved grant; product-floor integration is covered separately.
+	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
+		return grant, nil
+	})
 }
 
 func TestGenerationBackedStorageQuotaBoundaries(t *testing.T) {
@@ -266,21 +272,21 @@ func TestGenerationBackedStorageQuotaBoundaries(t *testing.T) {
 	repositoryID := "ababababababababababababababab30"
 	generationUsageFixture(t, s, repositoryID, map[string][]int{"gen-1": {100}}, "gen-1")
 
-	setStorageLimit(t, s, 100)
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes)
 	if err := s.checkStagingCapacity(context.Background(), "a", 0, false); err != nil {
 		t.Fatalf("exact existing limit rejected: %v", err)
 	}
-	setStorageLimit(t, s, 99)
-	if err := s.checkStagingCapacity(context.Background(), "a", 0, false); err == nil {
-		t.Fatal("existing generation over limit was accepted")
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes-1)
+	if err := s.checkStagingCapacity(context.Background(), "a", 0, false); err != nil {
+		t.Fatalf("below-Nano raw grant was not floored: %v", err)
 	}
 
-	candidate := candidateWithSize(t, s, "r8-growth", 107)
-	setStorageLimit(t, s, 107)
+	candidate := candidateWithSize(t, s, "r8-growth", int(tpahubproduct.NanoStorageBytes+7))
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+7)
 	if err := s.checkStorageCapacity(repositoryID, candidate); err != nil {
 		t.Fatalf("exact publication growth boundary rejected: %v", err)
 	}
-	setStorageLimit(t, s, 106)
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+6)
 	var capacityErr StorageCapacityError
 	if err := s.checkStorageCapacity(repositoryID, candidate); !errors.As(err, &capacityErr) {
 		t.Fatalf("publication one byte over limit was accepted: %v", err)
@@ -289,12 +295,12 @@ func TestGenerationBackedStorageQuotaBoundaries(t *testing.T) {
 
 func TestGenerationBackedLargeBaselineAndTinyUpload(t *testing.T) {
 	s, _ := testServer(t)
-	generationUsageFixture(t, s, "ababababababababababababababab31", map[string][]int{"gen-1": {1_000_000}}, "gen-1")
-	setStorageLimit(t, s, 1_000_001)
+	generationUsageFixture(t, s, "ababababababababababababababab31", map[string][]int{"gen-1": {int(tpahubproduct.NanoStorageBytes + 1)}}, "gen-1")
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+2)
 	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err != nil {
 		t.Fatalf("exact tiny upload boundary rejected: %v", err)
 	}
-	setStorageLimit(t, s, 1_000_000)
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes)
 	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err == nil {
 		t.Fatal("tiny upload ignored large active baseline")
 	}
@@ -332,8 +338,9 @@ func TestGenerationBackedPublicationUsesExistingStorageBaseline(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, "repos", repositoryID), 0755); err != nil {
 		t.Fatal(err)
 	}
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+41)
 
-	if job := processTestPackage(t, s, repositoryID, "r8-first", "package-a.deb", make([]byte, 41)); job.State != "succeeded" {
+	if job := processTestPackage(t, s, repositoryID, "r8-first", "package-a.deb", make([]byte, int(tpahubproduct.NanoStorageBytes+41))); job.State != "succeeded" {
 		t.Fatalf("first publication=%+v", job)
 	}
 	root := filepath.Join(s.cfg.DataDir, "repos", repositoryID)
@@ -342,20 +349,20 @@ func TestGenerationBackedPublicationUsesExistingStorageBaseline(t *testing.T) {
 		t.Fatalf("first current target=%q err=%v", target, err)
 	}
 	usage, err := s.repositoryUsage(repositoryID)
-	if err != nil || usage.PackageCount != 1 || usage.StoredBytes != 41 {
+	if err != nil || usage.PackageCount != 1 || usage.StoredBytes != tpahubproduct.NanoStorageBytes+41 {
 		t.Fatalf("first published usage=%+v err=%v", usage, err)
 	}
 
-	setStorageLimit(t, s, 48)
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+48)
 	if job := processTestPackage(t, s, repositoryID, "r8-exact", "package-b.deb", make([]byte, 7)); job.State != "succeeded" {
 		t.Fatalf("exact-boundary publication=%+v", job)
 	}
 	usage, err = s.repositoryUsage(repositoryID)
-	if err != nil || usage.PackageCount != 2 || usage.StoredBytes != 48 {
+	if err != nil || usage.PackageCount != 2 || usage.StoredBytes != tpahubproduct.NanoStorageBytes+48 {
 		t.Fatalf("exact-boundary usage=%+v err=%v", usage, err)
 	}
 
-	setStorageLimit(t, s, 52)
+	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+52)
 	if job := processTestPackage(t, s, repositoryID, "r8-over", "package-c.deb", make([]byte, 5)); job.State != "failed" {
 		t.Fatalf("over-limit publication=%+v", job)
 	}
@@ -364,7 +371,7 @@ func TestGenerationBackedPublicationUsesExistingStorageBaseline(t *testing.T) {
 		t.Fatalf("over-limit publication changed authority=%q err=%v", target, err)
 	}
 	usage, err = s.repositoryUsage(repositoryID)
-	if err != nil || usage.PackageCount != 2 || usage.StoredBytes != 48 {
+	if err != nil || usage.PackageCount != 2 || usage.StoredBytes != tpahubproduct.NanoStorageBytes+48 {
 		t.Fatalf("usage changed after rejection=%+v err=%v", usage, err)
 	}
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -33,28 +32,22 @@ func TestCommitPublicationAtomicallyRechecksAuthorizationAndJobState(t *testing.
 		t.Fatal(err)
 	}
 	at := now.Format(time.RFC3339Nano)
-	if err = s.CommitPublication(ctx, "repo", "job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
-		t.Fatal("publication committed after authorization was disabled")
-	}
-	if _, err = s.ActiveGeneration(ctx, "repo"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unauthorized generation persisted: %v", err)
-	}
-	job, err := s.Job(ctx, "job")
-	if err != nil || job.State != "running" {
-		t.Fatalf("job=%+v err=%v", job, err)
-	}
-	if err = s.Finish(ctx, "job", "failed", "cancelled before commit"); err != nil {
-		t.Fatal(err)
+	// Disabling the historical grant does not remove the current Nano floor.
+	if err = s.CommitPublication(ctx, "repo", "job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err != nil {
+		t.Fatalf("Nano floor did not authorize publication: %v", err)
 	}
 	grant.Enabled = true
 	if err = s.PutGrant(ctx, grant); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CommitPublication(ctx, "repo", "job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
-		t.Fatal("publication committed after job left running state")
+	if err = s.CreateJob(ctx, Job{ID: "terminal-job", RepositoryID: "repo", State: "running", IncomingPath: "incoming", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err = s.ActiveGeneration(ctx, "repo"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("generation persisted for terminal job: %v", err)
+	if err = s.Finish(ctx, "terminal-job", "failed", "cancelled before commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CommitPublication(ctx, "repo", "terminal-job", string(tpahubproduct.ProductID), string(tpahubproduct.CapabilityRepositoryPublish), at, at); err == nil {
+		t.Fatal("publication committed after job left running state")
 	}
 	if err = s.CreateJob(ctx, Job{ID: "success-job", RepositoryID: "repo", State: "running", IncomingPath: "incoming", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)

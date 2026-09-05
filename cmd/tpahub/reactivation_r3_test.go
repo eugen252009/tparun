@@ -87,8 +87,8 @@ func TestReactivationRestoresReaderAndNewWorkerAuthorization(t *testing.T) {
 	if err := s.db.SetAccountStatus(context.Background(), "a", store.AccountStatusActive); err != nil {
 		t.Fatal(err)
 	}
-	if read() == http.StatusOK {
-		t.Fatal("reactivation restored reader access after grant disablement")
+	if read() != http.StatusOK {
+		t.Fatal("reactivation did not restore Nano-backed reader access")
 	}
 	incoming = filepath.Join(s.cfg.DataDir, "incoming", "reactivated-without-grant")
 	if err := os.MkdirAll(incoming, 0700); err != nil {
@@ -103,7 +103,7 @@ func TestReactivationRestoresReaderAndNewWorkerAuthorization(t *testing.T) {
 	}
 	s.process(withoutGrant)
 	stored, _ = s.db.Job(context.Background(), withoutGrant.ID)
-	if stored.State != "failed" {
-		t.Fatalf("reactivated worker without grant state=%s", stored.State)
+	if stored.State != "succeeded" {
+		t.Fatalf("reactivated worker did not use Nano-backed grant state=%s", stored.State)
 	}
 }

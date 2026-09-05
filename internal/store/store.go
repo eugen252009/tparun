@@ -2048,6 +2048,25 @@ func (s *Store) CommitPublication(c context.Context, repositoryID, jobID, produc
 		return err
 	}
 	rows.Close()
+	// The current Nano floor is effective policy, not a persisted grant. A
+	// valid hosted account therefore remains publication-authorized when its
+	// historical/raw grant is absent or disabled.
+	if !grantAuthorized && productID == string(tpahubproduct.ProductID) && capabilityID == string(tpahubproduct.CapabilityRepositoryPublish) {
+		var createdAt string
+		if err = tx.QueryRowContext(c, `SELECT created_at FROM accounts WHERE id=?`, accountID).Scan(&createdAt); err == nil {
+			created, parseErr := parseEntitlementTime(createdAt)
+			if parseErr == nil {
+				for _, floor := range tpahubproduct.DefaultGrants(created) {
+					if floor.CapabilityID == tpahubproduct.CapabilityRepositoryPublish && floor.ActiveAt(commitAt) {
+						grantAuthorized = true
+						break
+					}
+				}
+			}
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+	}
 	if !accountAuthorized || !grantAuthorized {
 		return fmt.Errorf("publication authorization changed before commit")
 	}

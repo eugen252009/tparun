@@ -50,13 +50,13 @@ func TestStorageCapacityUsesGrantLimitAndFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "current.deb"), make([]byte, 99), 0644); err != nil {
 		t.Fatal(err)
 	}
-	candidate := candidateWithSize(t, s, "grant-limit", 101)
+	candidate := candidateWithSize(t, s, "grant-limit", int(tpahubproduct.NanoStorageBytes+1))
 	now := s.currentTime().UTC()
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "custom", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "custom", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: tpahubproduct.NanoStorageBytes}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	var capacityErr StorageCapacityError
-	if err := s.checkStorageCapacity("abababababababababababababababab", candidate); !errors.As(err, &capacityErr) || capacityErr.CapacityBytes != 100 {
+	if err := s.checkStorageCapacity("abababababababababababababababab", candidate); !errors.As(err, &capacityErr) || capacityErr.CapacityBytes != tpahubproduct.NanoStorageBytes {
 		t.Fatalf("custom grant limit not enforced: %+v err=%v", capacityErr, err)
 	}
 	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
