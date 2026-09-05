@@ -19,6 +19,15 @@ const (
 	NanoOverageBytesPerSecond int64 = 128_000
 )
 
+func ValidCapability(capability commerce.CapabilityID) bool {
+	switch capability {
+	case CapabilityRepositoryCreate, CapabilityRepositoryPublish, CapabilityRepositoryDownload, CapabilityRepositoryReadPrivate:
+		return true
+	default:
+		return false
+	}
+}
+
 func NanoOffer() commerce.Offer {
 	return commerce.Offer{ID: "nano", ProductID: ProductID, Description: "TPA Hub Nano annual plan", Currency: "EUR", AmountMinor: 500, TaxClass: "saas-personal", Grants: []commerce.GrantTemplate{
 		{CapabilityID: CapabilityRepositoryCreate, Period: commerce.PeriodAnnual},

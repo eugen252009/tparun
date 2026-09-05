@@ -59,7 +59,7 @@ func open(dir string, reconcileRunning bool) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db}
-	_, e = db.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations(name TEXT PRIMARY KEY,applied_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT); CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,account_id TEXT, name TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public',created_at TEXT NOT NULL,UNIQUE(account_id,name),FOREIGN KEY(account_id) REFERENCES accounts(id)); CREATE TABLE IF NOT EXISTS publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL,incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT); CREATE TABLE IF NOT EXISTS reader_credentials(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),name TEXT NOT NULL,token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(repository_id,name)); CREATE INDEX IF NOT EXISTS publish_jobs_queue ON publish_jobs(state,created_at); CREATE TABLE IF NOT EXISTS repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repositories(id),period TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,period)); CREATE INDEX IF NOT EXISTS repository_egress_period ON repository_egress_usage(period); CREATE TABLE IF NOT EXISTS account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period)); CREATE TABLE IF NOT EXISTS mock_billing_events(id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(product_id,id),UNIQUE(account_id,product_id,period,event_type)); CREATE TABLE IF NOT EXISTS billing_provider_accounts(account_id TEXT NOT NULL REFERENCES accounts(id),provider TEXT NOT NULL,environment TEXT NOT NULL,provider_customer_id TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(account_id,provider,environment)); CREATE TABLE IF NOT EXISTS billing_provider_submissions(account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,period TEXT NOT NULL,provider TEXT NOT NULL,environment TEXT NOT NULL,finalization_id TEXT NOT NULL,status TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',attempted_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(account_id,product_id,period,provider,environment)); CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT PRIMARY KEY REFERENCES accounts(id),plan_code TEXT NOT NULL,started_at TEXT NOT NULL,valid_from TEXT NOT NULL DEFAULT '',valid_until TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'legacy',purchase_id TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS product_grants(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL DEFAULT '',period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),source TEXT NOT NULL,purchase_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(customer_id,product_id,capability_id)); CREATE TABLE IF NOT EXISTS purchase_grant_snapshots(purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),capability_id TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),PRIMARY KEY(purchase_id,capability_id)); CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_update BEFORE UPDATE ON purchase_grant_snapshots BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_delete BEFORE DELETE ON purchase_grant_snapshots BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are immutable'); END; CREATE TABLE IF NOT EXISTS billing_purchases(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,plan_code TEXT NOT NULL,rate_card_id TEXT NOT NULL,rate_card_mode TEXT NOT NULL,tax_classification TEXT NOT NULL DEFAULT 'saas-personal',currency TEXT NOT NULL,amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),billing_environment TEXT NOT NULL,provider TEXT NOT NULL,status TEXT NOT NULL,entitlement_period_start TEXT NOT NULL,entitlement_period_end TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',checkout_url TEXT NOT NULL DEFAULT '',checkout_request_version TEXT NOT NULL DEFAULT 'v1',snapshot_finalized INTEGER NOT NULL DEFAULT 0 CHECK(snapshot_finalized IN (0,1)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,paid_at TEXT NOT NULL DEFAULT '',failed_at TEXT NOT NULL DEFAULT '',expired_at TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS billing_provider_events(provider TEXT NOT NULL,environment TEXT NOT NULL,provider_event_id TEXT NOT NULL,event_type TEXT NOT NULL,received_at TEXT NOT NULL,processed_at TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,environment,provider_event_id)); CREATE TABLE IF NOT EXISTS repository_egress_daily(repository_id TEXT NOT NULL REFERENCES repositories(id),usage_date TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,usage_date)); CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id); CREATE INDEX IF NOT EXISTS repository_egress_daily_date ON repository_egress_daily(usage_date);`)
+	_, e = db.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations(name TEXT PRIMARY KEY,applied_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT); CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,account_id TEXT, name TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public',created_at TEXT NOT NULL,UNIQUE(account_id,name),FOREIGN KEY(account_id) REFERENCES accounts(id)); CREATE TABLE IF NOT EXISTS publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL,incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT); CREATE TABLE IF NOT EXISTS reader_credentials(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),name TEXT NOT NULL,token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(repository_id,name)); CREATE INDEX IF NOT EXISTS publish_jobs_queue ON publish_jobs(state,created_at); CREATE TABLE IF NOT EXISTS repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repositories(id),period TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,period)); CREATE INDEX IF NOT EXISTS repository_egress_period ON repository_egress_usage(period); CREATE TABLE IF NOT EXISTS account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period)); CREATE TABLE IF NOT EXISTS mock_billing_events(id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(product_id,id),UNIQUE(account_id,product_id,period,event_type)); CREATE TABLE IF NOT EXISTS billing_provider_accounts(account_id TEXT NOT NULL REFERENCES accounts(id),provider TEXT NOT NULL,environment TEXT NOT NULL,provider_customer_id TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(account_id,provider,environment)); CREATE TABLE IF NOT EXISTS billing_provider_submissions(account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,period TEXT NOT NULL,provider TEXT NOT NULL,environment TEXT NOT NULL,finalization_id TEXT NOT NULL,status TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',attempted_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(account_id,product_id,period,provider,environment)); CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT PRIMARY KEY REFERENCES accounts(id),plan_code TEXT NOT NULL,started_at TEXT NOT NULL,valid_from TEXT NOT NULL DEFAULT '',valid_until TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'legacy',purchase_id TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS product_grants(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL DEFAULT '',period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),source TEXT NOT NULL,purchase_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(customer_id,product_id,capability_id)); CREATE TABLE IF NOT EXISTS purchase_grant_snapshots(purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),capability_id TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),PRIMARY KEY(purchase_id,capability_id)); CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_update BEFORE UPDATE ON purchase_grant_snapshots BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_delete BEFORE DELETE ON purchase_grant_snapshots BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are immutable'); END; CREATE TABLE IF NOT EXISTS billing_purchases(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,plan_code TEXT NOT NULL,rate_card_id TEXT NOT NULL,rate_card_mode TEXT NOT NULL,tax_classification TEXT NOT NULL DEFAULT 'saas-personal',currency TEXT NOT NULL,amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),billing_environment TEXT NOT NULL,provider TEXT NOT NULL,status TEXT NOT NULL,entitlement_period_start TEXT NOT NULL,entitlement_period_end TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',checkout_url TEXT NOT NULL DEFAULT '',checkout_request_version TEXT NOT NULL DEFAULT 'v1',snapshot_finalized INTEGER NOT NULL DEFAULT 0 CHECK(snapshot_finalized IN (0,1)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,paid_at TEXT NOT NULL DEFAULT '',failed_at TEXT NOT NULL DEFAULT '',expired_at TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS billing_provider_events(provider TEXT NOT NULL,environment TEXT NOT NULL,provider_event_id TEXT NOT NULL,event_type TEXT NOT NULL,received_at TEXT NOT NULL,processed_at TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',purchase_id TEXT NOT NULL DEFAULT '',provider_reference TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,environment,provider_event_id)); CREATE TABLE IF NOT EXISTS repository_egress_daily(repository_id TEXT NOT NULL REFERENCES repositories(id),usage_date TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,usage_date)); CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id); CREATE INDEX IF NOT EXISTS repository_egress_daily_date ON repository_egress_daily(usage_date);`)
 	if e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", e)
@@ -72,7 +72,7 @@ func open(dir string, reconcileRunning bool) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize administrative audit state: %w", e)
 	}
-	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN snapshot_finalized INTEGER NOT NULL DEFAULT 0", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE billing_purchases ADD COLUMN intent_state TEXT NOT NULL DEFAULT 'current'", "ALTER TABLE billing_purchases ADD COLUMN provider_state TEXT NOT NULL DEFAULT 'open'", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_submissions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE mock_billing_events ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN state TEXT NOT NULL DEFAULT 'uncertain'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN version INTEGER NOT NULL DEFAULT 1", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_start TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_end TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'complete'", "ALTER TABLE publish_jobs ADD COLUMN cleanup_error TEXT NOT NULL DEFAULT ''", "ALTER TABLE publish_jobs ADD COLUMN cleanup_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_next_retry TEXT NOT NULL DEFAULT ''"} {
+	for _, stmt := range []string{"ALTER TABLE account_entitlements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'", "ALTER TABLE account_entitlements ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN tax_classification TEXT NOT NULL DEFAULT 'saas-personal'", "ALTER TABLE billing_purchases ADD COLUMN checkout_request_version TEXT NOT NULL DEFAULT 'v1'", "ALTER TABLE billing_purchases ADD COLUMN snapshot_finalized INTEGER NOT NULL DEFAULT 0", "ALTER TABLE billing_purchases ADD COLUMN checkout_url TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_purchases ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE billing_purchases ADD COLUMN intent_state TEXT NOT NULL DEFAULT 'current'", "ALTER TABLE billing_purchases ADD COLUMN provider_state TEXT NOT NULL DEFAULT 'open'", "ALTER TABLE billing_purchases ADD COLUMN reconciliation_reason TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_events ADD COLUMN purchase_id TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_events ADD COLUMN provider_reference TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_from TEXT NOT NULL DEFAULT ''", "ALTER TABLE account_entitlements ADD COLUMN valid_until TEXT NOT NULL DEFAULT ''", "ALTER TABLE billing_provider_submissions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE mock_billing_events ADD COLUMN product_id TEXT NOT NULL DEFAULT 'tpa-hub'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN state TEXT NOT NULL DEFAULT 'uncertain'", "ALTER TABLE egress_accounting_uncertain ADD COLUMN version INTEGER NOT NULL DEFAULT 1", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_start TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN period_end TEXT NOT NULL DEFAULT ''", "ALTER TABLE egress_accounting_uncertain ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'complete'", "ALTER TABLE publish_jobs ADD COLUMN cleanup_error TEXT NOT NULL DEFAULT ''", "ALTER TABLE publish_jobs ADD COLUMN cleanup_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE publish_jobs ADD COLUMN cleanup_next_retry TEXT NOT NULL DEFAULT ''"} {
 		if _, ae := db.Exec(stmt); ae != nil && !strings.Contains(strings.ToLower(ae.Error()), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("migrate entitlements: %w", ae)
@@ -82,16 +82,20 @@ func open(dir string, reconcileRunning bool) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = enforceUniquePurchaseProviderReferences(db); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if _, e = db.Exec(`DROP INDEX IF EXISTS billing_purchases_pending; CREATE UNIQUE INDEX billing_purchases_pending ON billing_purchases(account_id,product_id,provider,billing_environment) WHERE status='pending'; UPDATE account_entitlements SET valid_from=started_at WHERE valid_from='';
 UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_start FROM billing_purchases WHERE id=account_entitlements.purchase_id AND status='paid'),valid_from),valid_until=COALESCE((SELECT entitlement_period_end FROM billing_purchases WHERE id=account_entitlements.purchase_id AND status='paid'),'') WHERE source='purchase';`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate entitlement validity: %w", e)
 	}
-	if _, e = db.Exec(`CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; DROP TRIGGER IF EXISTS billing_purchase_terms_immutable; CREATE TRIGGER billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN (OLD.snapshot_finalized=1 OR OLD.status='reconciliation_required') AND (NEW.snapshot_finalized<>OLD.snapshot_finalized OR NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id OR NEW.rate_card_mode<>OLD.rate_card_mode OR NEW.tax_classification<>OLD.tax_classification OR NEW.entitlement_period_start<>OLD.entitlement_period_start OR NEW.entitlement_period_end<>OLD.entitlement_period_end OR NEW.provider<>OLD.provider OR NEW.provider_reference<>OLD.provider_reference OR NEW.billing_environment<>OLD.billing_environment) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_update BEFORE UPDATE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_delete BEFORE DELETE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id); CREATE TRIGGER IF NOT EXISTS migration_grants_commercial_terms_immutable BEFORE UPDATE ON product_grants WHEN OLD.source='migration' AND (NEW.source<>OLD.source OR NEW.offer_id<>OLD.offer_id OR NEW.valid_from<>OLD.valid_from OR NEW.valid_until<>OLD.valid_until OR NEW.period_cadence<>OLD.period_cadence OR NEW.storage_limit_bytes<>OLD.storage_limit_bytes OR NEW.egress_limit_bytes<>OLD.egress_limit_bytes OR NEW.operation_metric<>OLD.operation_metric OR NEW.operation_limit<>OLD.operation_limit OR NEW.purchase_id<>OLD.purchase_id) BEGIN SELECT RAISE(ABORT,'migration grant terms are immutable'); END`); e != nil {
+	if _, e = db.Exec(`DROP TRIGGER IF EXISTS purchase_grant_snapshots_no_late_insert; CREATE TRIGGER purchase_grant_snapshots_no_late_insert BEFORE INSERT ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND (snapshot_finalized=1 OR status='reconciliation_required')) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; DROP TRIGGER IF EXISTS billing_purchase_terms_immutable; CREATE TRIGGER billing_purchase_terms_immutable AFTER UPDATE ON billing_purchases WHEN (OLD.snapshot_finalized=1 OR OLD.status='reconciliation_required') AND (NEW.snapshot_finalized<>OLD.snapshot_finalized OR NEW.plan_code<>OLD.plan_code OR NEW.product_id<>OLD.product_id OR NEW.amount_minor<>OLD.amount_minor OR NEW.currency<>OLD.currency OR NEW.rate_card_id<>OLD.rate_card_id OR NEW.rate_card_mode<>OLD.rate_card_mode OR NEW.tax_classification<>OLD.tax_classification OR NEW.entitlement_period_start<>OLD.entitlement_period_start OR NEW.entitlement_period_end<>OLD.entitlement_period_end OR NEW.provider<>OLD.provider OR NEW.provider_reference<>OLD.provider_reference OR NEW.billing_environment<>OLD.billing_environment) BEGIN SELECT RAISE(ABORT,'billing purchase terms are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_snapshot_sets(purchase_id TEXT PRIMARY KEY REFERENCES billing_purchases(id),expected_count INTEGER NOT NULL CHECK(expected_count>0),capability_digest TEXT NOT NULL); DROP TRIGGER IF EXISTS purchase_grant_snapshot_sets_no_late_insert; CREATE TRIGGER purchase_grant_snapshot_sets_no_late_insert BEFORE INSERT ON purchase_grant_snapshot_sets WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=NEW.purchase_id AND (snapshot_finalized=1 OR status='reconciliation_required')) BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are finalized'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_update BEFORE UPDATE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshot_sets_immutable_delete BEFORE DELETE ON purchase_grant_snapshot_sets BEGIN SELECT RAISE(ABORT,'purchase grant snapshot sets are immutable'); END; CREATE TABLE IF NOT EXISTS purchase_grant_instances(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,purchase_id TEXT NOT NULL REFERENCES billing_purchases(id),offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL,period_cadence TEXT NOT NULL,storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(purchase_id,capability_id)); CREATE INDEX IF NOT EXISTS purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id); CREATE TRIGGER IF NOT EXISTS migration_grants_commercial_terms_immutable BEFORE UPDATE ON product_grants WHEN OLD.source='migration' AND (NEW.source<>OLD.source OR NEW.offer_id<>OLD.offer_id OR NEW.valid_from<>OLD.valid_from OR NEW.valid_until<>OLD.valid_until OR NEW.period_cadence<>OLD.period_cadence OR NEW.storage_limit_bytes<>OLD.storage_limit_bytes OR NEW.egress_limit_bytes<>OLD.egress_limit_bytes OR NEW.operation_metric<>OLD.operation_metric OR NEW.operation_limit<>OLD.operation_limit OR NEW.purchase_id<>OLD.purchase_id) BEGIN SELECT RAISE(ABORT,'migration grant terms are immutable'); END`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize purchase grant instances: %w", e)
 	}
-	if _, e = db.Exec(`DROP TRIGGER IF EXISTS billing_purchase_owner_immutable; CREATE TRIGGER billing_purchase_owner_immutable BEFORE UPDATE ON billing_purchases WHEN (OLD.snapshot_finalized=1 OR OLD.status='reconciliation_required') AND NEW.account_id<>OLD.account_id BEGIN SELECT RAISE(ABORT,'billing purchase ownership is immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_update BEFORE UPDATE ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=OLD.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_delete BEFORE DELETE ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=OLD.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_instances_immutable_update BEFORE UPDATE ON purchase_grant_instances BEGIN SELECT RAISE(ABORT,'purchase grant instances are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_instances_immutable_delete BEFORE DELETE ON purchase_grant_instances BEGIN SELECT RAISE(ABORT,'purchase grant instances are immutable'); END`); e != nil {
+	if _, e = db.Exec(`DROP TRIGGER IF EXISTS billing_purchase_owner_immutable; CREATE TRIGGER billing_purchase_owner_immutable BEFORE UPDATE ON billing_purchases WHEN (OLD.snapshot_finalized=1 OR OLD.status='reconciliation_required') AND NEW.account_id<>OLD.account_id BEGIN SELECT RAISE(ABORT,'billing purchase ownership is immutable'); END; DROP TRIGGER IF EXISTS billing_purchase_reconciliation_reason_immutable; CREATE TRIGGER billing_purchase_reconciliation_reason_immutable BEFORE UPDATE ON billing_purchases WHEN OLD.status='reconciliation_required' AND NEW.reconciliation_reason<>OLD.reconciliation_reason BEGIN SELECT RAISE(ABORT,'billing purchase reconciliation reason is immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_update BEFORE UPDATE ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=OLD.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_snapshots_immutable_delete BEFORE DELETE ON purchase_grant_snapshots WHEN EXISTS(SELECT 1 FROM billing_purchases WHERE id=OLD.purchase_id AND snapshot_finalized=1) BEGIN SELECT RAISE(ABORT,'purchase grant snapshots are finalized'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_instances_immutable_update BEFORE UPDATE ON purchase_grant_instances BEGIN SELECT RAISE(ABORT,'purchase grant instances are immutable'); END; CREATE TRIGGER IF NOT EXISTS purchase_grant_instances_immutable_delete BEFORE DELETE ON purchase_grant_instances BEGIN SELECT RAISE(ABORT,'purchase grant instances are immutable'); END`); e != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize purchase grant integrity: %w", e)
 	}
@@ -501,6 +505,27 @@ func migrateProductScopedKeys(db *sql.DB) error {
 		if _, err = tx.Exec(`CREATE TABLE mock_billing_events_new(id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(product_id,id),UNIQUE(account_id,product_id,period,event_type)); INSERT INTO mock_billing_events_new SELECT id,account_id,product_id,period,event_type,payload,created_at FROM mock_billing_events; DROP TABLE mock_billing_events; ALTER TABLE mock_billing_events_new RENAME TO mock_billing_events;`); err != nil {
 			return fmt.Errorf("migrate mock billing events: %w", err)
 		}
+	}
+	return tx.Commit()
+}
+
+func enforceUniquePurchaseProviderReferences(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var provider, environment, reference string
+	var count int
+	err = tx.QueryRow(`SELECT provider,billing_environment,provider_reference,COUNT(*) FROM billing_purchases WHERE provider_reference IS NOT NULL AND provider_reference<>'' GROUP BY provider,billing_environment,provider_reference HAVING COUNT(*)>1 ORDER BY provider,billing_environment,provider_reference LIMIT 1`).Scan(&provider, &environment, &reference, &count)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("inspect billing purchase provider references: %w", err)
+	}
+	if err == nil {
+		return fmt.Errorf("duplicate billing purchase provider reference: provider=%q environment=%q reference=%q count=%d", provider, environment, reference, count)
+	}
+	if _, err = tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS billing_purchases_provider_reference ON billing_purchases(provider,billing_environment,provider_reference) WHERE provider_reference IS NOT NULL AND provider_reference<>''`); err != nil {
+		return fmt.Errorf("enforce billing purchase provider reference uniqueness: %w", err)
 	}
 	return tx.Commit()
 }
@@ -1092,18 +1117,18 @@ func (s *Store) PutGrant(c context.Context, grant commerce.Grant) error {
 }
 
 type BillingPurchase struct {
-	ID, AccountID, ProductID, PlanCode, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, IntentState, ProviderState string
-	AmountMinor                                                                                                                                                                                                                                                                                                          int64
+	ID, AccountID, ProductID, PlanCode, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, IntentState, ProviderState, ReconciliationReason string
+	AmountMinor                                                                                                                                                                                                                                                                                                                                int64
 }
 type billingProviderEvent struct{ Provider, Environment, ProviderEventID, EventType, ReceivedAt, ProcessedAt, Status, Error string }
 
 func scanPurchase(row interface{ Scan(...any) error }) (BillingPurchase, error) {
 	var p BillingPurchase
-	e := row.Scan(&p.ID, &p.AccountID, &p.ProductID, &p.PlanCode, &p.RateCardID, &p.RateCardMode, &p.TaxClassification, &p.Currency, &p.AmountMinor, &p.BillingEnvironment, &p.Provider, &p.Status, &p.EntitlementPeriodStart, &p.EntitlementPeriodEnd, &p.ProviderReference, &p.CheckoutURL, &p.CheckoutRequestVersion, &p.CreatedAt, &p.UpdatedAt, &p.PaidAt, &p.FailedAt, &p.ExpiredAt, &p.IntentState, &p.ProviderState)
+	e := row.Scan(&p.ID, &p.AccountID, &p.ProductID, &p.PlanCode, &p.RateCardID, &p.RateCardMode, &p.TaxClassification, &p.Currency, &p.AmountMinor, &p.BillingEnvironment, &p.Provider, &p.Status, &p.EntitlementPeriodStart, &p.EntitlementPeriodEnd, &p.ProviderReference, &p.CheckoutURL, &p.CheckoutRequestVersion, &p.CreatedAt, &p.UpdatedAt, &p.PaidAt, &p.FailedAt, &p.ExpiredAt, &p.IntentState, &p.ProviderState, &p.ReconciliationReason)
 	return p, e
 }
 
-const purchaseColumns = `id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,tax_classification,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,provider_reference,checkout_url,checkout_request_version,created_at,updated_at,paid_at,failed_at,expired_at,intent_state,provider_state`
+const purchaseColumns = `id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,tax_classification,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,provider_reference,checkout_url,checkout_request_version,created_at,updated_at,paid_at,failed_at,expired_at,intent_state,provider_state,reconciliation_reason`
 
 func (s *Store) PurchaseGrantInstanceCount(c context.Context, customerID string) (int, error) {
 	var count int
@@ -1154,6 +1179,106 @@ func snapshotDigest(templates []commerce.GrantTemplate) string {
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return hex.EncodeToString(sum[:])
+}
+
+type purchaseAuthorityQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func validatePurchaseCommercialAuthority(c context.Context, q purchaseAuthorityQuerier, purchase BillingPurchase, requireFinalized bool) ([]commerce.GrantTemplate, error) {
+	required := []struct{ name, value string }{
+		{"purchase identity", purchase.ID}, {"account", purchase.AccountID}, {"product", purchase.ProductID},
+		{"offer", purchase.PlanCode}, {"rate card", purchase.RateCardID}, {"rate card mode", purchase.RateCardMode},
+		{"tax classification", purchase.TaxClassification}, {"currency", purchase.Currency},
+		{"provider", purchase.Provider}, {"billing environment", purchase.BillingEnvironment},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return nil, fmt.Errorf("commercial authority missing %s", field.name)
+		}
+	}
+	if purchase.AmountMinor < 0 {
+		return nil, fmt.Errorf("commercial authority has invalid amount")
+	}
+	from, fromErr := parseEntitlementTime(purchase.EntitlementPeriodStart)
+	until, untilErr := parseEntitlementTime(purchase.EntitlementPeriodEnd)
+	if fromErr != nil || untilErr != nil || !until.After(from) {
+		return nil, fmt.Errorf("commercial authority has invalid validity")
+	}
+	var finalized int
+	if err := q.QueryRowContext(c, `SELECT snapshot_finalized FROM billing_purchases WHERE id=?`, purchase.ID).Scan(&finalized); err != nil {
+		return nil, fmt.Errorf("read commercial authority finalization: %w", err)
+	}
+	if requireFinalized && finalized != 1 {
+		return nil, fmt.Errorf("commercial authority is not finalized")
+	}
+	if finalized != 0 && finalized != 1 {
+		return nil, fmt.Errorf("commercial authority has invalid finalization state")
+	}
+	var expectedCount int
+	var expectedDigest string
+	if err := q.QueryRowContext(c, `SELECT expected_count,capability_digest FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, purchase.ID).Scan(&expectedCount, &expectedDigest); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("commercial authority snapshot set missing")
+		}
+		return nil, fmt.Errorf("read commercial authority snapshot set: %w", err)
+	}
+	if expectedCount <= 0 || strings.TrimSpace(expectedDigest) == "" {
+		return nil, fmt.Errorf("commercial authority snapshot set is invalid")
+	}
+	rows, err := q.QueryContext(c, `SELECT capability_id,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit FROM purchase_grant_snapshots WHERE purchase_id=? ORDER BY capability_id`, purchase.ID)
+	if err != nil {
+		return nil, fmt.Errorf("read commercial authority snapshots: %w", err)
+	}
+	defer rows.Close()
+	templates := make([]commerce.GrantTemplate, 0, expectedCount)
+	for rows.Next() {
+		var template commerce.GrantTemplate
+		if err = rows.Scan(&template.CapabilityID, &template.Period, &template.Limits.StorageBytes, &template.Limits.EgressBytes, &template.Limits.OperationMetric, &template.Limits.OperationCount); err != nil {
+			return nil, fmt.Errorf("read commercial authority snapshot: %w", err)
+		}
+		if strings.TrimSpace(string(template.CapabilityID)) == "" {
+			return nil, fmt.Errorf("commercial authority snapshot capability is empty")
+		}
+		if template.Period != commerce.PeriodAnnual && template.Period != commerce.PeriodMonthly && template.Period != commerce.PeriodContinuous {
+			return nil, fmt.Errorf("commercial authority snapshot cadence is invalid")
+		}
+		if template.Limits.StorageBytes < 0 || template.Limits.EgressBytes < 0 || template.Limits.OperationCount < 0 || (template.Limits.OperationCount > 0 && template.Limits.OperationMetric == "") {
+			return nil, fmt.Errorf("commercial authority snapshot limits are invalid")
+		}
+		if commerce.ProductID(purchase.ProductID) == tpahubproduct.ProductID && !tpahubproduct.ValidCapability(template.CapabilityID) {
+			return nil, fmt.Errorf("commercial authority snapshot capability does not belong to product")
+		}
+		templates = append(templates, template)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("read commercial authority snapshots: %w", err)
+	}
+	if len(templates) != expectedCount {
+		return nil, fmt.Errorf("commercial authority snapshot count mismatch: expected=%d actual=%d", expectedCount, len(templates))
+	}
+	if snapshotDigest(templates) != expectedDigest {
+		return nil, fmt.Errorf("commercial authority snapshot digest mismatch")
+	}
+	return templates, nil
+}
+
+func markPurchaseReconciliationRequired(c context.Context, tx *sql.Tx, purchase BillingPurchase, reference, updatedAt string, authorityErr error) error {
+	reason := "commercial authority unavailable"
+	if authorityErr != nil {
+		reason = authorityErr.Error()
+	}
+	result, err := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',status='reconciliation_required',intent_state='reconciliation_required',provider_state='checkout_recovered_reconciliation_required',reconciliation_reason=?,updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND (provider_reference='' OR provider_reference=?) AND status IN ('pending','superseded','failed','expired','reconciliation_required')`, reference, reason, updatedAt, purchase.ID, purchase.Provider, purchase.BillingEnvironment, reference)
+	if err != nil {
+		return err
+	}
+	if count, countErr := result.RowsAffected(); countErr != nil {
+		return countErr
+	} else if count != 1 {
+		return fmt.Errorf("purchase checkout recovery state changed")
+	}
+	return nil
 }
 
 func (s *Store) ApplyPaymentTransition(c context.Context, transition commerce.PaymentTransition) error {
@@ -1271,7 +1396,7 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if grantErr = grantRows.Close(); grantErr != nil {
 		return BillingPurchase{}, grantErr
 	}
-	_, e = tx.ExecContext(c, `INSERT INTO billing_purchases(`+purchaseColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.ID, p.AccountID, p.ProductID, p.PlanCode, p.RateCardID, p.RateCardMode, p.TaxClassification, p.Currency, p.AmountMinor, p.BillingEnvironment, p.Provider, p.Status, p.EntitlementPeriodStart, p.EntitlementPeriodEnd, p.ProviderReference, p.CheckoutURL, p.CheckoutRequestVersion, p.CreatedAt, p.UpdatedAt, p.PaidAt, p.FailedAt, p.ExpiredAt, p.IntentState, p.ProviderState)
+	_, e = tx.ExecContext(c, `INSERT INTO billing_purchases(`+purchaseColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.ID, p.AccountID, p.ProductID, p.PlanCode, p.RateCardID, p.RateCardMode, p.TaxClassification, p.Currency, p.AmountMinor, p.BillingEnvironment, p.Provider, p.Status, p.EntitlementPeriodStart, p.EntitlementPeriodEnd, p.ProviderReference, p.CheckoutURL, p.CheckoutRequestVersion, p.CreatedAt, p.UpdatedAt, p.PaidAt, p.FailedAt, p.ExpiredAt, p.IntentState, p.ProviderState, p.ReconciliationReason)
 	if e != nil {
 		return BillingPurchase{}, e
 	}
@@ -1326,7 +1451,16 @@ func (s *Store) UpdatePurchaseCheckout(c context.Context, id, reference, checkou
 	if fromErr != nil || untilErr != nil || at.Before(from) || !at.Before(until) {
 		return fmt.Errorf("purchase validity is invalid")
 	}
-	res, e := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND status='pending' AND snapshot_finalized=0`, reference, checkoutURL, updatedAt, id)
+	if _, authorityErr := validatePurchaseCommercialAuthority(c, tx, purchase, false); authorityErr != nil {
+		if err = markPurchaseReconciliationRequired(c, tx, purchase, reference, updatedAt, authorityErr); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		return fmt.Errorf("commercial authority unavailable: %w", authorityErr)
+	}
+	res, e := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url=?,snapshot_finalized=1,provider_state='checkout_created',reconciliation_reason='',updated_at=? WHERE id=? AND status='pending' AND snapshot_finalized=0`, reference, checkoutURL, updatedAt, id)
 	if e != nil {
 		return e
 	}
@@ -1357,50 +1491,37 @@ func (s *Store) RecoverPurchaseCheckout(c context.Context, id, provider, environ
 	if err != nil {
 		return err
 	}
-	if purchase.Provider != provider || purchase.BillingEnvironment != environment {
+	if purchase.Provider != provider || purchase.BillingEnvironment != environment || (purchase.ProviderReference != "" && purchase.ProviderReference != reference) {
 		return fmt.Errorf("purchase checkout recovery authority mismatch")
+	}
+	if purchase.Status == "reconciliation_required" && purchase.ProviderReference == reference {
+		return tx.Commit()
+	}
+	_, authorityErr := validatePurchaseCommercialAuthority(c, tx, purchase, false)
+	if authorityErr != nil {
+		// Provider linkage is evidence, never replacement commercial authority.
+		// Preserve the exact local terms and route every intrinsic authority defect
+		// to durable, zero-access reconciliation before activation is attempted.
+		if err = markPurchaseReconciliationRequired(c, tx, purchase, reference, updatedAt, authorityErr); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	var snapshotFinalized int
 	if err = tx.QueryRowContext(c, `SELECT snapshot_finalized FROM billing_purchases WHERE id=?`, id).Scan(&snapshotFinalized); err != nil {
 		return err
 	}
-	if purchase.ProviderReference != "" && purchase.ProviderReference != reference {
-		return fmt.Errorf("purchase checkout recovery authority mismatch")
-	}
-	if purchase.ProviderReference == reference && (snapshotFinalized == 1 || purchase.Status == "reconciliation_required") {
+	if purchase.ProviderReference == reference && snapshotFinalized == 1 {
 		return tx.Commit()
 	}
-	from, fromErr := parseEntitlementTime(purchase.EntitlementPeriodStart)
-	until, untilErr := parseEntitlementTime(purchase.EntitlementPeriodEnd)
-	if fromErr != nil || untilErr != nil || !until.After(from) {
-		// Without complete durable local terms there is no authority from which
-		// to fabricate access. Preserve exact provider linkage in an immutable,
-		// fail-closed state; normal checkout creation is blocked until an operator
-		// can reconcile the durable commercial authority.
-		result, updateErr := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',status='reconciliation_required',intent_state='reconciliation_required',provider_state='checkout_recovered_reconciliation_required',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND (provider_reference='' OR provider_reference=?) AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, reference, updatedAt, id, provider, environment, reference)
-		if updateErr != nil {
-			return updateErr
-		}
-		if count, countErr := result.RowsAffected(); countErr != nil || count != 1 {
-			if countErr != nil {
-				return countErr
-			}
-			return fmt.Errorf("purchase checkout recovery state changed")
-		}
-		return tx.Commit()
-	}
-	result, err := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',snapshot_finalized=1,provider_state='checkout_created',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND (provider_reference='' OR provider_reference=?) AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, reference, updatedAt, id, provider, environment, reference)
+	result, err := tx.ExecContext(c, `UPDATE billing_purchases SET provider_reference=?,checkout_url='',snapshot_finalized=1,provider_state='checkout_created',reconciliation_reason='',updated_at=? WHERE id=? AND provider=? AND billing_environment=? AND (provider_reference='' OR provider_reference=?) AND snapshot_finalized=0 AND status IN ('pending','superseded','failed','expired')`, reference, updatedAt, id, provider, environment, reference)
 	if err != nil {
 		return err
 	}
 	if count, countErr := result.RowsAffected(); countErr != nil {
 		return countErr
 	} else if count != 1 {
-		var currentReference string
-		readErr := tx.QueryRowContext(c, `SELECT provider_reference FROM billing_purchases WHERE id=?`, id).Scan(&currentReference)
-		if readErr != nil || currentReference != reference {
-			return fmt.Errorf("purchase checkout recovery state changed")
-		}
+		return fmt.Errorf("purchase checkout recovery state changed")
 	}
 	return tx.Commit()
 }
@@ -1410,7 +1531,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		return e
 	}
 	defer tx.Rollback()
-	res, e := tx.ExecContext(c, `INSERT OR IGNORE INTO billing_provider_events(provider,environment,provider_event_id,event_type,received_at,status) VALUES(?,?,?,?,?,'processing')`, event.Provider, event.Environment, event.ProviderEventID, event.EventType, event.ReceivedAt)
+	res, e := tx.ExecContext(c, `INSERT OR IGNORE INTO billing_provider_events(provider,environment,provider_event_id,event_type,received_at,status,purchase_id,provider_reference) VALUES(?,?,?,?,?,'processing',?,?)`, event.Provider, event.Environment, event.ProviderEventID, event.EventType, event.ReceivedAt, purchaseID, providerReference)
 	if e != nil {
 		return e
 	}
@@ -1422,7 +1543,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 	if e != nil {
 		return e
 	}
-	if p.ProviderReference != "" && p.ProviderReference != providerReference {
+	if p.Provider != event.Provider || p.BillingEnvironment != event.Environment || (p.ProviderReference != "" && p.ProviderReference != providerReference) {
 		return fmt.Errorf("provider-reference-mismatch")
 	}
 	if p.Status == "reconciliation_required" {
@@ -1435,7 +1556,11 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET provider_state=?,updated_at=? WHERE id=? AND status='reconciliation_required'`, providerState, event.ReceivedAt, purchaseID); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(c, `UPDATE billing_provider_events SET processed_at=?,status='reconciliation_required',error='commercial authority unavailable' WHERE provider=? AND environment=? AND provider_event_id=?`, event.ReceivedAt, event.Provider, event.Environment, event.ProviderEventID); e != nil {
+		reason := p.ReconciliationReason
+		if reason == "" {
+			reason = "commercial authority unavailable"
+		}
+		if _, e = tx.ExecContext(c, `UPDATE billing_provider_events SET processed_at=?,status='reconciliation_required',error=? WHERE provider=? AND environment=? AND provider_event_id=?`, event.ReceivedAt, reason, event.Provider, event.Environment, event.ProviderEventID); e != nil {
 			return e
 		}
 		return tx.Commit()
@@ -1451,6 +1576,18 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		payableTerminal := (p.Status == "failed" || p.Status == "expired") && p.ProviderReference != ""
 		if (p.Status != "pending" && p.Status != "superseded" && !payableTerminal) || p.AmountMinor != amount || p.Currency != currency {
 			return fmt.Errorf("payment-verification-failed")
+		}
+		if _, authorityErr := validatePurchaseCommercialAuthority(c, tx, p, true); authorityErr != nil {
+			if e = markPurchaseReconciliationRequired(c, tx, p, providerReference, event.ReceivedAt, authorityErr); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(c, `UPDATE billing_purchases SET provider_state='provider_success_unreconciled',updated_at=? WHERE id=? AND status='reconciliation_required'`, event.ReceivedAt, purchaseID); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(c, `UPDATE billing_provider_events SET processed_at=?,status='reconciliation_required',error=? WHERE provider=? AND environment=? AND provider_event_id=?`, event.ReceivedAt, authorityErr.Error(), event.Provider, event.Environment, event.ProviderEventID); e != nil {
+				return e
+			}
+			return tx.Commit()
 		}
 		var snapshotFinalized int
 		if e = tx.QueryRowContext(c, `SELECT snapshot_finalized FROM billing_purchases WHERE id=?`, purchaseID).Scan(&snapshotFinalized); e != nil {

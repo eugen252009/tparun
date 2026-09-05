@@ -160,11 +160,11 @@ func TestUnfinalizedPurchaseCannotActivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "unfinalized-event", OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: p.ProviderReference, AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: from}, Provider: p.Provider, Environment: p.BillingEnvironment, Kind: "success", AmountMinor: p.AmountMinor, Currency: p.Currency})
-	if err == nil {
-		t.Fatal("unfinalized purchase activated")
+	if err != nil {
+		t.Fatalf("unfinalized payment evidence was not retained: %v", err)
 	}
 	stored, _ := s.Purchase(ctx, p.ID)
-	if stored.Status != "pending" {
+	if stored.Status != "reconciliation_required" {
 		t.Fatalf("unfinalized purchase status=%s", stored.Status)
 	}
 }
@@ -177,11 +177,11 @@ func TestMalformedFinalizedValidityRollsBackActivation(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := s.ApplyPaymentTransition(context.Background(), commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "bad-" + tc.name, OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: p.ProviderReference, AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: time.Now()}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: p.AmountMinor, Currency: p.Currency})
-			if err == nil {
-				t.Fatal("malformed validity activated")
+			if err != nil {
+				t.Fatalf("malformed-authority payment evidence was not retained: %v", err)
 			}
 			got, _ := s.Purchase(context.Background(), p.ID)
-			if got.Status != "pending" {
+			if got.Status != "reconciliation_required" {
 				t.Fatalf("status=%s", got.Status)
 			}
 			n, _ := s.PurchaseGrantInstanceCount(context.Background(), p.AccountID)

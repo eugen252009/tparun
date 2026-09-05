@@ -16,11 +16,31 @@ A late payment can therefore mark a purchase paid while its original immutable
 entitlement is already expired. It does not create a replacement interval.
 Duplicate or delayed events cannot move grant dates.
 
-If a historical/incomplete purchase lacks a valid durable local interval, the
-provider reference is retained and the purchase enters
-`reconciliation_required`. Provider events are recorded with that state, no
-grants activate, and new checkout creation for the same account/product/provider
-environment is blocked. Positive payment evidence wins over later failure or
-expiry notifications. This state has no automatic repair path: an operator must
-inspect the purchase and provider event evidence and restore trustworthy local
-commercial authority through a separately audited recovery procedure.
+Before automatic recovery, the Hub validates the complete local commercial
+authority using the same canonical snapshot count and digest rules as normal
+activation. This includes purchase/customer/product/offer/rate-card identity,
+amount and currency, exact validity, snapshot finalization state, snapshot-set
+metadata, every snapshot row, supported cadence and limits, and product-owned
+capability identity. Snapshot rows are selected only by the exact purchase key.
+Validation and recovery finalization share one SQLite transaction; finalized
+snapshot triggers prevent later changes.
+
+If a historical/incomplete purchase lacks a valid durable interval or complete
+activatable snapshot authority, the provider reference is retained and the
+purchase enters `reconciliation_required` without being falsely finalized.
+Provider events record the purchase ID, provider/environment, provider
+reference, event ID/type, positive payment state, and the specific authority
+failure. No grant instance or compatibility projection is created, and new
+checkout creation for the same account/product/provider environment is blocked.
+Positive payment evidence wins over later failure or expiry notifications and
+survives restart.
+
+Provider references are unique for each provider/environment pair when non-empty.
+Database opening explicitly rejects historical duplicate non-empty references;
+it never picks, merges, or deletes one. Empty references remain available to
+multiple unlinked pending purchases.
+
+`reconciliation_required` has no automatic repair path. An operator can inspect
+`billing_purchases.reconciliation_reason` together with the correlated
+`billing_provider_events` purchase/reference columns, then restore trustworthy
+local commercial authority only through a separately audited recovery procedure.

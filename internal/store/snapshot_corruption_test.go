@@ -87,15 +87,15 @@ func TestCorruptedFinalizedSnapshotCannotActivatePartially(t *testing.T) {
 			if mutationErr != nil {
 				t.Fatal(mutationErr)
 			}
-			if err := s.ApplyPaymentTransition(context.Background(), paymentForSnapshot(purchase, now)); err == nil {
-				t.Fatal("corrupt snapshot activated")
+			if err := s.ApplyPaymentTransition(context.Background(), paymentForSnapshot(purchase, now)); err != nil {
+				t.Fatalf("corrupt snapshot evidence was not retained: %v", err)
 			}
 			var n int
 			if err := s.db.QueryRow(`SELECT COUNT(*) FROM purchase_grant_instances WHERE purchase_id=?`, purchase.ID).Scan(&n); err != nil || n != 0 {
 				t.Fatalf("partial instances=%d err=%v", n, err)
 			}
 			var status string
-			if err := s.db.QueryRow(`SELECT status FROM billing_purchases WHERE id=?`, purchase.ID).Scan(&status); err != nil || status != "pending" {
+			if err := s.db.QueryRow(`SELECT status FROM billing_purchases WHERE id=?`, purchase.ID).Scan(&status); err != nil || status != "reconciliation_required" {
 				t.Fatalf("purchase status=%s err=%v", status, err)
 			}
 		})

@@ -23,6 +23,8 @@ type checkoutTransport struct {
 	bodies   []string
 	status   int
 	keys     []string
+	refs     map[string]string
+	nextRef  int
 }
 
 func (t *checkoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -33,6 +35,18 @@ func (t *checkoutTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	body := `{"id":"cs_test_1","url":"https://checkout.test/cs_test_1"}`
 	if strings.HasSuffix(r.URL.Path, "/customers") {
 		body = `{"id":"cus_test_1"}`
+	} else {
+		if t.refs == nil {
+			t.refs = make(map[string]string)
+		}
+		key := r.Header.Get("Idempotency-Key")
+		ref := t.refs[key]
+		if ref == "" {
+			t.nextRef++
+			ref = fmt.Sprintf("cs_test_%d", t.nextRef)
+			t.refs[key] = ref
+		}
+		body = fmt.Sprintf(`{"id":%q,"url":%q}`, ref, "https://checkout.test/"+ref)
 	}
 	status := t.status
 	if status == 0 {
