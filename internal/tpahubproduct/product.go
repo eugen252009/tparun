@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	ProductID commerce.ProductID = "tpa-hub"
+	ProductID      commerce.ProductID = "tpa-hub"
+	NanoPriceMinor int64              = 500
 
 	CapabilityRepositoryCreate      commerce.CapabilityID = "repository.create"
 	CapabilityRepositoryPublish     commerce.CapabilityID = "repository.publish"
@@ -29,7 +30,7 @@ func ValidCapability(capability commerce.CapabilityID) bool {
 }
 
 func NanoOffer() commerce.Offer {
-	return commerce.Offer{ID: "nano", ProductID: ProductID, Description: "TPA Hub Nano annual plan", Currency: "EUR", AmountMinor: 500, TaxClass: "saas-personal", Grants: []commerce.GrantTemplate{
+	return commerce.Offer{ID: "nano", ProductID: ProductID, Description: "TPA Hub Nano annual plan", Currency: "EUR", AmountMinor: NanoPriceMinor, TaxClass: "saas-personal", Grants: []commerce.GrantTemplate{
 		{CapabilityID: CapabilityRepositoryCreate, Period: commerce.PeriodAnnual},
 		{CapabilityID: CapabilityRepositoryPublish, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: NanoStorageBytes}},
 		{CapabilityID: CapabilityRepositoryDownload, Period: commerce.PeriodAnnual, Limits: commerce.Limits{EgressBytes: NanoEgressBytes}},

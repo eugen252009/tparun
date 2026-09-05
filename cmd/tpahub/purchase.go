@@ -41,7 +41,7 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if businessUse {
 		classification = TaxSaaSBusiness
 	}
-	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, ProductID: string(offer.ProductID), PlanCode: offer.ID, RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, CheckoutRequestVersion: "v2", AmountMinor: card.FixedPlanAmountsMinor[offer.ID], BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
+	purchase := store.BillingPurchase{ID: purchaseID, AccountID: account, ProductID: string(offer.ProductID), PlanCode: offer.ID, RateCardID: card.ID, RateCardMode: string(card.Mode), TaxClassification: string(classification), Currency: card.Currency, CheckoutRequestVersion: "v2", AmountMinor: offer.AmountMinor, BillingEnvironment: string(BillingEnvironmentTest), Provider: "stripe", Status: "pending", EntitlementPeriodStart: period.Start.Format(time.RFC3339Nano), EntitlementPeriodEnd: period.End.Format(time.RFC3339Nano), CreatedAt: created, UpdatedAt: created}
 	purchase, err = s.db.CreatePendingPurchase(ctx, purchase, created, offer.Grants...)
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, err

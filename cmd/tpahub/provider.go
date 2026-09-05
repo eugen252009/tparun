@@ -7,6 +7,7 @@ import (
 
 	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/payments"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 type BillingEnvironment = payments.Environment
@@ -103,7 +104,7 @@ func validateFinalized(f FinalizedBillingPeriod) error {
 			start, startErr = time.Parse("2006-01-02", parts[0])
 			end, endErr = time.Parse("2006-01-02", parts[1])
 		}
-		if cardErr != nil || validateRateCard(card) != nil || f.PlanCode != "nano" || f.Currency != "EUR" || f.TotalAmountMinor != 500 || startErr != nil || endErr != nil || !end.Equal(start.AddDate(1, 0, 0)) {
+		if cardErr != nil || validateRateCard(card) != nil || f.PlanCode != "nano" || f.Currency != "EUR" || f.TotalAmountMinor != tpahubproduct.NanoOffer().AmountMinor || startErr != nil || endErr != nil || !end.Equal(start.AddDate(1, 0, 0)) {
 			return providerError{Code: "provider-invalid-request", Cause: fmt.Errorf("invalid production Nano finalization")}
 		}
 	}

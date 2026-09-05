@@ -98,7 +98,7 @@ type MockBillingProvider struct {
 }
 
 func productionNanoRateCard() RateCard {
-	return RateCard{ID: "production-nano-v1", Mode: RateCardProduction, PlanCode: "nano", BillingCadence: CadenceAnnual, Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": 500}}
+	return RateCard{ID: "production-nano-v1", Mode: RateCardProduction, PlanCode: "nano", BillingCadence: CadenceAnnual, Currency: "EUR", FixedPlanAmountsMinor: map[string]int64{"nano": tpahubproduct.NanoOffer().AmountMinor}}
 }
 
 var productionNanoRateCardV1 = productionNanoRateCard()
@@ -284,7 +284,8 @@ func validateRateCard(c RateCard) error {
 		}
 	}
 	if c.Mode == RateCardProduction {
-		if c.ID != "production-nano-v1" || c.PlanCode != "nano" || c.Currency != "EUR" || c.BillingCadence != CadenceAnnual || c.FixedPlanAmountsMinor["nano"] != 500 || len(c.FixedPlanAmountsMinor) != 1 {
+		offer := tpahubproduct.NanoOffer()
+		if c.ID != "production-nano-v1" || c.PlanCode != offer.ID || c.Currency != offer.Currency || c.BillingCadence != CadenceAnnual || c.FixedPlanAmountsMinor[offer.ID] != offer.AmountMinor || len(c.FixedPlanAmountsMinor) != 1 {
 			return fmt.Errorf("invalid production Nano rate card")
 		}
 	}

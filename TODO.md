@@ -243,7 +243,7 @@ restart replay. Direct evidence is in
 
 | ID     | Status | Requirement / Invariant                                                                    | Required Work                           | Required Verification    | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------------------------ | --------------------------------------- | ------------------------ | -------- |
-| P1.2.1 | TODO   | Price must have one authoritative source                                                   | Consolidate rate card/offer price       | Checkout amount test     |          |
+| P1.2.1 | DONE — READY FOR INDEPENDENT REVIEW | Price must have one authoritative source | Consolidate rate card/offer price | Checkout amount test | `tpahubproduct.NanoOffer().AmountMinor` is the authoritative current Nano price; production rate-card and checkout amounts derive from it. Mock rate-card amounts remain explicitly virtual/test-only. `cmd/tpahub/production_rate_card_test.go` and `purchase_test.go` verify consistency. |
 | P1.2.2 | TODO   | Cadence must have one authoritative source                                                 | Consolidate cadence                     | Offer snapshot test      |          |
 | P1.2.3 | TODO   | Grant limits must have one authoritative source                                            | Consolidate limits                      | Grant assertion          |          |
 | P1.2.4 | TODO   | Offer versions must be immutable once purchased                                            | Introduce stable offer/version identity | Historical purchase test |          |
