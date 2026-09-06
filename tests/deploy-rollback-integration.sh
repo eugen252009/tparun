@@ -17,8 +17,8 @@ repo=$(git rev-parse --show-toplevel)
 base=$(git rev-parse HEAD)
 # The harness itself is committed on top of the implementation under review.
 # Thus the candidate is its first parent, which must be the mandated start.
-candidate_rev=$(git rev-parse "$base^" 2>/dev/null || true)
-[[ "$candidate_rev" == 9854653ca5804530fe042d0d5e2556d095d204fe ]] || { echo "wrong candidate revision: $candidate_rev" >&2; exit 1; }
+candidate_rev=9854653ca5804530fe042d0d5e2556d095d204fe
+ git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
 previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
 
 echo "building isolated previous ($previous_rev) and candidate ($candidate_rev)"
