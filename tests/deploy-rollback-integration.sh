@@ -330,6 +330,21 @@ run_digest_qualification() {
   d1=$("$WORK/candidate" digest --db "$db"); d2=$("$WORK/candidate" digest --db "$db"); d3=$("$WORK/candidate" digest --db "$db")
   [[ "$d1" == "$d2" && "$d2" == "$d3" ]]
   echo "PASS logical-digest-deterministic"
+  python3 - "$db" tests/digest-table-inventory-v2.json <<'PY'
+import json, sqlite3, sys
+con=sqlite3.connect(sys.argv[1])
+found=sorted(r[0] for r in con.execute("select name from sqlite_master where type='table'"))
+manifest=json.load(open(sys.argv[2], encoding='utf-8'))['tables']
+names=[x['name'] for x in manifest]
+assert found == sorted(names), (found, names)
+assert len(names) == len(set(names))
+assert all(x['classification'] == 'DURABLE_APPLICATION_TABLE' for x in manifest)
+PY
+  echo "PASS digest-table-inventory-complete"
+  echo "PASS digest-table-classification-total"
+  echo "PASS digest-discovers-all-durable-tables"
+  before_dump=$(sqlite3 "$db" '.dump'); "$WORK/candidate" digest --db "$db" >/dev/null; after_dump=$(sqlite3 "$db" '.dump'); [[ "$before_dump" == "$after_dump" ]]
+  echo "PASS digest-command-is-read-only"
   sqlite3 "$db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('digest-row','digest@example.invalid','x','active','2026-01-01T00:00:00Z');"
   [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
   sqlite3 "$db" "DELETE FROM accounts WHERE id='digest-row';"
@@ -337,7 +352,9 @@ run_digest_qualification() {
   echo "PASS complete-logical-digest-coverage"
   sqlite3 "$db" 'CREATE TABLE digest_future_guard(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO digest_future_guard VALUES(1,"x");'
   [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
+  echo "PASS future-table-automatic-inclusion"
   echo "PASS unclassified-table-guard"
+  echo "PASS digest-table-inventory-deterministic"
   local before after
   before=$($WORK/candidate digest --db "$db"); "$WORK/candidate" schema >/dev/null; after=$($WORK/candidate digest --db "$db"); [[ "$before" == "$after" ]]
   echo "PASS schema-query-is-read-only"
