@@ -55,7 +55,21 @@ case "$op" in
    if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_FAILURE:-}" == startup ]]; then exit 1; fi
    TPAHUB_DATA_DIR="$TPAHUB_TEST_DATA" TPAHUB_LISTEN="$TPAHUB_TEST_LISTEN" \
      "$rel/tpahub" serve >>"$TPAHUB_TEST_SERVICE_LOG" 2>&1 &
-   echo $! >"$pidfile" ;;
+   echo $! >"$pidfile"
+   if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_FAILURE:-}" == candidate-wal ]]; then
+     python3 - "$TPAHUB_TEST_DATA/tpahub.db" "$TPAHUB_TEST_WAL_OBSERVED" <<'PY'
+import os, sqlite3, sys, time
+p, marker = sys.argv[1:]
+c = sqlite3.connect(p); assert c.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+c.execute("INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('candidate-wal','candidate-wal@example.invalid','x','active','2026-01-01T00:00:00Z')"); c.commit()
+for _ in range(40):
+    if os.path.exists(p+'-wal') and os.path.getsize(p+'-wal') > 0 and os.path.exists(p+'-shm'):
+        open(marker, 'w').write(str(os.path.getsize(p+'-wal'))); break
+    time.sleep(.025)
+else: raise SystemExit('SQLite WAL/SHM was not observed')
+time.sleep(1)
+PY
+   fi ;;
  is-active)
    [[ -s $pidfile ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null ;;
  *) exit 2;;
@@ -153,9 +167,10 @@ SQL
   local port=$((18000 + RANDOM % 1000))
   export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
-  export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
+  export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid" TPAHUB_TEST_WAL_OBSERVED="$ROOT/candidate-wal-observed"
   local health_mode="${failure#health:}"
   [[ "$failure" == previous-health-failure ]] && health_mode=previous-health-failure
+  [[ "$failure" == candidate-wal ]] && health_mode=http_failure
   [[ "$failure" == after-promotion-before-start ]] && health_mode=healthy
   local service_failure="${failure#health:}"
   [[ "$failure" == wal ]] && service_failure=startup
@@ -188,6 +203,16 @@ EOF
     [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
     sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
     [[ "$("$WORK/candidate" digest --db "$db")" == "$before" ]]
+    if [[ "$failure" == candidate-wal ]]; then
+      [[ -s "$TPAHUB_TEST_WAL_OBSERVED" ]]
+      [[ ! -e "$db-wal" && ! -e "$db-shm" ]]
+      echo "PASS candidate-era-wal-shm-observed"
+      echo "PASS candidate-stopped-before-db-restore"
+      echo "PASS candidate-sidecars-neutralized-before-restore"
+      echo "PASS restored-v1-digest-after-candidate-wal"
+      echo "PASS previous-release-sidecar-provenance"
+      echo "PASS candidate-era-wal-contamination-prevented"
+    fi
   fi
   echo "PASS $name"
 }
@@ -246,6 +271,7 @@ run_case restored-schema-incompatible-fail-closed restored-schema-incompatible
 run_case previous-health-failure-is-manual-intervention previous-health-failure
 run_case migration-rejection-preserves-v1 migration-rejection
 run_case real-wal-shm-restore wal
+run_case candidate-era-wal-contamination-prevented candidate-wal
 
 make_v2_db() {
   local data=$1 db=$2
