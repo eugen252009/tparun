@@ -371,8 +371,20 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "publishes" && r.Method == "POST" {
-		if _, e := s.repositoryPolicy().AuthorizeMutation(r.Context(), accountID(r), id); e != nil {
-			bad(w, http.StatusForbidden, e.Error())
+		// Keep the domain decision precise, but cloak private repositories from
+		// foreign customers at the HTTP boundary. The direct lookup here is
+		// not authorization; it only selects the existing visibility contract.
+		repo, lookupErr := s.db.Repository(r.Context(), id)
+		if lookupErr != nil {
+			bad(w, http.StatusNotFound, "repository not found")
+			return
+		}
+		if _, authErr := s.repositoryPolicy().AuthorizeMutation(r.Context(), accountID(r), id); authErr != nil {
+			if repo.Visibility == "private" {
+				bad(w, http.StatusNotFound, "repository not found")
+			} else {
+				bad(w, http.StatusForbidden, authErr.Error())
+			}
 			return
 		}
 		s.upload(w, r, id)

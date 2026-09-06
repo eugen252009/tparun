@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,6 +16,8 @@ import (
 // commits an already-authorized publication; it does not interpret TPA
 // entitlements or ownership.
 type RepositoryPolicy struct{ server *server }
+
+var ErrRepositoryOwnerMismatch = errors.New("repository owner mismatch")
 
 func (s *server) repositoryPolicy() RepositoryPolicy { return RepositoryPolicy{server: s} }
 
@@ -38,7 +41,7 @@ func (p RepositoryPolicy) AuthorizeMutation(ctx context.Context, accountID, repo
 		return store.Repository{}, err
 	}
 	if strings.TrimSpace(accountID) == "" || r.AccountID != accountID {
-		return store.Repository{}, fmt.Errorf("repository owner mismatch")
+		return store.Repository{}, ErrRepositoryOwnerMismatch
 	}
 	a, err := p.server.db.AccountByID(ctx, accountID)
 	if err != nil {

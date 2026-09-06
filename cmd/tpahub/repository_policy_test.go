@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/eugen252009/tpahub/internal/store"
@@ -21,6 +23,39 @@ func TestRepositoryPolicySeparatesOwnershipFromEntitlement(t *testing.T) {
 	}
 	if _, _, err := s.repositoryPolicy().AuthorizePublication(ctx, "a", "owned"); err != nil {
 		t.Fatalf("owner with effective Nano entitlement was denied: %v", err)
+	}
+}
+
+func TestForeignPrivatePublicationIsCloaked(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	if err := s.db.CreateAccount(ctx, store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateSession(ctx, store.Session{ID: "b-session", AccountID: "b", TokenPrefix: "tph_s_b"}, store.HashToken("tph_s_b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "private-owned", AccountID: "a", Name: "private-owned", Visibility: "private", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	request := func(id string) int {
+		r, err := http.NewRequest(http.MethodPost, h.URL+"/v1/repositories/"+id+"/publishes", strings.NewReader("not a deb"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Authorization", "Bearer tph_s_b")
+		response, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	if got := request("private-owned"); got != http.StatusNotFound {
+		t.Fatalf("foreign private publication status=%d, want 404", got)
+	}
+	if got := request("does-not-exist"); got != http.StatusNotFound {
+		t.Fatalf("missing publication status=%d, want 404", got)
 	}
 }
 
