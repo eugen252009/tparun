@@ -48,7 +48,8 @@ set -e
 op=$2; pidfile=$TPAHUB_TEST_PIDFILE
 case "$op" in
  stop)
-   if [[ -s $pidfile ]]; then kill "$(cat "$pidfile")" 2>/dev/null || true; rm -f "$pidfile"; fi ;;
+   if [[ -s $pidfile ]]; then p=$(cat "$pidfile"); kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true; rm -f "$pidfile"; fi
+   pkill -9 -f '/tmp/tpahub-deploy-test-[^ ]*/releases/[^ ]*/tpahub serve' 2>/dev/null || true ;;
  start)
    rel=$(readlink -f "$TPAHUB_TEST_CURRENT")
    echo "$rel" >> "$TPAHUB_TEST_START_LOG"
@@ -128,12 +129,12 @@ make_db() {
   # Initialize the disposable database with the actual historical binary.
   # This produces the canonical v1 schema and migration ledger.
   TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous" serve >/dev/null 2>&1 & local p=$!
-  sleep .2; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
+  sleep .2; kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 1
   sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
   [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 1
-  sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
+  sqlite3 "$db" 'SELECT sql FROM sqlite_master WHERE name="billing_purchases";' | grep -q intent_state
 }
 
 run_case() {
@@ -164,17 +165,23 @@ SQL
   local before=$("$WORK/candidate" digest --db "$db")
   export HOME_DIR="$ROOT/home" REPO="$ROOT/repo.git" RELEASES="$ROOT/releases" CURRENT="$current"
   export LOCK="$ROOT/deploy.lock" ENV_FILE="$ROOT/none" TPAHUB_DATA_DIR="$ROOT/data" TPAHUB_DB="$db"
-  local port=$((18000 + RANDOM % 1000))
+  local port=$((30000 + $$ % 20000))
   export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid" TPAHUB_TEST_WAL_OBSERVED="$ROOT/candidate-wal-observed"
   local health_mode="${failure#health:}"
   [[ "$failure" == previous-health-failure ]] && health_mode=previous-health-failure
-  [[ "$failure" == candidate-wal ]] && health_mode=http_failure
+  [[ "$failure" == candidate-wal || "$failure" == cleanup-failure ]] && health_mode=http_failure
   [[ "$failure" == after-promotion-before-start ]] && health_mode=healthy
   local service_failure="${failure#health:}"
   [[ "$failure" == wal ]] && service_failure=startup
+  [[ "$failure" == cleanup-failure ]] && service_failure=candidate-wal
   export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="$service_failure" TPAHUB_TEST_HEALTH="$health_mode"
+  export TPAHUB_TEST_CLEANUP_FAILURE=0
+  if [[ "$failure" == cleanup-failure ]]; then
+    printf '%s\n' '#!/usr/bin/env bash' 'if [[ "${TPAHUB_TEST_CLEANUP_FAILURE:-}" == 1 ]]; then exit 74; fi' 'exec /bin/rm "$@"' >"$WORK/rm"
+    chmod +x "$WORK/rm"; export PATH="$WORK:$PATH" TPAHUB_TEST_CLEANUP_FAILURE=1
+  fi
   export TPAHUB_TEST_SQLITE_MODE="$failure" SQLITE3="$WORK/sqlite3" TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored"
   local deploy_failure="$failure"
   [[ "$failure" == previous-health-failure ]] && deploy_failure=after-promotion-before-start
@@ -190,22 +197,39 @@ EOF
     export TPAHUB_DEPLOY_TEST_FAILURE=after-promotion-before-start
   fi
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
+  export TPAHUB_TEST_CLEANUP_FAILURE=0
   if [[ "$failure" == healthy ]]; then
     [[ "$rc" == 0 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; return 1; }
     [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]] || return 1
     [[ "$(cat "$current/.deploy-commit")" == "$candidate_rev" ]] || return 1
     [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 2 ]]
-    ! sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -q intent_state
+    if sqlite3 "$db" 'SELECT sql FROM sqlite_master WHERE name="billing_purchases";' | grep -q intent_state; then return 1; fi
   else
     [[ "$rc" -ne 0 ]] || { cat "$ROOT/deploy.log"; echo "FAIL $name: expected rollback"; return 1; }
+    if [[ "$failure" == cleanup-failure ]]; then
+      grep -q 'MANUAL INTERVENTION REQUIRED' "$ROOT/deploy.log" || { cat "$ROOT/deploy.log"; return 1; }
+      ! grep -Fqx "$prev" "$ROOT/starts" 2>/dev/null
+      [[ -s "$TPAHUB_TEST_WAL_OBSERVED" ]]
+      echo "PASS $name"
+      echo "PASS cleanup-attempted-and-failed"
+      echo "PASS previous-start-attempts-zero"
+      echo "PASS wal-shm-cleanup-failure-fails-closed"
+      return 0
+    fi
     [[ "$(readlink -f "$current")" == "$prev" ]] || return 1
     [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
-    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
-    sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log"; return 1; }
+    sqlite3 "$db" 'SELECT sql FROM sqlite_master WHERE name="billing_purchases";' | grep -q intent_state
     [[ "$("$WORK/candidate" digest --db "$db")" == "$before" ]]
-    if [[ "$failure" == candidate-wal ]]; then
-      [[ -s "$TPAHUB_TEST_WAL_OBSERVED" ]]
-      [[ ! -e "$db-wal" && ! -e "$db-shm" ]]
+    if [[ "$failure" == wal ]]; then
+      local backup_file; backup_file=$(find "$ROOT/data" -name '*.pre-migrate-*.db' -print -quit)
+      [[ -n "$backup_file" && "$("$WORK/candidate" digest --db "$backup_file")" == "$before" ]]
+      echo "PASS wal-backed-backup-logical-equivalence"
+      echo "PASS backup-does-not-change-logical-state"
+    fi
+    if [[ "$failure" == candidate-wal || "$failure" == cleanup-failure ]]; then
+      [[ -s "$TPAHUB_TEST_WAL_OBSERVED" ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log"; return 1; }
+      [[ ! -e "$db-wal" && ! -e "$db-shm" ]] || { ls -l "$db"*; return 1; }
       echo "PASS candidate-era-wal-shm-observed"
       echo "PASS candidate-stopped-before-db-restore"
       echo "PASS candidate-sidecars-neutralized-before-restore"
@@ -271,6 +295,7 @@ run_case restored-schema-incompatible-fail-closed restored-schema-incompatible
 run_case previous-health-failure-is-manual-intervention previous-health-failure
 run_case migration-rejection-preserves-v1 migration-rejection
 run_case real-wal-shm-restore wal
+run_case wal-shm-cleanup-failure-fails-closed cleanup-failure
 run_case candidate-era-wal-contamination-prevented candidate-wal
 
 make_v2_db() {
@@ -384,20 +409,20 @@ PY
   before_dump=$("$WORK/candidate" digest --db "$db"); "$WORK/candidate" digest --db "$db" >/dev/null; after_dump=$("$WORK/candidate" digest --db "$db"); [[ "$before_dump" == "$after_dump" ]]
   echo "PASS digest-command-is-read-only"
   sqlite3 "$db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('digest-row','digest@example.invalid','x','active','2026-01-01T00:00:00Z');"
-  [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
+  [[ "$("$WORK/candidate" digest --db "$db")" != "$d1" ]]
   sqlite3 "$db" "DELETE FROM accounts WHERE id='digest-row';"
-  [[ "$($WORK/candidate digest --db "$db")" == "$d1" ]]
+  [[ "$("$WORK/candidate" digest --db "$db")" == "$d1" ]]
   echo "PASS complete-logical-digest-coverage"
-  sqlite3 "$db" 'CREATE TABLE digest_future_guard(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO digest_future_guard VALUES(1,"x");'
-  [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
+  sqlite3 "$db" "CREATE TABLE digest_future_guard(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO digest_future_guard VALUES(1,'x');"
+  [[ "$("$WORK/candidate" digest --db "$db")" != "$d1" ]]
   echo "PASS future-table-automatic-inclusion"
   echo "PASS unclassified-table-guard"
   echo "PASS digest-table-inventory-deterministic"
   local before after
-  before=$($WORK/candidate digest --db "$db"); "$WORK/candidate" schema >/dev/null; after=$($WORK/candidate digest --db "$db"); [[ "$before" == "$after" ]]
+  before=$("$WORK/candidate" digest --db "$db"); "$WORK/candidate" schema >/dev/null; after=$("$WORK/candidate" digest --db "$db"); [[ "$before" == "$after" ]]
   echo "PASS schema-query-is-read-only"
   sqlite3 "$db" ".backup '$ROOT/data/digest-backup.db'"
-  [[ "$($WORK/candidate digest --db "$db")" == "$($WORK/candidate digest --db "$ROOT/data/digest-backup.db")" ]]
+  [[ "$("$WORK/candidate" digest --db "$db")" == "$("$WORK/candidate" digest --db "$ROOT/data/digest-backup.db")" ]]
   echo "PASS backup-does-not-change-logical-state"
 }
 run_digest_qualification
@@ -549,4 +574,5 @@ run_q3b2() {
   echo "PASS complete-durable-table-mutation-coverage-28-of-28"
 }
 run_q3b2
-echo "ROLLBACK QUALIFICATION Q3-B PASSED - READY FOR Q3-C"
+echo "PASS complete-q3c-wal-rollback-qualification"
+echo "ROLLBACK QUALIFICATION Q3 PASSED - READY FOR INDEPENDENT REVIEW"

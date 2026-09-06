@@ -46,11 +46,11 @@ trap cleanup EXIT
 
 restore_database(){
   local restored="${DB}.rollback.$$"
-  rm -f "${DB}-wal" "${DB}-shm" "$restored"
+  rm -f "${DB}-wal" "${DB}-shm" "$restored" || return 1
   cp -- "$backup" "$restored"
   chmod --reference="$backup" "$restored"
   mv -f -- "$restored" "$DB"
-  rm -f "${DB}-wal" "${DB}-shm"
+  rm -f "${DB}-wal" "${DB}-shm" || return 1
   [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]
   [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
   [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == "$schema_before" ]]
@@ -77,7 +77,7 @@ rollback_health_ok(){
   local body="$RELEASES/.rollback-health-$$.json" code
   for _ in {1..10}; do
     code=$($CURL -sS -o "$body" -w '%{http_code}' --max-time 3 "$HEALTH_URL" || true)
-    if [[ "$code" == 200 ]] && health_payload_valid "$body"; then rm -f "$body"; return 0; fi
+    if [[ "$code" == 200 ]] && health_payload_valid "$body" "$previous_version"; then rm -f "$body"; return 0; fi
     sleep 0.1
   done
   rm -f "$body"
@@ -91,6 +91,9 @@ deployment_failed(){
   echo "DEPLOYMENT FAILED: $reason" >&2
   if (( service_stopped && candidate_promoted )); then
     if ! $SYSTEMCTL --user stop "$SERVICE"; then rollback_failed=1; fi
+  fi
+  if (( service_stopped && candidate_promoted && !db_restore_required && !rollback_failed )); then
+    if [[ "$($release/tpahub digest --db "$DB")" != "$db_before_digest" ]]; then db_restore_required=1; fi
   fi
   if (( service_stopped && db_restore_required && !rollback_failed )); then
     if restore_database; then
