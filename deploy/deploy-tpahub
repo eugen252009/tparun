@@ -124,7 +124,7 @@ service_stopped=1
 migration_attempted=1
 db_restore_required=1
 if ! "$release/tpahub" migrate; then deployment_failed 'candidate migration failed'; fi
-schema_after="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')
+schema_after="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')"
 printf 'schema_after=%s\n' "$schema_after"
 if ! [[ "$schema_after" == "$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
 if ! [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]; then deployment_failed 'post-migration integrity check failed'; fi
