@@ -138,7 +138,7 @@ SQL
   ln -s "$prev" "$current"
   git init --bare "$ROOT/repo.git" >/dev/null
   git --git-dir="$ROOT/repo.git" fetch "$repo" "$candidate_rev:refs/heads/staging" >/dev/null
-  local before; before=$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)
+  local before=$("$WORK/candidate" digest --db "$db")
   export HOME_DIR="$ROOT/home" REPO="$ROOT/repo.git" RELEASES="$ROOT/releases" CURRENT="$current"
   export LOCK="$ROOT/deploy.lock" ENV_FILE="$ROOT/none" TPAHUB_DATA_DIR="$ROOT/data" TPAHUB_DB="$db"
   local port=$((18000 + RANDOM % 1000))
@@ -176,7 +176,7 @@ EOF
     [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
     [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
     sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
-    [[ "$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)" == "$before" ]]
+    [[ "$("$WORK/candidate" digest --db "$db")" == "$before" ]]
   fi
   echo "PASS $name"
 }
@@ -253,7 +253,7 @@ run_v2_case() {
   printf '%s\n' 'v2-previous' > "$prev/.deploy-commit"; ln -s "$prev" "$current"
   git init --bare "$ROOT/repo.git" >/dev/null
   git --git-dir="$ROOT/repo.git" fetch "$repo" "$candidate_rev:refs/heads/staging" >/dev/null
-  local before; before=$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)
+  local before=$("$WORK/candidate" digest --db "$db")
   export HOME_DIR="$ROOT/home" REPO="$ROOT/repo.git" RELEASES="$ROOT/releases" CURRENT="$current"
   export LOCK="$ROOT/deploy.lock" ENV_FILE="$ROOT/none" TPAHUB_DATA_DIR="$ROOT/data" TPAHUB_DB="$db"
   local port=$((19000 + RANDOM % 500))
@@ -285,7 +285,7 @@ EOF
   if [[ "$mode" == fail ]]; then export TPAHUB_TEST_FAILURE=startup; fi
   if [[ "$mode" == mutate ]]; then export TPAHUB_TEST_FAILURE=startup; fi
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
-  local after; after=$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)
+  local after=$("$WORK/candidate" digest --db "$db")
   if [[ "$mode" == noop ]]; then
     [[ "$rc" == 0 && "$after" == "$before" && ! -e "$ROOT/restore-count" ]]
     [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]]
@@ -343,7 +343,7 @@ PY
   echo "PASS digest-table-inventory-complete"
   echo "PASS digest-table-classification-total"
   echo "PASS digest-discovers-all-durable-tables"
-  before_dump=$(sqlite3 "$db" '.dump'); "$WORK/candidate" digest --db "$db" >/dev/null; after_dump=$(sqlite3 "$db" '.dump'); [[ "$before_dump" == "$after_dump" ]]
+  before_dump=$("$WORK/candidate" digest --db "$db"); "$WORK/candidate" digest --db "$db" >/dev/null; after_dump=$("$WORK/candidate" digest --db "$db"); [[ "$before_dump" == "$after_dump" ]]
   echo "PASS digest-command-is-read-only"
   sqlite3 "$db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('digest-row','digest@example.invalid','x','active','2026-01-01T00:00:00Z');"
   [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
