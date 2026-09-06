@@ -454,4 +454,33 @@ SQL
   echo "PASS complete-durable-table-mutation-coverage-batch-3"
 }
 run_b1b_batch3
-echo "ROLLBACK QUALIFICATION Q3-B1B-3 PASSED"
+run_b1b_batch4() {
+  rm -rf "$ROOT"; mkdir -p "$ROOT/data"
+  make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  local db="$ROOT/data/tpahub.db" baseline="$ROOT/data/batch4-baseline.db" d0 d1 d2
+  sqlite3 "$db" <<'SQL'
+INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch4-account','batch4@example.invalid','x','active','2026-01-01T00:00:00Z');
+INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch4-repo','batch4-account','batch4','public','2026-01-01T00:00:00Z');
+SQL
+  cp "$db" "$baseline"
+  for table in repositories repository_egress_daily repository_egress_usage repository_publications schema_migrations sessions tpahub_schema; do
+    cp "$baseline" "$db"; d0=$("$WORK/candidate" digest --db "$db")
+    case "$table" in
+      repositories) sqlite3 "$db" "INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch4-repo-2','batch4-account','batch4-two','private','2026-01-01T00:00:00Z');";;
+      repository_egress_daily) sqlite3 "$db" "INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES('batch4-repo','2026-01-02',10,'2026-01-02T00:00:00Z');";;
+      repository_egress_usage) sqlite3 "$db" "INSERT INTO repository_egress_usage(repository_id,period,egress_bytes,updated_at) VALUES('batch4-repo','2026-02',20,'2026-02-01T00:00:00Z');";;
+      repository_publications) sqlite3 "$db" "INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES('batch4-repo','generation-1','2026-01-01T00:00:00Z');";;
+      schema_migrations) sqlite3 "$db" "INSERT INTO schema_migrations(name,applied_at) VALUES('q3b4-fixture','2026-01-01T00:00:00Z');";;
+      sessions) sqlite3 "$db" "INSERT INTO sessions(id,account_id,token_prefix,token_hash,created_at) VALUES('session-1','batch4-account','prefix','hash','2026-01-01T00:00:00Z');";;
+      tpahub_schema) sqlite3 "$db" "UPDATE tpahub_schema SET version=1 WHERE singleton=1;";;
+    esac
+    d1=$("$WORK/candidate" digest --db "$db"); [[ "$d1" != "$d0" ]]
+    sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok; [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
+    cp "$baseline" "$db"; d2=$("$WORK/candidate" digest --db "$db"); [[ "$d2" == "$d0" ]]
+    echo "PASS digest-table-$table"
+  done
+  echo "PASS complete-durable-table-mutation-coverage-batch-4"
+  echo "PASS complete-durable-table-mutation-coverage-28-of-28"
+}
+run_b1b_batch4
+echo "ROLLBACK QUALIFICATION B1B PASSED - READY FOR Q3-B2"
