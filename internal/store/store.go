@@ -139,6 +139,64 @@ func ensureColumn(db migrationExecutor, table, name, definition string) error {
 	return err
 }
 
+func validateSchemaAuthority(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_xinfo(tpahub_schema)`)
+	if err != nil {
+		return fmt.Errorf("inspect schema authority columns: %w", err)
+	}
+	defer rows.Close()
+	var singletonPK, versionNotNull bool
+	var columns int
+	for rows.Next() {
+		var cid, notNull, pk, hidden int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk, &hidden); err != nil {
+			return fmt.Errorf("read schema authority columns: %w", err)
+		}
+		if hidden != 0 {
+			continue
+		}
+		columns++
+		if name == "singleton" {
+			if !strings.Contains(strings.ToUpper(columnType), "INT") || pk != 1 {
+				return fmt.Errorf("schema authority singleton column is not an integer primary key")
+			}
+			singletonPK = true
+		} else if name == "version" {
+			if !strings.Contains(strings.ToUpper(columnType), "INT") || notNull != 1 {
+				return fmt.Errorf("schema authority version column is not a non-null integer")
+			}
+			versionNotNull = true
+		} else {
+			return fmt.Errorf("schema authority has unexpected column %q", name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect schema authority columns: %w", err)
+	}
+	if columns != 2 || !singletonPK || !versionNotNull {
+		return fmt.Errorf("schema authority has invalid column structure")
+	}
+	var definition string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tpahub_schema'`).Scan(&definition); err != nil {
+		return fmt.Errorf("read schema authority definition: %w", err)
+	}
+	normalized := strings.ToLower(strings.Join(strings.Fields(definition), ""))
+	normalized = strings.NewReplacer("`", "", "\"", "", "'", "").Replace(normalized)
+	if !strings.Contains(normalized, "check(singleton=1)") || !strings.Contains(normalized, "check(version>0)") {
+		return fmt.Errorf("schema authority is missing canonical constraints")
+	}
+	var rowsCount, singleton, version int
+	if err := db.QueryRow(`SELECT COUNT(*),COALESCE(MAX(singleton),0),COALESCE(MAX(version),0) FROM tpahub_schema`).Scan(&rowsCount, &singleton, &version); err != nil {
+		return fmt.Errorf("read schema authority row: %w", err)
+	}
+	if rowsCount != 1 || singleton != 1 || version <= 0 {
+		return fmt.Errorf("schema authority has invalid row state")
+	}
+	return nil
+}
+
 func validateCurrentSchema(db *sql.DB) error {
 	// tpahub_schema is the current-schema authority; schema_migrations is only
 	// the historical ledger of individual migrations.
@@ -151,6 +209,9 @@ func validateCurrentSchema(db *sql.DB) error {
 		if count != 1 {
 			return fmt.Errorf("current schema is missing table %q", name)
 		}
+	}
+	if err := validateSchemaAuthority(db); err != nil {
+		return err
 	}
 	requiredTriggers := []string{"purchase_grant_snapshots_immutable_update", "purchase_grant_snapshots_immutable_delete", "purchase_grant_snapshots_no_late_insert", "billing_purchase_terms_immutable", "purchase_grant_instances_immutable_update", "purchase_grant_instances_immutable_delete"}
 	for _, name := range requiredTriggers {
