@@ -1058,11 +1058,9 @@ func (s *Store) SetLegacyTPAEntitlement(c context.Context, x AccountEntitlement)
 	if _, e = tx.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, x.AccountID, x.PlanCode, x.StartedAt, x.ValidFrom, x.ValidUntil, x.CreatedAt, x.UpdatedAt, x.Source, x.PurchaseID); e != nil {
 		return e
 	}
-	if x.Source != "purchase" {
-		if _, e = tx.ExecContext(c, `UPDATE product_grants SET offer_id=?,enabled=1,valid_from=?,valid_until=?,period_cadence=CASE WHEN ?='nano' THEN 'annual' ELSE 'monthly' END,storage_limit_bytes=CASE WHEN capability_id='repository.publish' THEN CASE ? WHEN 'nano' THEN 5000000 WHEN 'standard' THEN 500000000 ELSE 9223372036854775807 END ELSE storage_limit_bytes END,egress_limit_bytes=CASE WHEN capability_id='repository.download' THEN CASE ? WHEN 'nano' THEN 12000000000 WHEN 'standard' THEN 20000000000 ELSE 9223372036854775807 END ELSE egress_limit_bytes END,source=?,purchase_id=?,updated_at=? WHERE customer_id=? AND product_id='tpa-hub' AND source IN ('legacy','local')`, x.PlanCode, x.ValidFrom, x.ValidUntil, x.PlanCode, x.PlanCode, x.PlanCode, x.Source, x.PurchaseID, x.UpdatedAt, x.AccountID); e != nil {
-			return e
-		}
-	}
+	// Deliberately do not synchronize product_grants from this row. This
+	// compatibility API records historical data only; it is not a reverse
+	// projection and cannot alter current entitlement.
 	return tx.Commit()
 }
 func (s *Store) Entitlement(c context.Context, accountID string) (AccountEntitlement, error) {
@@ -1099,6 +1097,9 @@ func scanGrant(row interface{ Scan(...any) error }) (commerce.Grant, error) {
 	}
 	return grant, nil
 }
+// GetGrant is the canonical current entitlement resolution path (I-003):
+// authoritative product grants and paid grant instances are validated and
+// aggregated here; account_entitlements is never consulted.
 func (s *Store) GetGrant(c context.Context, customer commerce.CustomerID, product commerce.ProductID, capability commerce.CapabilityID, at time.Time) (commerce.Grant, error) {
 	const columns = `customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,storage_limit_bytes,egress_limit_bytes,operation_metric,operation_limit,source,purchase_id,created_at,updated_at`
 	var contributors []commerce.Grant
@@ -1486,20 +1487,9 @@ func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now 
 	if e != sql.ErrNoRows && e != nil {
 		return BillingPurchase{}, e
 	}
-	var entitlementSource, entitlementFrom, entitlementUntil string
-	if entitlementErr := tx.QueryRowContext(c, `SELECT source,valid_from,valid_until FROM account_entitlements WHERE account_id=?`, p.AccountID).Scan(&entitlementSource, &entitlementFrom, &entitlementUntil); entitlementErr != nil && entitlementErr != sql.ErrNoRows {
-		return BillingPurchase{}, entitlementErr
-	}
-	if entitlementSource == "purchase" && entitlementUntil != "" {
-		from, fromErr := parseEntitlementTime(entitlementFrom)
-		until, untilErr := parseEntitlementTime(entitlementUntil)
-		if fromErr != nil || untilErr != nil {
-			return BillingPurchase{}, fmt.Errorf("invalid purchase entitlement validity")
-		}
-		if !at.Before(from) && at.Before(until) {
-			return BillingPurchase{}, fmt.Errorf("purchase-already-active")
-		}
-	}
+	// Purchase admission is product/capability scoped. The account-wide
+	// account_entitlements compatibility projection is migration history, not
+	// current commercial authority.
 	grantRows, grantErr := tx.QueryContext(c, `SELECT enabled,valid_from,valid_until FROM product_grants WHERE customer_id=? AND product_id=? AND source='purchase' UNION ALL SELECT enabled,valid_from,valid_until FROM purchase_grant_instances WHERE customer_id=? AND product_id=?`, p.AccountID, p.ProductID, p.AccountID, p.ProductID)
 	if grantErr != nil {
 		return BillingPurchase{}, grantErr
@@ -1832,11 +1822,9 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 		if e == nil {
 			_, e = tx.ExecContext(c, `UPDATE billing_purchases SET status='paid',provider_state='paid',paid_at=?,updated_at=?,entitlement_period_start=?,entitlement_period_end=? WHERE id=? AND status IN ('pending','superseded','failed','expired')`, paidAt, paidAt, entitlementStart, entitlementEnd, purchaseID)
 		}
-		// account_entitlements is a legacy compatibility projection. Hosted
-		// accounts intentionally have no row, so its absence is non-fatal.
-		if e == nil && p.ProductID == string(tpahubproduct.ProductID) {
-			_, e = tx.ExecContext(c, `INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,valid_until,created_at,updated_at,source,purchase_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET plan_code=excluded.plan_code,started_at=excluded.started_at,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,source=excluded.source,purchase_id=excluded.purchase_id`, p.AccountID, p.PlanCode, entitlementStart, entitlementStart, entitlementEnd, paidAt, paidAt, "purchase", purchaseID)
-		}
+		// account_entitlements is migration-only compatibility history. Payment
+		// activation writes authoritative product grants and immutable purchase
+		// evidence; it does not maintain a reverse runtime projection.
 	} else if p.Status == "pending" || p.Status == "superseded" {
 		statusField := "failed_at"
 		status := "failed"
@@ -1915,6 +1903,8 @@ func (s *Store) CreateAccount(c context.Context, a Account, grants ...commerce.G
 	if _, e = tx.ExecContext(c, "INSERT INTO account_metadata(account_id,account_class) VALUES(?,?)", a.ID, class); e != nil {
 		return e
 	}
+	// Retain the compatibility row for legacy database conversion and
+	// historical diagnostics. It is never consulted for current policy.
 	for _, grant := range grants {
 		if grant.ProductID != tpahubproduct.ProductID {
 			continue

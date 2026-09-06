@@ -106,6 +106,19 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
 		t.Fatal(err)
 	}
+	// The compatibility projection is intentionally conflicting history; the
+	// active commercial grant is the only purchase-admission authority.
+	for _, grant := range tpahubproduct.DefaultGrants(now) {
+		grant.CustomerID = "a"
+		grant.Source = "purchase"
+		grant.PurchaseID = active.PurchaseID
+		grant.ValidFrom, _ = time.Parse(time.RFC3339Nano, active.ValidFrom)
+		until, _ := time.Parse(time.RFC3339Nano, active.ValidUntil)
+		grant.ValidUntil = &until
+		if err := s.db.PutGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, _, err := s.startNanoPurchase(ctx, "a", false); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active entitlement purchase error=%v", err)
 	}
@@ -113,6 +126,17 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	active.ValidUntil = "2026-09-15T12:00:00Z"
 	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
 		t.Fatal(err)
+	}
+	for _, grant := range tpahubproduct.DefaultGrants(now) {
+		grant.CustomerID = "a"
+		grant.Source = "purchase"
+		grant.PurchaseID = active.PurchaseID
+		grant.ValidFrom, _ = time.Parse(time.RFC3339Nano, active.ValidFrom)
+		until, _ := time.Parse(time.RFC3339Nano, active.ValidUntil)
+		grant.ValidUntil = &until
+		if err := s.db.PutGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
 	}
 	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
 	if err != nil || purchase.ID == "" || checkout.URL == "" {

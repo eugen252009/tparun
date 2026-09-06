@@ -285,11 +285,11 @@ restart replay. Direct evidence is in
 
 | ID     | Status | Requirement / Invariant                                                              | Required Work                     | Required Verification     | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------------------ | --------------------------------- | ------------------------- | -------- |
-| P1.5.1 | TODO   | Grants are the runtime source of truth                                               | Verify all runtime reads          | Repository search         |          |
-| P1.5.2 | TODO   | Missing entitlement projection must not block valid payment activation               | Remove veto dependency            | Payment test              |          |
-| P1.5.3 | TODO   | Projection divergence must not change authorization                                  | Make projection derived-only      | Divergence test           |          |
-| P1.5.4 | TODO   | Projection writes must not succeed while authoritative grant mutation silently fails | Tighten/update or remove path     | Test                      |          |
-| P1.5.5 | TODO   | Removal path must be documented                                                      | Define migration/removal plan     | Documentation             |          |
+| P1.5.1 | DONE   | Grants are the runtime source of truth                                               | Verify all runtime reads          | Repository search         | `GetGrant` and purchase admission no longer read the projection |
+| P1.5.2 | DONE   | Missing entitlement projection must not block valid payment activation               | Remove veto dependency            | Payment test              | Payment activation writes grants and immutable evidence only |
+| P1.5.3 | DONE   | Projection divergence must not change authorization                                  | Make projection derived-only      | Divergence test           | Stale/conflicting projection regression tests |
+| P1.5.4 | DONE   | Projection writes must not succeed while authoritative grant mutation silently fails | Tighten/update or remove path     | Test                      | Runtime payment path no longer writes the projection |
+| P1.5.5 | DONE   | Removal path must be documented                                                      | Define migration/removal plan     | Documentation             | Table retained; legacy reads/writes are migration compatibility only |
 | P1.5.6 | TODO   | Projection should eventually be removed if no longer required                        | Remove after compatibility window | Commit/migration evidence |          |
 
 ---
@@ -621,7 +621,7 @@ Commercial shape:
 | I10 — Concurrent downloads can overshoot limit                  | TODO / ACCEPTED     |                                                       |          |
 | I11 — Storage safety assumes single process/worker              | TODO                |                                                       |          |
 | I12 — Renewal impossible before expiry                          | TODO                |                                                       |          |
-| I13 — `account_entitlements` can block activation               | TODO                |                                                       |          |
+| I13 — `account_entitlements` can block activation               | DONE                | Purchase admission uses product-scoped grants; payment activation does not maintain projection | P0-A implementation |
 | I14 — Payment event lacks customer/product/environment evidence | TODO                |                                                       |          |
 | I15 — Provider customer creation race                           | TODO                |                                                       |          |
 | I16 — Payment failures poorly diagnosable                       | TODO                |                                                       |          |

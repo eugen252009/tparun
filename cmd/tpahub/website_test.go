@@ -135,6 +135,8 @@ func TestAccountEgressStatusMatchesEnforcementThreshold(t *testing.T) {
 
 	t.Run("unavailable", func(t *testing.T) {
 		s, h := testServer(t)
+		// Invalid compatibility history cannot make current quota resolution
+		// unavailable; product_grants remain authoritative.
 		if err := s.db.SetLegacyTPAEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "invalid", ValidFrom: "invalid", CreatedAt: "now", UpdatedAt: "now", Source: "local"}); err != nil {
 			t.Fatal(err)
 		}
@@ -146,8 +148,8 @@ func TestAccountEgressStatusMatchesEnforcementThreshold(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "Egress usage unavailable") {
-			t.Fatalf("unavailable status=%d", response.StatusCode)
+		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "Package delivery is currently unrestricted") {
+			t.Fatalf("unexpected status=%d", response.StatusCode)
 		}
 	})
 }

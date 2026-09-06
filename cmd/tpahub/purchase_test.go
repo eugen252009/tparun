@@ -178,13 +178,9 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if purchase.Status != "paid" {
 		t.Fatalf("paid status=%s", purchase.Status)
 	}
-	ent, _ := s.db.Entitlement(context.Background(), "a")
-	if ent.Source != "purchase" || ent.PurchaseID != created.PurchaseID || ent.ValidFrom != "2026-09-15T00:00:00Z" || ent.ValidUntil != "2027-09-15T00:00:00Z" {
-		t.Fatalf("entitlement=%+v", ent)
-	}
-	active, activeErr := ent.ActiveAt(now)
-	if activeErr != nil || !active {
-		t.Fatalf("paid entitlement active=%v err=%v", active, activeErr)
+	ent, err := s.db.Entitlement(context.Background(), "a")
+	if err != nil || ent.Source == "purchase" || ent.PurchaseID == created.PurchaseID {
+		t.Fatalf("payment activation changed compatibility projection: entitlement=%+v err=%v", ent, err)
 	}
 	grant, grantErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
 	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != offer.Cadence || grant.Limits.StorageBytes != NanoStorageBytes {
@@ -195,7 +191,6 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 		t.Fatalf("activated download grant=%+v err=%v", downloadGrant, downloadErr)
 	}
 	grantBeforeDuplicate := grant
-	entBeforeDuplicate := ent
 	web2, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web2.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", webhookAt))
 	wr, err = http.DefaultClient.Do(web2)
@@ -205,10 +200,6 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	wr.Body.Close()
 	if wr.StatusCode != http.StatusOK {
 		t.Fatalf("duplicate status=%d", wr.StatusCode)
-	}
-	entAfterDuplicate, _ := s.db.Entitlement(context.Background(), "a")
-	if !reflect.DeepEqual(entBeforeDuplicate, entAfterDuplicate) {
-		t.Fatalf("duplicate webhook mutated entitlement: before=%+v after=%+v", entBeforeDuplicate, entAfterDuplicate)
 	}
 	grantAfterDuplicate, _ := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
 	if !reflect.DeepEqual(grantBeforeDuplicate, grantAfterDuplicate) {
