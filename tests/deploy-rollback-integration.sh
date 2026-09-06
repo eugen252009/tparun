@@ -363,4 +363,38 @@ PY
   echo "PASS backup-does-not-change-logical-state"
 }
 run_digest_qualification
-echo "ROLLBACK QUALIFICATION Q3-B PARTIAL PASSED"
+
+run_b1b_batch1() {
+  rm -rf "$ROOT"; mkdir -p "$ROOT/data"
+  make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  local db="$ROOT/data/tpahub.db" baseline="$ROOT/data/baseline.db" d0 d1 d2
+  sqlite3 "$db" <<'SQL'
+INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch-account','batch@example.invalid','x','active','2026-01-01T00:00:00Z');
+INSERT INTO account_entitlements(account_id,plan_code,started_at,created_at,updated_at) VALUES('batch-account','nano','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO account_metadata(account_id,account_class) VALUES('batch-account','unclassified');
+INSERT INTO account_storage_high_water(account_id,period,high_water_bytes,updated_at) VALUES('batch-account','2026-01',1,'2026-01-01T00:00:00Z');
+INSERT INTO admin_audit_log(id,action,marker_id,account_id,repository_id,previous_state,previous_version,result,operator,created_at) VALUES('audit-1','test','marker-1','batch-account','','','1','ok','operator','2026-01-01T00:00:00Z');
+INSERT INTO billing_provider_accounts(account_id,provider,environment,provider_customer_id,created_at) VALUES('batch-account','test','qualification','cus-1','2026-01-01T00:00:00Z');
+INSERT INTO billing_provider_events(provider,environment,provider_event_id,event_type,received_at,status) VALUES('test','qualification','event-1','test.event','2026-01-01T00:00:00Z','processed');
+SQL
+  cp "$db" "$baseline"
+  for table in account_entitlements account_metadata account_storage_high_water accounts admin_audit_log billing_provider_accounts billing_provider_events; do
+    cp "$baseline" "$db"
+    d0=$("$WORK/candidate" digest --db "$db")
+    case "$table" in
+      account_entitlements) sqlite3 "$db" "UPDATE account_entitlements SET plan_code='paid' WHERE account_id='batch-account';";;
+      account_metadata) sqlite3 "$db" "UPDATE account_metadata SET account_class='internal' WHERE account_id='batch-account';";;
+      account_storage_high_water) sqlite3 "$db" "UPDATE account_storage_high_water SET high_water_bytes=2 WHERE account_id='batch-account';";;
+      accounts) sqlite3 "$db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch-account-2','batch2@example.invalid','x','active','2026-01-01T00:00:00Z');";;
+      admin_audit_log) sqlite3 "$db" "INSERT INTO admin_audit_log(id,action,marker_id,account_id,repository_id,previous_state,previous_version,result,operator,created_at) VALUES('audit-2','test','marker-2','batch-account','','','1','ok','operator','2026-01-01T00:00:00Z');";;
+      billing_provider_accounts) sqlite3 "$db" "UPDATE billing_provider_accounts SET provider_customer_id='cus-2' WHERE account_id='batch-account';";;
+      billing_provider_events) sqlite3 "$db" "INSERT INTO billing_provider_events(provider,environment,provider_event_id,event_type,received_at,status) VALUES('test','qualification','event-2','test.event','2026-01-01T00:00:00Z','processed');";;
+    esac
+    d1=$("$WORK/candidate" digest --db "$db"); [[ "$d1" != "$d0" ]]
+    cp "$baseline" "$db"; d2=$("$WORK/candidate" digest --db "$db"); [[ "$d2" == "$d0" ]]
+    echo "PASS digest-table-$table"
+  done
+  echo "PASS complete-durable-table-mutation-coverage-batch-1"
+}
+run_b1b_batch1
+echo "ROLLBACK QUALIFICATION Q3-B1B-1 PASSED"
