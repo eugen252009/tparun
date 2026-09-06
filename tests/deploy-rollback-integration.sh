@@ -127,6 +127,15 @@ run_case() {
   rm -rf "$ROOT"; mkdir -p "$ROOT/releases" "$ROOT/data" "$ROOT/home/.config"
   local db="$ROOT/data/tpahub.db" current="$ROOT/current" prev="$ROOT/releases/previous"
   make_db "$ROOT/data" "$db"
+  if [[ "$failure" == wal ]]; then
+    python3 - "$db" <<'PY' &
+import sqlite3, sys, time
+c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA journal_mode=WAL'); c.execute("INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('wal-account','wal@example.invalid','x','active','2026-01-01T00:00:00Z')"); c.commit(); time.sleep(2)
+PY
+    local wal_pid=$!; sleep .2
+    [[ -s "$db-wal" && -s "$db-shm" ]] || { kill "$wal_pid" 2>/dev/null || true; wait "$wal_pid" 2>/dev/null || true; return 1; }
+    kill "$wal_pid" 2>/dev/null || true; wait "$wal_pid" 2>/dev/null || true
+  fi
   if [[ "$failure" == migration-rejection ]]; then
     sqlite3 "$db" <<'SQL'
 INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('q2-account','q2@example.invalid','x','active','2026-01-01T00:00:00Z');
@@ -148,7 +157,9 @@ SQL
   local health_mode="${failure#health:}"
   [[ "$failure" == previous-health-failure ]] && health_mode=previous-health-failure
   [[ "$failure" == after-promotion-before-start ]] && health_mode=healthy
-  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${failure#health:}" TPAHUB_TEST_HEALTH="$health_mode"
+  local service_failure="${failure#health:}"
+  [[ "$failure" == wal ]] && service_failure=startup
+  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="$service_failure" TPAHUB_TEST_HEALTH="$health_mode"
   export TPAHUB_TEST_SQLITE_MODE="$failure" SQLITE3="$WORK/sqlite3" TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored"
   local deploy_failure="$failure"
   [[ "$failure" == previous-health-failure ]] && deploy_failure=after-promotion-before-start
@@ -234,6 +245,7 @@ run_case restored-schema-incompatible-fail-closed restored-schema-incompatible
 # contract fails; deployment_failed must classify this as manual intervention.
 run_case previous-health-failure-is-manual-intervention previous-health-failure
 run_case migration-rejection-preserves-v1 migration-rejection
+run_case real-wal-shm-restore wal
 
 make_v2_db() {
   local data=$1 db=$2
