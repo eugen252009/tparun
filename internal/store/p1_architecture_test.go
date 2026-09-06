@@ -112,6 +112,36 @@ func TestCreateAccountPreservesExplicitGrantProducts(t *testing.T) {
 	}
 }
 
+func TestSecondProductPurchaseAndGrantFactsRemainProductNeutral(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.CreateAccount(ctx, Account{ID: "second-product", Email: "second@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	purchase := BillingPurchase{ID: "second-product-purchase", AccountID: "second-product", ProductID: "product-x", PlanCode: "offer-x", OfferVersion: "offer-x-v1", RateCardID: "rate-x-v1", RateCardMode: "test", TaxClassification: "generic", Currency: "EUR", AmountMinor: 725, BillingEnvironment: "test", Provider: "mock", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	purchase, err = s.CreatePendingPurchase(ctx, purchase, now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "x.read", Period: commerce.PeriodAnnual})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, purchase.ID, "mock-reference", "", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	purchase.ProviderReference = "mock-reference"
+	if err = s.ApplyProviderPaymentEvent(ctx, "mock", "test", commerce.PaymentEvent{ProviderEventID: "mock-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: purchase.AmountMinor, Currency: purchase.Currency, OccurredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM purchase_grant_instances WHERE product_id=? AND capability_id=?`, "product-x", "x.read").Scan(&count); err != nil || count != 1 {
+		stored, _ := s.Purchase(ctx, purchase.ID)
+		t.Fatalf("second-product grant facts count=%d err=%v status=%s reason=%s", count, err, stored.Status, stored.ReconciliationReason)
+	}
+}
+
 func TestProductAwareMockBillingRoundTripPreservesProductIdentity(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

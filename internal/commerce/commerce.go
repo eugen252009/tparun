@@ -12,6 +12,41 @@ type ProductID string
 type CapabilityID string
 type MetricID string
 
+// Product is the commerce identity of a sellable product.  Product policy
+// supplies the meaning of its capabilities; Commerce only records the
+// identity and the facts attached to it.
+type Product struct {
+	ID          ProductID
+	Name        string
+	Description string
+}
+
+// Purchase is the provider-neutral commercial fact.  It deliberately keeps
+// offer/rate-card snapshots rather than references to mutable product policy.
+type Purchase struct {
+	ID           string
+	CustomerID   CustomerID
+	ProductID    ProductID
+	OfferID      string
+	OfferVersion string
+	RateCardID   string
+	Currency     string
+	AmountMinor  int64
+	Provider     string
+	Environment  string
+	Status       string
+	ValidFrom    time.Time
+	ValidUntil   time.Time
+}
+
+// ProductCatalog resolves products and offers for checkout admission.  It is
+// a policy boundary: the generic Commerce and Store packages never implement
+// product-specific capability rules.
+type ProductCatalog interface {
+	Product(context.Context, ProductID) (Product, error)
+	Offer(context.Context, ProductID, string, string) (Offer, error)
+}
+
 type PeriodCadence string
 
 const (

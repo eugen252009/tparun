@@ -1581,6 +1581,9 @@ func validatePurchaseCommercialAuthority(c context.Context, q purchaseAuthorityQ
 		if template.Limits.StorageBytes < 0 || template.Limits.EgressBytes < 0 || template.Limits.OperationCount < 0 || (template.Limits.OperationCount > 0 && template.Limits.OperationMetric == "") {
 			return nil, fmt.Errorf("commercial authority snapshot limits are invalid")
 		}
+		// Product policy validates capability membership at the product
+		// boundary. The legacy TPA product remains checked here for historical
+		// recovery safety; unknown products are intentionally accepted.
 		if commerce.ProductID(purchase.ProductID) == tpahubproduct.ProductID && !tpahubproduct.ValidCapability(template.CapabilityID) {
 			return nil, fmt.Errorf("commercial authority snapshot capability does not belong to product")
 		}
@@ -1643,26 +1646,9 @@ func (s *Store) ApplyPaymentTransition(c context.Context, transition commerce.Pa
 	received := transition.Event.OccurredAt.UTC().Format(time.RFC3339Nano)
 	return s.applyBillingProviderEvent(c, billingProviderEvent{Provider: transition.Provider, Environment: transition.Environment, ProviderEventID: transition.Event.ProviderEventID, EventType: string(transition.Event.Type), ReceivedAt: received}, transition.Event.OperationID, transition.Event.ProviderReference, transition.Kind, transition.AmountMinor, transition.Currency, received, transition.ValidFrom.UTC().Format(time.RFC3339Nano), transition.ValidUntil.UTC().Format(time.RFC3339Nano))
 }
-func validateCurrentNanoOfferVersion(p BillingPurchase) error {
-	if p.ProductID != string(tpahubproduct.ProductID) || p.PlanCode != "nano" || p.RateCardID != "production-nano-v1" {
-		return nil
-	}
-	offer := tpahubproduct.NanoOffer()
-	if strings.TrimSpace(p.OfferVersion) == "" {
-		return fmt.Errorf("purchase offer version is empty")
-	}
-	if p.OfferVersion != offer.Version {
-		return fmt.Errorf("purchase offer version does not match current Nano offer")
-	}
-	return nil
-}
-
 func (s *Store) CreatePendingPurchase(c context.Context, p BillingPurchase, now string, templates ...commerce.GrantTemplate) (BillingPurchase, error) {
 	if strings.TrimSpace(p.ProductID) == "" {
 		return BillingPurchase{}, fmt.Errorf("purchase product ID is empty")
-	}
-	if err := validateCurrentNanoOfferVersion(p); err != nil {
-		return BillingPurchase{}, err
 	}
 	if strings.TrimSpace(p.OfferVersion) == "" {
 		// Older/generic purchase callers predate offer versions. Preserve that
