@@ -397,4 +397,32 @@ SQL
   echo "PASS complete-durable-table-mutation-coverage-batch-1"
 }
 run_b1b_batch1
-echo "ROLLBACK QUALIFICATION Q3-B1B-1 PASSED"
+run_b1b_batch2() {
+  rm -rf "$ROOT"; mkdir -p "$ROOT/data"
+  make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  local db="$ROOT/data/tpahub.db" baseline="$ROOT/data/batch2-baseline.db" d0 d1 d2
+  sqlite3 "$db" <<'SQL'
+INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch2-account','batch2@example.invalid','x','active','2026-01-01T00:00:00Z');
+INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch2-repo','batch2-account','batch2','public','2026-01-01T00:00:00Z');
+SQL
+  cp "$db" "$baseline"
+  for table in billing_provider_submissions billing_purchases egress_accounting_uncertain generation_cleanup_tasks mock_billing_events operator_credentials operator_identity; do
+    cp "$baseline" "$db"; d0=$("$WORK/candidate" digest --db "$db")
+    case "$table" in
+      billing_provider_submissions) sqlite3 "$db" "INSERT INTO billing_provider_submissions(account_id,product_id,period,provider,environment,finalization_id,status,attempted_at) VALUES('batch2-account','tpa-hub','2026-01','test','qualification','final-1','submitted','2026-01-01T00:00:00Z');";;
+      billing_purchases) sqlite3 "$db" "INSERT INTO billing_purchases(id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,created_at,updated_at) VALUES('batch2-purchase','batch2-account','tpa-hub','paid','paid','test','EUR',1,'test','stripe','pending','2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');";;
+      egress_accounting_uncertain) sqlite3 "$db" "INSERT INTO egress_accounting_uncertain(id,repository_id,created_at) VALUES('uncertain-1','batch2-repo','2026-01-01T00:00:00Z');";;
+      generation_cleanup_tasks) sqlite3 "$db" "INSERT INTO generation_cleanup_tasks(repository_id,next_retry,last_error,updated_at) VALUES('batch2-repo','2026-01-02T00:00:00Z','','2026-01-01T00:00:00Z');";;
+      mock_billing_events) sqlite3 "$db" "INSERT INTO mock_billing_events(id,account_id,product_id,period,event_type,payload,created_at) VALUES('mock-1','batch2-account','tpa-hub','2026-01','paid','{}','2026-01-01T00:00:00Z');";;
+      operator_credentials) sqlite3 "$db" "INSERT INTO operator_credentials(credential_id,credential_data,created_at) VALUES(X'01',X'0203','2026-01-01T00:00:00Z');";;
+      operator_identity) sqlite3 "$db" "INSERT INTO operator_identity(id,user_handle) VALUES(1,X'0405');";;
+    esac
+    d1=$("$WORK/candidate" digest --db "$db"); [[ "$d1" != "$d0" ]]
+    sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok; [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
+    cp "$baseline" "$db"; d2=$("$WORK/candidate" digest --db "$db"); [[ "$d2" == "$d0" ]]
+    echo "PASS digest-table-$table"
+  done
+  echo "PASS complete-durable-table-mutation-coverage-batch-2"
+}
+run_b1b_batch2
+echo "ROLLBACK QUALIFICATION Q3-B1B-2 PASSED"
