@@ -425,4 +425,33 @@ SQL
   echo "PASS complete-durable-table-mutation-coverage-batch-2"
 }
 run_b1b_batch2
-echo "ROLLBACK QUALIFICATION Q3-B1B-2 PASSED"
+run_b1b_batch3() {
+  rm -rf "$ROOT"; mkdir -p "$ROOT/data"
+  make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  local db="$ROOT/data/tpahub.db" baseline="$ROOT/data/batch3-baseline.db" d0 d1 d2
+  sqlite3 "$db" <<'SQL'
+INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch3-account','batch3@example.invalid','x','active','2026-01-01T00:00:00Z');
+INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch3-repo','batch3-account','batch3','public','2026-01-01T00:00:00Z');
+INSERT INTO billing_purchases(id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,created_at,updated_at) VALUES('batch3-purchase','batch3-account','tpa-hub','paid','paid','test','EUR',1,'test','stripe','pending','2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+SQL
+  cp "$db" "$baseline"
+  for table in operator_recovery product_grants publish_jobs purchase_grant_instances purchase_grant_snapshot_sets purchase_grant_snapshots reader_credentials; do
+    cp "$baseline" "$db"; d0=$("$WORK/candidate" digest --db "$db")
+    case "$table" in
+      operator_recovery) sqlite3 "$db" "INSERT INTO operator_recovery(id,token_hash,created_at,expires_at) VALUES(1,X'0102','2026-01-01T00:00:00Z','2027-01-01T00:00:00Z');";;
+      product_grants) sqlite3 "$db" "INSERT INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,period_cadence,source,created_at,updated_at) VALUES('batch3-account','tpa-hub','storage','offer-1',1,'2026-01-01T00:00:00Z','annual','purchase','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');";;
+      publish_jobs) sqlite3 "$db" "INSERT INTO publish_jobs(id,repository_id,state,incoming_path,created_at) VALUES('job-1','batch3-repo','queued','/tmp/incoming','2026-01-01T00:00:00Z');";;
+      purchase_grant_instances) sqlite3 "$db" "INSERT INTO purchase_grant_instances(customer_id,product_id,capability_id,purchase_id,offer_id,enabled,valid_from,valid_until,period_cadence,created_at,updated_at) VALUES('batch3-account','tpa-hub','storage','batch3-purchase','offer-1',1,'2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','annual','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');";;
+      purchase_grant_snapshot_sets) sqlite3 "$db" "INSERT INTO purchase_grant_snapshot_sets(purchase_id,expected_count,capability_digest) VALUES('batch3-purchase',1,'digest-1');";;
+      purchase_grant_snapshots) sqlite3 "$db" "INSERT INTO purchase_grant_snapshots(purchase_id,capability_id,period_cadence) VALUES('batch3-purchase','storage','annual');";;
+      reader_credentials) sqlite3 "$db" "INSERT INTO reader_credentials(id,repository_id,name,token_prefix,token_hash,created_at) VALUES('reader-1','batch3-repo','reader','prefix','hash','2026-01-01T00:00:00Z');";;
+    esac
+    d1=$("$WORK/candidate" digest --db "$db"); [[ "$d1" != "$d0" ]]
+    sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok; [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
+    cp "$baseline" "$db"; d2=$("$WORK/candidate" digest --db "$db"); [[ "$d2" == "$d0" ]]
+    echo "PASS digest-table-$table"
+  done
+  echo "PASS complete-durable-table-mutation-coverage-batch-3"
+}
+run_b1b_batch3
+echo "ROLLBACK QUALIFICATION Q3-B1B-3 PASSED"
