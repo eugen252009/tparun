@@ -9,6 +9,7 @@ import json, os, socket, sys
 
 url = os.environ["TPAHUB_BROWSER_URL"].rstrip("/")
 session = os.environ["TPAHUB_BROWSER_SESSION"]
+expected = json.loads(os.environ.get("TPAHUB_BROWSER_EXPECTED", "{}"))
 host, port = os.environ.get("MARIONETTE", "127.0.0.1:2828").split(":")
 s = socket.create_connection((host, int(port)), 10)
 
@@ -31,7 +32,8 @@ call(3, "WebDriver:AddCookie", {"cookie": {"name": "tpahub_operator_session", "v
 call(4, "WebDriver:Navigate", {"url": url + "/ops?scope=all"})
 script = """
 return {resources: [...document.querySelectorAll('.resource-usage')].map(e => ({
-  text:e.textContent, state:e.dataset.limitState, limit:Number(e.dataset.limitBytes)})),
+  text:e.textContent, state:e.dataset.limitState, limit:Number(e.dataset.limitBytes),
+  account:e.closest('tr')?.querySelector('td')?.textContent.trim()})),
   headers:[...document.querySelectorAll('th')].map(e=>e.textContent),
   scripts:[...performance.getEntriesByType('resource')].map(e=>e.name),
   body:document.body.innerText};
@@ -42,6 +44,10 @@ if not value["resources"] or any(r["state"] != "finite" or r["limit"] <= 0 for r
     raise AssertionError(value)
 if "no applicable limit" in value["body"] or " / 0 B" in value["body"]:
     raise AssertionError(value["body"])
+for account, limits in expected.items():
+    got = [r["limit"] for r in value["resources"] if r["account"] == account]
+    if got != limits:
+        raise AssertionError({account: (got, limits), "resources": value["resources"]})
 if "Egress" not in value["headers"] or "Egress (30d)" not in value["headers"]:
     raise AssertionError(value["headers"])
 if not any(x.endswith("/static/ops.js") for x in value["scripts"]):

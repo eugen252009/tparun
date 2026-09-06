@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
+	_ "modernc.org/sqlite"
 )
 
 func TestNanoFloorChangesWithoutMutatingRawGrant(t *testing.T) {
@@ -41,30 +46,16 @@ func TestNanoFloorLeavesPersistedHistoryUntouched(t *testing.T) {
 	if err := s.db.PutGrant(ctx, commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "historical", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 3, EgressBytes: 3}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	rawBefore, err := s.db.GetGrant(ctx, "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	purchaseBefore, err := s.db.Purchase(ctx, purchase.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := logicalDatabaseDigest(t, s.cfg.DataDir)
 	raw := commerce.Grant{CapabilityID: CapabilityRepositoryPublish, Limits: commerce.Limits{StorageBytes: 3, EgressBytes: 3}}
 	for _, floor := range []int64{5, 10, 120} {
 		if _, err := resolveNanoGrant(raw, nil, commerce.Grant{CapabilityID: raw.CapabilityID, Limits: commerce.Limits{StorageBytes: floor, EgressBytes: floor}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	rawAfter, err := s.db.GetGrant(ctx, "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	purchaseAfter, err := s.db.Purchase(ctx, purchase.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rawBefore.Limits != rawAfter.Limits || purchaseBefore != purchaseAfter {
-		t.Fatalf("floor resolution mutated persisted history: before=%+v/%+v after=%+v/%+v", rawBefore.Limits, purchaseBefore, rawAfter.Limits, purchaseAfter)
+	after := logicalDatabaseDigest(t, s.cfg.DataDir)
+	if before != after {
+		t.Fatalf("floor resolution mutated persisted database: before=%s after=%s", before, after)
 	}
 }
 
@@ -84,4 +75,70 @@ func TestNanoFloorPreservesHigherAndRejectsInvalid(t *testing.T) {
 	if _, err = resolveNanoGrant(commerce.Grant{}, errors.New("Nano policy unavailable"), floor); err == nil {
 		t.Fatal("policy failure was softened")
 	}
+}
+
+func logicalDatabaseDigest(t *testing.T, dir string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", dir+"/tpahub.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+	h := sha256.New()
+	for _, table := range tables {
+		colsRows, err := db.Query(`PRAGMA table_info("` + table + `")`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cols []string
+		for colsRows.Next() {
+			var cid int
+			var name, typ string
+			var notNull, pk int
+			var defaultValue any
+			if err := colsRows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+				t.Fatal(err)
+			}
+			cols = append(cols, name)
+		}
+		colsRows.Close()
+		quoted := make([]string, len(cols))
+		for i, col := range cols {
+			quoted[i] = `"` + col + `"`
+		}
+		query := `SELECT ` + strings.Join(quoted, ",") + ` FROM "` + table + `" ORDER BY ` + strings.Join(quoted, ",")
+		data, err := db.Query(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for data.Next() {
+			values := make([]any, len(cols))
+			pointers := make([]any, len(cols))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := data.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range values {
+				fmt.Fprintf(h, "%T:%v\\x00", value, value)
+			}
+			fmt.Fprintf(h, "\\n")
+		}
+		data.Close()
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
