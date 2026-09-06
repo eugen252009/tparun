@@ -261,7 +261,13 @@ run_v2_case() {
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
   export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${mode#health:}" TPAHUB_TEST_HEALTH=healthy
-  export TPAHUB_TEST_SQLITE_MODE= TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored" TPAHUB_DEPLOY_TEST_FAILURE= TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05
+  export TPAHUB_TEST_SQLITE_MODE= TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored" TPAHUB_TEST_RESTORE_COUNT="$ROOT/restore-count" TPAHUB_DEPLOY_TEST_FAILURE= TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05
+  cat >"$WORK/cp" <<'EOF'
+#!/usr/bin/env bash
+for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && touch "$TPAHUB_TEST_RESTORE_COUNT"; done
+exec /bin/cp "$@"
+EOF
+  chmod +x "$WORK/cp"; export PATH="$WORK:$PATH"
   export TPAHUB_TEST_MUTATE="$([[ "$mode" == mutate ]] && echo yes || true)" TPAHUB_TEST_MUTATOR="$WORK/mutator"
   if [[ "$mode" == mutate ]]; then
     cat >"$WORK/mutator" <<'EOF'
@@ -290,9 +296,10 @@ EOF
     [[ "$(cat "$current/.deploy-commit")" == v2-previous ]]
     grep -Fqx "$prev" "$ROOT/starts"
     if [[ "$mode" == mutate ]]; then
-      [[ -e "$ROOT/data/tpahub.db.pre-migrate-"* ]] || true
+      [[ -e "$ROOT/restore-count" ]]
       echo "PASS same-version-durable-mutation-restores-db"
     else
+      [[ ! -e "$ROOT/restore-count" ]]
       echo "PASS no-durable-mutation-skips-db-restore"
     fi
   fi
