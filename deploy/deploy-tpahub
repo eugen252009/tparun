@@ -112,7 +112,8 @@ schema_before="$($SQLITE3 "$backup" 'SELECT version FROM tpahub_schema WHERE sin
 [[ "$schema_before" =~ ^[1-9][0-9]*$ ]]
 expected_schema="$($release/tpahub schema)"
 [[ "$expected_schema" =~ ^[1-9][0-9]*$ ]]
-printf 'schema_before=%s expected_candidate_schema=%s\n' "$schema_before" "$expected_schema"
+db_before_digest="$($SQLITE3 "$backup" '.dump' | sha256sum | cut -d' ' -f1)"
+printf 'schema_before=%s expected_candidate_schema=%s db_before_digest=%s\n' "$schema_before" "$expected_schema" "$db_before_digest"
 
 if ! $SYSTEMCTL --user stop "$SERVICE"; then
   echo 'Failed to stop service; attempting to leave old service running.' >&2
@@ -129,7 +130,9 @@ printf 'schema_after=%s\n' "$schema_after"
 if ! [[ "$schema_after" == "$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
 if ! [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]; then deployment_failed 'post-migration integrity check failed'; fi
 if ! [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]; then deployment_failed 'post-migration foreign-key check failed'; fi
-if [[ "$schema_after" == "$schema_before" ]]; then db_restore_required=0; fi
+db_after_digest="$($SQLITE3 "$DB" '.dump' | sha256sum | cut -d' ' -f1)"
+printf 'db_after_digest=%s\n' "$db_after_digest"
+if [[ "$db_after_digest" == "$db_before_digest" ]]; then db_restore_required=0; fi
 
 if ! ln -s "$release" "$HOME_DIR/.tpahub_current.new.$$" || ! mv -Tf "$HOME_DIR/.tpahub_current.new.$$" "$CURRENT"; then
   deployment_failed 'candidate promotion failed'
