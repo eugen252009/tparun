@@ -15,9 +15,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 repo=$(git rev-parse --show-toplevel)
 base=$(git rev-parse HEAD)
-# The harness itself is committed on top of the implementation under review.
-# Thus the candidate is its first parent, which must be the mandated start.
-candidate_rev=9854653ca5804530fe042d0d5e2556d095d204fe
+# The candidate is the frozen implementation under qualification.
+candidate_rev="$base"
+[[ "$candidate_rev" == d1efa5740e29c8a694c5695a6a918b46da3feb02 ]] || { echo "wrong candidate revision: $candidate_rev" >&2; exit 1; }
  git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
 previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
 
@@ -45,7 +45,7 @@ chmod +x "$WORK/go"
 cat >"$WORK/systemctl" <<'EOF'
 #!/usr/bin/env bash
 set -e
-op=${@: -2:1}; pidfile=$TPAHUB_TEST_PIDFILE
+op=$2; pidfile=$TPAHUB_TEST_PIDFILE
 case "$op" in
  stop)
    if [[ -s $pidfile ]]; then kill "$(cat "$pidfile")" 2>/dev/null || true; rm -f "$pidfile"; fi ;;
@@ -62,6 +62,28 @@ case "$op" in
 esac
 EOF
 chmod +x "$WORK/systemctl"
+cat >"$WORK/curl" <<'EOF'
+#!/usr/bin/env bash
+set -e
+orig=("$@"); out=''; url=''
+while (($#)); do case "$1" in -o) out=$2; shift 2;; -w) fmt=$2; shift 2;; *) url=$1; shift;; esac; done
+rel=$(readlink -f "$TPAHUB_TEST_CURRENT")
+if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
+  case "${TPAHUB_TEST_HEALTH:-healthy}" in
+    http_failure) body='{}'; code=503;;
+    invalid_json) body='not-json'; code=200;;
+    wrong_service) body='{ "service":"other", "version":"0.1.0", "started_at":"2026-01-01T00:00:00Z" }'; code=200;;
+    wrong_version) body='{ "service":"tpahub", "version":"wrong", "started_at":"2026-01-01T00:00:00Z" }'; code=200;;
+    missing_started_at) body='{ "service":"tpahub", "version":"0.1.0" }'; code=200;;
+    timeout) sleep 2; body='{}'; code=503;;
+    *) body='{ "service":"tpahub", "version":"0.1.0", "started_at":"2026-01-01T00:00:00Z" }'; code=200;;
+  esac
+  printf '%s' "$body" >"$out"; [[ "$fmt" == '%{http_code}' ]] && printf '%s' "$code"; exit 0
+fi
+printf '%s' '{ "service":"tpahub", "version":"0.1.0", "started_at":"2026-01-01T00:00:00Z" }' >"$out"
+[[ "$fmt" == '%{http_code}' ]] && printf '200'
+EOF
+chmod +x "$WORK/curl"
 
 make_db() {
   local data=$1 db=$2
@@ -93,22 +115,40 @@ run_case() {
   export HOME_DIR="$ROOT/home" REPO="$ROOT/repo.git" RELEASES="$ROOT/releases" CURRENT="$current"
   export LOCK="$ROOT/deploy.lock" ENV_FILE="$ROOT/none" TPAHUB_DATA_DIR="$ROOT/data" TPAHUB_DB="$db"
   local port=$((18000 + RANDOM % 1000))
-  export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" TPA_SCHEMA=true
+  export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
-  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="$failure"
+  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${failure#health:}" TPAHUB_TEST_HEALTH="${failure#health:}"
+  export TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05 TPAHUB_DEPLOY_TEST_FAILURE="$failure"
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
-  [[ "$rc" -ne 0 ]] || { cat "$ROOT/deploy.log"; echo "FAIL $name: expected rollback"; return 1; }
-  [[ "$(readlink -f "$current")" == "$prev" ]] || return 1
-  [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
-  [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
-  sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
-  [[ "$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)" == "$before" ]]
+  if [[ "$failure" == healthy ]]; then
+    [[ "$rc" == 0 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; return 1; }
+    [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]] || return 1
+    [[ "$(cat "$current/.deploy-commit")" == "$candidate_rev" ]] || return 1
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 2 ]]
+    ! sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -q intent_state
+  else
+    [[ "$rc" -ne 0 ]] || { cat "$ROOT/deploy.log"; echo "FAIL $name: expected rollback"; return 1; }
+    [[ "$(readlink -f "$current")" == "$prev" ]] || return 1
+    [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
+    sqlite3 "$db" 'SELECT name FROM pragma_table_info("billing_purchases") WHERE name="intent_state";' | grep -qx intent_state
+    [[ "$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)" == "$before" ]]
+  fi
   echo "PASS $name"
 }
 
+run_case successful-schema-changing-deployment healthy
 # Candidate startup failure after real v1->v2 migration is the original blocker.
 run_case startup-failure-after-migration startup
+run_case health-http-failure health:http_failure
+run_case health-invalid-json health:invalid_json
+run_case health-wrong-service health:wrong_service
+run_case health-wrong-version health:wrong_version
+run_case health-missing-started-at health:missing_started_at
+run_case health-timeout health:timeout
+run_case failure-after-migration-before-promotion after-migration-before-promotion
+run_case failure-after-promotion-before-start after-promotion-before-start
 
 # Force only the restore copy to fail.  This executes the production
 # deployment_failed path and proves the incompatible previous binary is not

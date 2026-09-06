@@ -20,6 +20,8 @@ SYSTEMCTL=${SYSTEMCTL:-systemctl}
 TPA_SCHEMA=${TPA_SCHEMA:-/home/eugen/bin/tpa schema}
 CURL=${CURL:-curl}
 PYTHON=${PYTHON:-python3}
+HEALTH_ATTEMPTS=${TPAHUB_DEPLOY_HEALTH_ATTEMPTS:-30}
+HEALTH_INTERVAL=${TPAHUB_DEPLOY_HEALTH_INTERVAL:-1}
 
 exec 9>"$LOCK"
 flock -n 9 || { echo 'Deployment already running; latest push will be deployed by it.'; exit 0; }
@@ -55,14 +57,14 @@ restore_database(){
 }
 
 health_payload_valid(){
-  "$PYTHON" - "$1" <<'PY'
+  "$PYTHON" - "$1" "$2" <<'PY'
 import json, sys
 from datetime import datetime
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
         value = json.load(f)
     assert value.get("service") == "tpahub"
-    assert value.get("version")
+    assert value.get("version") == sys.argv[2]
     started = value.get("started_at")
     assert started
     datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -110,7 +112,10 @@ deployment_failed(){
   if (( service_stopped )); then
     if (( !rollback_failed )) && ! $SYSTEMCTL --user start "$SERVICE"; then rollback_failed=1; fi
     if (( !rollback_failed )) && ! $SYSTEMCTL --user is-active --quiet "$SERVICE"; then rollback_failed=1; fi
-    if (( !rollback_failed )) && ! rollback_health_ok; then rollback_failed=1; fi
+    if (( !rollback_failed )); then
+      previous_version="$expected_version"
+      if ! rollback_health_ok; then rollback_failed=1; fi
+    fi
   fi
   if (( rollback_failed )); then
     echo 'MANUAL INTERVENTION REQUIRED: deployment rollback failed' >&2
@@ -141,6 +146,8 @@ schema_before="$($SQLITE3 "$backup" 'SELECT version FROM tpahub_schema WHERE sin
 [[ "$schema_before" =~ ^[1-9][0-9]*$ ]]
 expected_schema="$($release/tpahub schema)"
 [[ "$expected_schema" =~ ^[1-9][0-9]*$ ]]
+expected_version="$($release/tpahub version)"
+[[ -n "$expected_version" ]]
 db_before_digest="$($SQLITE3 "$backup" '.dump' | sha256sum | cut -d' ' -f1)"
 printf 'schema_before=%s expected_candidate_schema=%s db_before_digest=%s\n' "$schema_before" "$expected_schema" "$db_before_digest"
 
@@ -154,6 +161,7 @@ service_stopped=1
 migration_attempted=1
 db_restore_required=1
 if ! "$release/tpahub" migrate; then deployment_failed 'candidate migration failed'; fi
+if [[ "${TPAHUB_DEPLOY_TEST_FAILURE:-}" == after-migration-before-promotion ]]; then deployment_failed 'test failure after migration before promotion'; fi
 schema_after="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')"
 printf 'schema_after=%s\n' "$schema_after"
 if ! [[ "$schema_after" == "$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
@@ -167,26 +175,27 @@ if ! ln -s "$release" "$HOME_DIR/.tpahub_current.new.$$" || ! mv -Tf "$HOME_DIR/
   deployment_failed 'candidate promotion failed'
 fi
 candidate_promoted=1
+if [[ "${TPAHUB_DEPLOY_TEST_FAILURE:-}" == after-promotion-before-start ]]; then deployment_failed 'test failure after promotion before start'; fi
 
 health_body="$RELEASES/.health-$commit-$$.json"
 cleanup_health(){ rm -f "$health_body"; }
 trap 'cleanup_health; cleanup' EXIT
 if ! $SYSTEMCTL --user start "$SERVICE"; then deployment_failed 'candidate service start failed'; fi
 health_ok=0
-for i in {1..30}; do
+for ((i=1; i<=HEALTH_ATTEMPTS; i++)); do
   if ! $SYSTEMCTL --user is-active --quiet "$SERVICE"; then
-    sleep 1 || deployment_failed 'health wait failed'
+    sleep "$HEALTH_INTERVAL" || deployment_failed 'health wait failed'
     continue
   fi
   code=$($CURL -sS -o "$health_body" -w '%{http_code}' --max-time 3 "$HEALTH_URL" || true)
-  if [[ "$code" == 200 ]] && "$PYTHON" - "$health_body" <<'PY'
+  if [[ "$code" == 200 ]] && "$PYTHON" - "$health_body" "$expected_version" <<'PY'
 import json, sys
 from datetime import datetime
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
         value = json.load(f)
     assert value.get("service") == "tpahub"
-    assert value.get("version")
+    assert value.get("version") == sys.argv[2]
     started = value.get("started_at")
     assert started
     datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -197,7 +206,7 @@ PY
     health_ok=1
     break
   fi
-  sleep 1 || deployment_failed 'health wait failed'
+  sleep "$HEALTH_INTERVAL" || deployment_failed 'health wait failed'
 done
 if (( ! health_ok )); then deployment_failed 'candidate health check failed'; fi
 

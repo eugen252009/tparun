@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
+	appversion "github.com/eugen252009/tpahub/internal/version"
 )
 
 type cliConfig struct{ Server, Email, Token string }
@@ -79,6 +80,9 @@ func cli(cfg config.Config, args []string) error {
 	switch args[0] {
 	case "schema":
 		fmt.Println(store.CurrentSchemaVersion())
+		return nil
+	case "version":
+		fmt.Println(appversion.Current)
 		return nil
 	case "migrate":
 		return store.Migrate(cfg.DataDir)
