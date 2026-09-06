@@ -29,7 +29,7 @@ func seedEligibleHistoricalAccount(t *testing.T, dir, plan string) {
 	if err = s.CreateAccount(context.Background(), Account{ID: "historical", Email: "historical@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: now.Format(time.RFC3339Nano)}, grants...); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name IN ('legacy-six-month-nano-v1','purchase-intentstate-elimination-v1')`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -126,7 +126,7 @@ func TestPurchaseBeforeBoundedMigrationRemainsIndependent(t *testing.T) {
 	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "purchase-first-event", OperationID: purchase.ID, Type: commerce.PaymentSucceeded, ProviderReference: purchase.ProviderReference, AmountMinor: 1, Currency: "EUR", OccurredAt: now}, Provider: "stripe", Environment: "test", Kind: "success", AmountMinor: 1, Currency: "EUR"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name IN ('legacy-six-month-nano-v1','purchase-intentstate-elimination-v1')`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -269,7 +269,7 @@ func TestBoundedMigrationEligibilityIsTPAScopedAndActive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='legacy-six-month-nano-v1'`); err != nil {
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name IN ('legacy-six-month-nano-v1','purchase-intentstate-elimination-v1')`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

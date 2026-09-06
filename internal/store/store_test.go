@@ -79,6 +79,9 @@ func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
+		t.Fatal(err)
+	}
 	s.Close()
 	if err = Migrate(dir); err == nil {
 		t.Fatal("unknown legacy plan migrated successfully")
@@ -98,6 +101,9 @@ func TestOrphanedPurchaseGrantFailsClosedDuringMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = s.db.Exec(`INSERT INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,source,purchase_id,created_at,updated_at) VALUES('orphan-grant','tpa-hub','repository.publish','offer',1,'2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','annual','purchase','missing-purchase','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

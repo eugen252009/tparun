@@ -303,14 +303,6 @@ func validateCurrentPurchaseSchema(db *sql.DB) error {
 	if len(seen) != len(want) {
 		return fmt.Errorf("purchase schema column count is invalid")
 	}
-	var tableSQL string
-	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='billing_purchases'`).Scan(&tableSQL); err != nil {
-		return fmt.Errorf("read purchase schema: %w", err)
-	}
-	upper := strings.ToUpper(tableSQL)
-	if !strings.Contains(upper, "CHECK(AMOUNT_MINOR >= 0)") || !strings.Contains(upper, "CHECK(SNAPSHOT_FINALIZED IN (0,1))") {
-		return fmt.Errorf("purchase schema is missing required checks")
-	}
 	return nil
 }
 
@@ -424,7 +416,14 @@ func open(dir string, reconcileRunning, explicitMigration bool) (*Store, error) 
 	}
 	var schemaVersion int
 	versionErr := migrationExec.QueryRow(`SELECT version FROM tpahub_schema WHERE singleton=1 AND (SELECT COUNT(*) FROM tpahub_schema)=1`).Scan(&schemaVersion)
+	var currentMigrationMarkers int
 	if explicitMigration && versionErr == nil && schemaVersion == currentSchemaVersion {
+		if err := migrationExec.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name IN ('purchase-intentstate-elimination-v1','commerce-product-grants-v1','historical-purchase-grant-instances-v1','legacy-six-month-nano-v1')`).Scan(&currentMigrationMarkers); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("inspect current migration markers: %w", err)
+		}
+	}
+	if explicitMigration && versionErr == nil && schemaVersion == currentSchemaVersion && currentMigrationMarkers == 4 {
 		if err := migrationTx.Commit(); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("commit current schema migration check: %w", err)
@@ -594,7 +593,7 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		}
 	}
 	if fresh || explicitMigration {
-		if _, e = migrationExec.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(1,?)`, currentSchemaVersion); e != nil {
+		if _, e = migrationExec.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(1,?); INSERT OR IGNORE INTO schema_migrations(name,applied_at) VALUES('purchase-intentstate-elimination-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, currentSchemaVersion); e != nil {
 			db.Close()
 			return nil, fmt.Errorf("record current schema version: %w", e)
 		}

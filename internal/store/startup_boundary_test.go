@@ -28,7 +28,7 @@ func TestOpenRejectsUnsupportedFutureSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE tpahub_schema SET version=2`); err != nil {
+	if _, err := db.Exec(`UPDATE tpahub_schema SET version=?`, currentSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -72,7 +72,7 @@ func TestCurrentStartupRejectsMalformedSchemaAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DROP TABLE tpahub_schema; CREATE TABLE tpahub_schema(singleton INTEGER,version INTEGER); INSERT INTO tpahub_schema VALUES(1,1)`); err != nil {
+	if _, err := db.Exec(`DROP TABLE tpahub_schema; CREATE TABLE tpahub_schema(singleton INTEGER,version INTEGER); INSERT INTO tpahub_schema VALUES(1,?)`, currentSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
