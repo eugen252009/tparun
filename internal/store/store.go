@@ -1450,10 +1450,9 @@ func (s *Store) PutGrant(c context.Context, grant commerce.Grant) error {
 	return err
 }
 
-type BillingPurchase struct {
-	ID, AccountID, ProductID, PlanCode, OfferVersion, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, IntentState, ProviderState, ReconciliationReason string
-	AmountMinor                                                                                                                                                                                                                                                                                                                                              int64
-}
+// BillingPurchase is retained as a persistence-facing alias. The canonical
+// commercial fact is commerce.Purchase.
+type BillingPurchase = commerce.Purchase
 type billingProviderEvent struct{ Provider, Environment, ProviderEventID, EventType, ReceivedAt, ProcessedAt, Status, Error string }
 
 func scanPurchase(row interface{ Scan(...any) error }) (BillingPurchase, error) {
@@ -1581,10 +1580,10 @@ func validatePurchaseCommercialAuthority(c context.Context, q purchaseAuthorityQ
 		if template.Limits.StorageBytes < 0 || template.Limits.EgressBytes < 0 || template.Limits.OperationCount < 0 || (template.Limits.OperationCount > 0 && template.Limits.OperationMetric == "") {
 			return nil, fmt.Errorf("commercial authority snapshot limits are invalid")
 		}
-		// Product policy validates capability membership at the product
-		// boundary. The legacy TPA product remains checked here for historical
-		// recovery safety; unknown products are intentionally accepted.
-		if commerce.ProductID(purchase.ProductID) == tpahubproduct.ProductID && !tpahubproduct.ValidCapability(template.CapabilityID) {
+		// Current purchases arrive with catalog-authorized snapshots. Keep the
+		// TPA capability check only for legacy/unversioned recovery records,
+		// where it protects interpretation of historical data.
+		if purchase.OfferVersion == "legacy-unversioned" && commerce.ProductID(purchase.ProductID) == tpahubproduct.ProductID && !tpahubproduct.ValidCapability(template.CapabilityID) {
 			return nil, fmt.Errorf("commercial authority snapshot capability does not belong to product")
 		}
 		templates = append(templates, template)

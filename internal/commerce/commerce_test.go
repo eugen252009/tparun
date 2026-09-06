@@ -6,6 +6,37 @@ import (
 	"time"
 )
 
+type catalogStub struct {
+	product Product
+	offer   Offer
+}
+
+func (c catalogStub) Product(context.Context, ProductID) (Product, error) { return c.product, nil }
+func (c catalogStub) Offer(context.Context, ProductID, string, string) (Offer, error) {
+	return c.offer, nil
+}
+
+func TestAdmitPurchaseUsesCatalogAndRejectsCrossProductFacts(t *testing.T) {
+	catalog := catalogStub{product: Product{ID: "product-a"}, offer: Offer{ID: "offer-a", Version: "v1", ProductID: "product-a", Purchasable: true}}
+	if _, err := AdmitPurchase(context.Background(), catalog, PurchaseRequest{ProductID: "product-a", OfferID: "offer-a", OfferVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AdmitPurchase(context.Background(), catalog, PurchaseRequest{ProductID: "product-a", OfferID: "offer-a", OfferVersion: "v2"}); err != ErrUnsupportedOfferVersion {
+		t.Fatalf("unsupported version error=%v", err)
+	}
+	catalog.offer.ProductID = "product-b"
+	if _, err := AdmitPurchase(context.Background(), catalog, PurchaseRequest{ProductID: "product-a", OfferID: "offer-a", OfferVersion: "v1"}); err != ErrOfferProductMismatch {
+		t.Fatalf("cross-product offer error=%v", err)
+	}
+}
+
+func TestAdmitPurchaseRejectsNonPurchasableOffer(t *testing.T) {
+	catalog := catalogStub{product: Product{ID: "product-a"}, offer: Offer{ID: "offer-a", Version: "v1", ProductID: "product-a"}}
+	if _, err := AdmitPurchase(context.Background(), catalog, PurchaseRequest{ProductID: "product-a", OfferID: "offer-a"}); err != ErrOfferNotPurchasable {
+		t.Fatalf("non-purchasable offer error=%v", err)
+	}
+}
+
 type paymentRepositoryStub struct {
 	purchase   PurchasePaymentState
 	transition PaymentTransition

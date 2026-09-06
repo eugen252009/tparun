@@ -21,22 +21,11 @@ type Product struct {
 	Description string
 }
 
-// Purchase is the provider-neutral commercial fact.  It deliberately keeps
-// offer/rate-card snapshots rather than references to mutable product policy.
+// Purchase is the canonical commercial fact. Immutable terms are retained
+// alongside lifecycle fields; Store aliases this type only for persistence.
 type Purchase struct {
-	ID           string
-	CustomerID   CustomerID
-	ProductID    ProductID
-	OfferID      string
-	OfferVersion string
-	RateCardID   string
-	Currency     string
-	AmountMinor  int64
-	Provider     string
-	Environment  string
-	Status       string
-	ValidFrom    time.Time
-	ValidUntil   time.Time
+	ID, AccountID, ProductID, PlanCode, OfferVersion, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, IntentState, ProviderState, ReconciliationReason string
+	AmountMinor                                                                                                                                                                                                                                                                                                                                              int64
 }
 
 // ProductCatalog resolves products and offers for checkout admission.  It is
@@ -45,6 +34,49 @@ type Purchase struct {
 type ProductCatalog interface {
 	Product(context.Context, ProductID) (Product, error)
 	Offer(context.Context, ProductID, string, string) (Offer, error)
+}
+
+// PurchaseRequest contains only caller intent. Product policy supplies the
+// offer and grant snapshot; callers cannot submit grant definitions directly.
+type PurchaseRequest struct {
+	CustomerID   CustomerID
+	ProductID    ProductID
+	OfferID      string
+	OfferVersion string
+}
+
+// AdmitPurchase is the generic admission boundary. Persistence happens only
+// after the catalog has established product/offer/version ownership.
+func AdmitPurchase(ctx context.Context, catalog ProductCatalog, request PurchaseRequest) (Offer, error) {
+	if catalog == nil {
+		return Offer{}, ErrUnknownProduct
+	}
+	if request.ProductID == "" {
+		return Offer{}, ErrUnknownProduct
+	}
+	if _, err := catalog.Product(ctx, request.ProductID); err != nil {
+		return Offer{}, fmt.Errorf("%w: %v", ErrUnknownProduct, err)
+	}
+	if request.OfferID == "" {
+		return Offer{}, ErrUnknownOffer
+	}
+	offer, err := catalog.Offer(ctx, request.ProductID, request.OfferID, request.OfferVersion)
+	if err != nil {
+		return Offer{}, err
+	}
+	if offer.ProductID != request.ProductID {
+		return Offer{}, ErrOfferProductMismatch
+	}
+	if offer.ID != request.OfferID {
+		return Offer{}, ErrUnknownOffer
+	}
+	if request.OfferVersion != "" && offer.Version != request.OfferVersion {
+		return Offer{}, ErrUnsupportedOfferVersion
+	}
+	if !offer.Purchasable {
+		return Offer{}, ErrOfferNotPurchasable
+	}
+	return offer, nil
 }
 
 type PeriodCadence string
@@ -56,6 +88,12 @@ const (
 )
 
 var (
+	ErrUnknownProduct           = errors.New("unknown-product")
+	ErrUnknownOffer             = errors.New("unknown-offer")
+	ErrOfferProductMismatch     = errors.New("offer-product-mismatch")
+	ErrUnsupportedOfferVersion  = errors.New("unsupported-offer-version")
+	ErrOfferNotPurchasable      = errors.New("offer-not-purchasable")
+	ErrPurchaseConflict         = errors.New("purchase-conflict")
 	ErrGrantNotFound            = errors.New("grant-not-found")
 	ErrGrantDisabled            = errors.New("grant-disabled")
 	ErrGrantInactive            = errors.New("grant-inactive")
@@ -83,6 +121,7 @@ type Offer struct {
 	Currency    string
 	AmountMinor int64
 	TaxClass    string
+	Purchasable bool
 	Grants      []GrantTemplate
 }
 

@@ -30,7 +30,10 @@ func (s *server) startNanoPurchase(ctx context.Context, account string, business
 	if err != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("entitlement period unavailable")
 	}
-	offer := tpaNanoOffer()
+	offer, err := commerce.AdmitPurchase(ctx, s.commerceCatalog(), commerce.PurchaseRequest{CustomerID: commerce.CustomerID(account), ProductID: tpahubproduct.ProductID, OfferID: "nano", OfferVersion: tpahubproduct.NanoOfferVersion})
+	if err != nil {
+		return store.BillingPurchase{}, CheckoutResult{}, err
+	}
 	card, err := rateCardByID(s.cfg.BillingRateCard)
 	if err != nil || validateRateCard(card) != nil {
 		return store.BillingPurchase{}, CheckoutResult{}, fmt.Errorf("Nano pricing unavailable")
