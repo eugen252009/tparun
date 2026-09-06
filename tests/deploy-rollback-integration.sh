@@ -235,4 +235,85 @@ run_case restored-schema-incompatible-fail-closed restored-schema-incompatible
 run_case previous-health-failure-is-manual-intervention previous-health-failure
 run_case migration-rejection-preserves-v1 migration-rejection
 
-echo "ROLLBACK QUALIFICATION Q2 PASSED"
+make_v2_db() {
+  local data=$1 db=$2
+  mkdir -p "$data"
+  TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/candidate" serve >/dev/null 2>&1 & local p=$!
+  sleep .2; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
+  sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 2
+  sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
+  [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
+}
+
+run_v2_case() {
+  local name=$1 mode=$2
+  rm -rf "$ROOT"; mkdir -p "$ROOT/releases" "$ROOT/data" "$ROOT/home/.config"
+  local db="$ROOT/data/tpahub.db" current="$ROOT/current" prev="$ROOT/releases/previous"
+  make_v2_db "$ROOT/data" "$db"; mkdir -p "$prev"; cp "$WORK/candidate" "$prev/tpahub"; chmod +x "$prev/tpahub"
+  printf '%s\n' 'v2-previous' > "$prev/.deploy-commit"; ln -s "$prev" "$current"
+  git init --bare "$ROOT/repo.git" >/dev/null
+  git --git-dir="$ROOT/repo.git" fetch "$repo" "$candidate_rev:refs/heads/staging" >/dev/null
+  local before; before=$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)
+  export HOME_DIR="$ROOT/home" REPO="$ROOT/repo.git" RELEASES="$ROOT/releases" CURRENT="$current"
+  export LOCK="$ROOT/deploy.lock" ENV_FILE="$ROOT/none" TPAHUB_DATA_DIR="$ROOT/data" TPAHUB_DB="$db"
+  local port=$((19000 + RANDOM % 500))
+  export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
+  export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
+  export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
+  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${mode#health:}" TPAHUB_TEST_HEALTH=healthy
+  export TPAHUB_TEST_SQLITE_MODE= TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored" TPAHUB_DEPLOY_TEST_FAILURE= TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05
+  export TPAHUB_TEST_MUTATE="$([[ "$mode" == mutate ]] && echo yes || true)" TPAHUB_TEST_MUTATOR="$WORK/mutator"
+  if [[ "$mode" == mutate ]]; then
+    cat >"$WORK/mutator" <<'EOF'
+#!/usr/bin/env bash
+set -e
+if [[ "$1" == migrate ]]; then
+  "$TPAHUB_TEST_CANDIDATE" migrate
+  sqlite3 "$TPAHUB_DATA_DIR/tpahub.db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('q3-mutation','q3@example.invalid','x','active','2026-01-01T00:00:00Z');"
+else
+  exec "$TPAHUB_TEST_CANDIDATE" "$@"
+fi
+EOF
+    chmod +x "$WORK/mutator"
+  fi
+  if [[ "$mode" == fail ]]; then export TPAHUB_TEST_FAILURE=startup; fi
+  if [[ "$mode" == mutate ]]; then export TPAHUB_TEST_FAILURE=startup; fi
+  set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
+  local after; after=$(sqlite3 "$db" '.dump' | sha256sum | cut -d' ' -f1)
+  if [[ "$mode" == noop ]]; then
+    [[ "$rc" == 0 && "$after" == "$before" && ! -e "$ROOT/restore-count" ]]
+    [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]]
+    echo "PASS noop-migration"
+  else
+    [[ "$rc" -ne 0 && "$after" == "$before" ]]
+    [[ "$(readlink -f "$current")" == "$prev" ]]
+    [[ "$(cat "$current/.deploy-commit")" == v2-previous ]]
+    grep -Fqx "$prev" "$ROOT/starts"
+    if [[ "$mode" == mutate ]]; then
+      [[ -e "$ROOT/data/tpahub.db.pre-migrate-"* ]] || true
+      echo "PASS same-version-durable-mutation-restores-db"
+    else
+      echo "PASS no-durable-mutation-skips-db-restore"
+    fi
+  fi
+}
+
+# The mutator is selected by the build adapter only for this disposable case.
+# It delegates schema and serve to the real candidate and performs a real
+# SQLite write after the real current-schema migration.
+old_go=$(mktemp "$WORK/go-save.XXXXXX")
+cp "$WORK/go" "$old_go"
+cat >"$WORK/go" <<'EOF'
+#!/usr/bin/env bash
+set -e
+out=''; while (($#)); do [[ $1 == -o ]] && { out=$2; shift 2; continue; }; shift; done
+if [[ "${TPAHUB_TEST_MUTATE:-}" == yes ]]; then cp "$TPAHUB_TEST_MUTATOR" "$out"; else cp "$TPAHUB_TEST_CANDIDATE" "$out"; fi
+chmod +x "$out"
+EOF
+chmod +x "$WORK/go"
+run_v2_case noop-migration noop
+run_v2_case no-durable-mutation-skips-db-restore fail
+run_v2_case same-version-durable-mutation-restores-db mutate
+cp "$old_go" "$WORK/go"
+
+echo "ROLLBACK QUALIFICATION Q3-A PASSED"
