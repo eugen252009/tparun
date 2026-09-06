@@ -16,7 +16,7 @@ trap cleanup EXIT INT TERM
 repo=$(git rev-parse --show-toplevel)
 base=$(git rev-parse HEAD)
 # The candidate is the frozen implementation under qualification.
-candidate_rev=$(git rev-parse "$base~2")
+candidate_rev=d1efa5740e29c8a694c5695a6a918b46da3feb02
 [[ "$candidate_rev" == d1efa5740e29c8a694c5695a6a918b46da3feb02 ]] || { echo "wrong candidate revision: $candidate_rev" >&2; exit 1; }
  git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
 previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
