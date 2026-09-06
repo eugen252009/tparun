@@ -213,11 +213,19 @@ EOF
       echo "PASS $name"
       echo "PASS cleanup-attempted-and-failed"
       echo "PASS previous-start-attempts-zero"
+      [[ "$(readlink -f "$current")" != "$prev" ]]
+      echo "PASS rollback-failure-does-not-claim-previous-current"
       echo "PASS wal-shm-cleanup-failure-fails-closed"
       return 0
     fi
-    [[ "$(readlink -f "$current")" == "$prev" ]] || return 1
-    [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
+    if [[ "$failure" == restore-failure ]]; then
+      [[ "$(readlink -f "$current")" != "$prev" ]]
+      echo "PASS rollback-failure-does-not-claim-previous-current"
+    else
+      [[ "$(readlink -f "$current")" == "$prev" ]] || return 1
+      [[ "$(cat "$current/.deploy-commit")" == "$previous_rev" ]] || return 1
+      [[ "$failure" == wal || "$failure" == candidate-wal || "$failure" == health:* ]] && echo "PASS successful-rollback-claims-previous-current"
+    fi
     [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log"; return 1; }
     sqlite3 "$db" 'SELECT sql FROM sqlite_master WHERE name="billing_purchases";' | grep -q intent_state
     [[ "$("$WORK/candidate" digest --db "$db")" == "$before" ]]
@@ -281,6 +289,8 @@ EOF
   [[ "$rc" -ne 0 ]] || return 1
   grep -q 'MANUAL INTERVENTION REQUIRED' "$ROOT/deploy.log"
   if grep -Fqx "$prev" "$ROOT/starts" 2>/dev/null; then cat "$ROOT/starts" >&2; cat "$ROOT/deploy.log" >&2; echo "previous service was started" >&2; return 1; fi
+  [[ "$(readlink -f "$ROOT/current")" != "$prev" ]]
+  echo "PASS rollback-failure-does-not-claim-previous-current"
   echo "PASS $name"
 }
 run_restore_failure

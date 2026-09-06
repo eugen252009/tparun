@@ -103,7 +103,7 @@ deployment_failed(){
       rollback_failed=1
     fi
   fi
-  if (( candidate_promoted )); then
+  if (( candidate_promoted && !rollback_failed )); then
     if [[ -n "$previous" && -d "$previous" ]]; then
       if ! ln -s "$previous" "$HOME_DIR/.tpahub_current.rollback.$$" || ! mv -Tf "$HOME_DIR/.tpahub_current.rollback.$$" "$CURRENT"; then
         rollback_failed=1
