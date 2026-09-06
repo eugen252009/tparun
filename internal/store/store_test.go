@@ -80,7 +80,7 @@ func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
 		}
 	}
 	s.Close()
-	if _, err = Open(dir); err == nil {
+	if err = Migrate(dir); err == nil {
 		t.Fatal("unknown legacy plan migrated successfully")
 	}
 	if _, err = os.Stat(filepath.Join(dir, "tpahub.db")); err != nil {
@@ -101,7 +101,7 @@ func TestOrphanedPurchaseGrantFailsClosedDuringMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err = Open(dir); err == nil {
+	if err = Migrate(dir); err == nil {
 		t.Fatal("orphaned purchase grant migrated successfully")
 	}
 }
@@ -129,10 +129,13 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 		}
 		return nil
 	}
-	if _, err = Open(d); err == nil {
+	if err = Migrate(d); err == nil {
 		t.Fatal("migration interruption was accepted")
 	}
 	migrationFault = nil
+	if err = Migrate(d); err != nil {
+		t.Fatal(err)
+	}
 	for restart := 0; restart < 2; restart++ {
 		s, err := Open(d)
 		if err != nil {
@@ -149,8 +152,12 @@ INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','pr
 			t.Fatalf("restart %d migration grant=%+v err=%v", restart, legacyGrant, err)
 		}
 		paid, err := s.Entitlement(context.Background(), "paid")
-		if err != nil || paid.ValidFrom != "2026-09-15T00:00:00Z" || paid.ValidUntil != "2027-09-15T00:00:00Z" {
-			t.Fatalf("restart %d paid=%+v err=%v", restart, paid, err)
+		if restart == 0 {
+			if err != nil || paid.ValidFrom != "2026-09-15T00:00:00Z" || paid.ValidUntil != "2027-09-15T00:00:00Z" {
+				t.Fatalf("restart %d paid=%+v err=%v", restart, paid, err)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("restart %d compatibility projection was rebuilt: %+v err=%v", restart, paid, err)
 		}
 		purchase, err := s.Purchase(context.Background(), "p1")
 		if err != nil || purchase.ProductID != string(tpahubproduct.ProductID) {
@@ -186,6 +193,9 @@ INSERT INTO mock_billing_events VALUES('legacy-event','commercial','2026-01','pe
 		t.Fatal(err)
 	}
 	db.Close()
+	if err = Migrate(dir); err != nil {
+		t.Fatal(err)
+	}
 	for restart := 0; restart < 2; restart++ {
 		s, err := Open(dir)
 		if err != nil {

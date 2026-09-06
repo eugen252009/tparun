@@ -132,7 +132,7 @@ func TestMalformedHistoricalMigrationMatrixFailsClosedAndRepeats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := historicalFixture(t, tc.mutate)
 			for attempt := 0; attempt < 2; attempt++ {
-				if s, err := Open(dir); err == nil {
+				if s, err := openMigrated(dir); err == nil {
 					s.Close()
 					i, g, p, m := migrationState(t, dir)
 					t.Fatalf("invalid historical source accepted: instances=%d grants=%d projections=%d markers=%d", i, g, p, m)
@@ -151,7 +151,7 @@ func TestMalformedHistoricalMigrationCanBeRepairedAfterFailure(t *testing.T) {
 		_, e := db.Exec(`UPDATE account_entitlements SET plan_code='unknown',source='legacy',purchase_id=''`)
 		return e
 	})
-	if _, err := Open(dir); err == nil {
+	if _, err := openMigrated(dir); err == nil {
 		t.Fatal("invalid source accepted")
 	}
 	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
@@ -162,7 +162,7 @@ func TestMalformedHistoricalMigrationCanBeRepairedAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestMigrationInterruptionReopenMatrix(t *testing.T) {
 				}
 				return nil
 			}
-			if s, err := Open(dir); err == nil {
+			if s, err := openMigrated(dir); err == nil {
 				s.Close()
 				t.Fatal("interrupted migration committed")
 			}
@@ -192,7 +192,7 @@ func TestMigrationInterruptionReopenMatrix(t *testing.T) {
 			if i != 0 || g != 1 || p != 1 || marker != 0 {
 				t.Fatalf("partial state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
-			s, err := Open(dir)
+			s, err := openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +201,7 @@ func TestMigrationInterruptionReopenMatrix(t *testing.T) {
 			if i != 1 || g != 0 || p != 1 || marker != 1 {
 				t.Fatalf("retry state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
-			s, err = Open(dir)
+			s, err = openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestHistoricalPaidGrantMaterializationInterruptionReopensCleanly(t *testing
 				}
 				return nil
 			}
-			if s, err := Open(dir); err == nil {
+			if s, err := openMigrated(dir); err == nil {
 				s.Close()
 				t.Fatal("interrupted paid materialization committed")
 			}
@@ -234,7 +234,7 @@ func TestHistoricalPaidGrantMaterializationInterruptionReopensCleanly(t *testing
 			if i != 0 || g != 1 || p != 1 || marker != 1 {
 				t.Fatalf("partial paid materialization state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
-			s, err := Open(dir)
+			s, err := openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -253,7 +253,7 @@ func TestHistoricalPurchaseRelationshipsDoNotAttachNearestRow(t *testing.T) {
 		_, err := db.Exec(`UPDATE account_entitlements SET account_id='customer-a',purchase_id='purchase-a'; UPDATE billing_purchases SET account_id='customer-b'`)
 		return err
 	})
-	if _, err := Open(dir); err == nil {
+	if _, err := openMigrated(dir); err == nil {
 		t.Fatal("cross-account purchase accepted")
 	}
 }

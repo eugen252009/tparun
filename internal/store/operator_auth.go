@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -97,7 +96,7 @@ func (s *Store) DeleteOperatorCredential(ctx context.Context, id []byte) error {
 }
 
 func migrateOperatorRecoveryTimes(db *sql.DB) error {
-	if _, err := db.Exec(`ALTER TABLE operator_recovery ADD COLUMN expires_at_unix_nanos INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+	if err := ensureColumn(db, "operator_recovery", "expires_at_unix_nanos", "expires_at_unix_nanos INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	rows, err := db.Query(`SELECT id,expires_at,expires_at_unix_nanos FROM operator_recovery`)

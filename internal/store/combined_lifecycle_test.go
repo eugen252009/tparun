@@ -13,7 +13,7 @@ import (
 
 func seedEligibleHistoricalAccount(t *testing.T, dir, plan string) {
 	t.Helper()
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant(t *testing.T) {
 			anchor := time.Date(2028, 4, 15, 12, 0, 0, 0, time.UTC)
 			migrationNow = func() time.Time { return anchor }
 			defer func() { migrationNow = time.Now }()
-			s, err := Open(dir)
+			s, err := openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +72,7 @@ func TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant(t *testing.T) {
 				t.Fatalf("effective migration=%+v err=%v", g, err)
 			}
 			s.Close()
-			s, err = Open(dir)
+			s, err = openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,7 +101,7 @@ func TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant(t *testing.T) {
 
 func TestPurchaseBeforeBoundedMigrationRemainsIndependent(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestPurchaseBeforeBoundedMigrationRemainsIndependent(t *testing.T) {
 	s.Close()
 	migrationNow = func() time.Time { return now }
 	defer func() { migrationNow = time.Now }()
-	s, err = Open(dir)
+	s, err = openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestHistoricalPaidGrantSurvivesOverlappingBoundedMigration(t *testing.T) {
 	anchor := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	migrationNow = func() time.Time { return anchor }
 	defer func() { migrationNow = time.Now }()
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestHistoricalPaidGrantSurvivesOverlappingBoundedMigration(t *testing.T) {
 func TestMigrationAndPurchasesUseOnlyActiveEnabledContributors(t *testing.T) {
 	dir := t.TempDir()
 	seedEligibleHistoricalAccount(t, dir, "pro")
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestFutureMigrationDoesNotContributeUntilActive(t *testing.T) {
 
 func TestBoundedMigrationEligibilityIsTPAScopedAndActive(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestBoundedMigrationEligibilityIsTPAScopedAndActive(t *testing.T) {
 	s.Close()
 	migrationNow = func() time.Time { return anchor }
 	defer func() { migrationNow = time.Now }()
-	s, err = Open(dir)
+	s, err = openMigrated(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,12 +306,12 @@ func TestBoundedMigrationInterruptionReopensIdempotently(t *testing.T) {
 				}
 				return nil
 			}
-			if s, openErr := Open(dir); openErr == nil {
+			if s, openErr := openMigrated(dir); openErr == nil {
 				s.Close()
 				t.Fatal("interrupted bounded migration unexpectedly committed")
 			}
 			migrationFault = nil
-			s, err := Open(dir)
+			s, err := openMigrated(dir)
 			if err != nil {
 				t.Fatal(err)
 			}

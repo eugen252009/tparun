@@ -237,6 +237,9 @@ func TestReconciliationEvidencePrecedenceReplayAndRestart(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := Migrate(dir); err != nil {
+		t.Fatal(err)
+	}
 	s, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -342,6 +345,9 @@ func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
+		if err := Migrate(dir); err != nil {
+			t.Fatal(err)
+		}
 		s, err := Open(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -361,6 +367,9 @@ func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
+		if err := Migrate(dir); err != nil {
+			t.Fatal(err)
+		}
 		s, err := Open(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -377,7 +386,7 @@ func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
-		_, err := Open(dir)
+		err := Migrate(dir)
 		if err == nil || !strings.Contains(err.Error(), "duplicate billing purchase provider reference") {
 			t.Fatalf("duplicate upgrade error=%v", err)
 		}
@@ -451,6 +460,9 @@ func TestIncompleteAuthorityProviderEventIsAtomicAtFormerRecoveryBoundary(t *tes
 		t.Fatalf("durable evidence purchase=%q reference=%q type=%q status=%q err=%v", evidencePurchase, evidenceReference, evidenceType, evidenceStatus, err)
 	}
 	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = Migrate(dir); err != nil {
 		t.Fatal(err)
 	}
 	s, err = Open(dir)
