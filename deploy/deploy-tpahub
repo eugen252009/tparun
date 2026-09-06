@@ -51,7 +51,7 @@ restore_database(){
   rm -f "${DB}-wal" "${DB}-shm"
   [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]
   [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
-  [[ "$($SQLITE3 "$DB" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')" == "$schema_before" ]]
+  [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == "$schema_before" ]]
 }
 
 deployment_failed(){
@@ -108,8 +108,8 @@ $SQLITE3 "$DB" ".backup '$backup'"
 printf 'backup=%s sha256=' "$backup"; sha256sum "$backup" | cut -d' ' -f1
 [[ "$($SQLITE3 "$backup" 'PRAGMA integrity_check;')" == ok ]]
 [[ -z "$($SQLITE3 "$backup" 'PRAGMA foreign_key_check;')" ]]
-schema_before="$($SQLITE3 "$backup" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')"
-[[ "$schema_before" =~ ^1\|[1-9][0-9]*$ ]]
+schema_before="$($SQLITE3 "$backup" 'SELECT version FROM tpahub_schema WHERE singleton=1;')"
+[[ "$schema_before" =~ ^[1-9][0-9]*$ ]]
 expected_schema="$($release/tpahub schema)"
 [[ "$expected_schema" =~ ^[1-9][0-9]*$ ]]
 printf 'schema_before=%s expected_candidate_schema=%s\n' "$schema_before" "$expected_schema"
@@ -124,9 +124,9 @@ service_stopped=1
 migration_attempted=1
 db_restore_required=1
 if ! "$release/tpahub" migrate; then deployment_failed 'candidate migration failed'; fi
-schema_after="$($SQLITE3 "$DB" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')"
+schema_after="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')
 printf 'schema_after=%s\n' "$schema_after"
-if ! [[ "$schema_after" == "1|$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
+if ! [[ "$schema_after" == "$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
 if ! [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]; then deployment_failed 'post-migration integrity check failed'; fi
 if ! [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]; then deployment_failed 'post-migration foreign-key check failed'; fi
 if [[ "$schema_after" == "$schema_before" ]]; then db_restore_required=0; fi
