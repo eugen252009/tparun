@@ -24,8 +24,8 @@ type Product struct {
 // Purchase is the canonical commercial fact. Immutable terms are retained
 // alongside lifecycle fields; Store aliases this type only for persistence.
 type Purchase struct {
-	ID, AccountID, ProductID, PlanCode, OfferVersion, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, IntentState, ProviderState, ReconciliationReason string
-	AmountMinor                                                                                                                                                                                                                                                                                                                                              int64
+	ID, AccountID, ProductID, PlanCode, OfferVersion, RateCardID, RateCardMode, TaxClassification, Currency, BillingEnvironment, Provider, Status, EntitlementPeriodStart, EntitlementPeriodEnd, ProviderReference, CheckoutURL, CheckoutRequestVersion, CreatedAt, UpdatedAt, PaidAt, FailedAt, ExpiredAt, ProviderState, ReconciliationReason string
+	AmountMinor                                                                                                                                                                                                                                                                                                                                 int64
 }
 
 // ProductCatalog resolves products and offers for checkout admission.  It is
