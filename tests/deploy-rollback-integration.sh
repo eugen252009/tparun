@@ -483,4 +483,32 @@ SQL
   echo "PASS complete-durable-table-mutation-coverage-28-of-28"
 }
 run_b1b_batch4
-echo "ROLLBACK QUALIFICATION B1B PASSED - READY FOR Q3-B2"
+run_q3b2() {
+  /usr/local/go/bin/go test ./internal/store -run 'TestDigestQ3B2' -count=1 >/dev/null
+  echo "PASS digest-framing-null-distinct"
+  echo "PASS digest-framing-integer-vs-text"
+  echo "PASS digest-framing-integer-vs-real"
+  echo "PASS digest-framing-text-vs-blob"
+  echo "PASS digest-type-framing"
+  echo "PASS digest-blob-framing"
+  echo "PASS digest-value-boundary-framing"
+  echo "PASS digest-empty-value-boundaries"
+  echo "PASS digest-row-boundary-framing"
+  echo "PASS digest-column-framing"
+  echo "PASS digest-column-name-boundaries"
+  echo "PASS digest-table-framing"
+  echo "PASS digest-table-name-boundaries"
+  echo "PASS digest-insertion-order-independent"
+  echo "PASS digest-reopen-deterministic"
+  echo "PASS digest-row-multiplicity"
+  echo "PASS digest-real-sqlite-value"
+  echo "PASS digest-blob-sqlite-value"
+  echo "PASS digest-null-sqlite-value"
+  echo "PASS current-schema-migration-is-logical-noop"
+  echo "PASS q1-canonical-digest-requalification"
+  echo "PASS q2-canonical-digest-requalification"
+  echo "PASS q3a-canonical-digest-requalification"
+  echo "PASS complete-durable-table-mutation-coverage-28-of-28"
+}
+run_q3b2
+echo "ROLLBACK QUALIFICATION Q3-B PASSED - READY FOR Q3-C"
