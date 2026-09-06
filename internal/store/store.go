@@ -65,6 +65,9 @@ func migrationCheckpoint(stage string) error {
 
 const currentSchemaVersion = 2
 
+// CurrentSchemaVersion is the schema authority exposed to deployment tooling.
+func CurrentSchemaVersion() int { return currentSchemaVersion }
+
 // Open creates a new database at the current baseline or opens an already
 // migrated database. It never performs schema or historical/business
 // migration; callers must invoke Migrate explicitly for an older database.

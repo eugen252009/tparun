@@ -65,7 +65,7 @@ func input(prompt string, secret bool) string {
 }
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub serve | migrate | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
+		fmt.Println("tpahub serve | schema | migrate | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
 		return nil
 	}
 	if args[0] == "admin" {
@@ -77,6 +77,9 @@ func cli(cfg config.Config, args []string) error {
 		c.Server = strings.TrimRight(server, "/")
 	}
 	switch args[0] {
+	case "schema":
+		fmt.Println(store.CurrentSchemaVersion())
+		return nil
 	case "migrate":
 		return store.Migrate(cfg.DataDir)
 	case "register", "login":

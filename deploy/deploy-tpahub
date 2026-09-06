@@ -36,15 +36,40 @@ previous=''
 backup="${DB}.pre-migrate-${commit}-$(date -u +%Y%m%dT%H%M%SZ).db"
 service_stopped=0
 candidate_promoted=0
+migration_attempted=0
+db_restore_required=0
 succeeded=0
 cleanup(){ rm -rf "$tmp"; }
 trap cleanup EXIT
+
+restore_database(){
+  local restored="${DB}.rollback.$$"
+  rm -f "${DB}-wal" "${DB}-shm" "$restored"
+  cp -- "$backup" "$restored"
+  chmod --reference="$backup" "$restored"
+  mv -f -- "$restored" "$DB"
+  rm -f "${DB}-wal" "${DB}-shm"
+  [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]
+  [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
+  [[ "$($SQLITE3 "$DB" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')" == "$schema_before" ]]
+}
 
 deployment_failed(){
   local reason=${1:-unknown failure}
   local rollback_failed=0
   trap - ERR
   echo "DEPLOYMENT FAILED: $reason" >&2
+  if (( service_stopped && candidate_promoted )); then
+    if ! $SYSTEMCTL --user stop "$SERVICE"; then rollback_failed=1; fi
+  fi
+  if (( service_stopped && db_restore_required && !rollback_failed )); then
+    if restore_database; then
+      echo "database restored from $backup (schema $schema_before)" >&2
+    else
+      echo 'database rollback failed' >&2
+      rollback_failed=1
+    fi
+  fi
   if (( candidate_promoted )); then
     if [[ -n "$previous" && -d "$previous" ]]; then
       if ! ln -s "$previous" "$HOME_DIR/.tpahub_current.rollback.$$" || ! mv -Tf "$HOME_DIR/.tpahub_current.rollback.$$" "$CURRENT"; then
@@ -55,10 +80,7 @@ deployment_failed(){
     fi
   fi
   if (( service_stopped )); then
-    if (( candidate_promoted )); then
-      if ! $SYSTEMCTL --user stop "$SERVICE"; then rollback_failed=1; fi
-    fi
-    if ! $SYSTEMCTL --user start "$SERVICE"; then rollback_failed=1; fi
+    if (( !rollback_failed )) && ! $SYSTEMCTL --user start "$SERVICE"; then rollback_failed=1; fi
     if ! $SYSTEMCTL --user is-active --quiet "$SERVICE"; then rollback_failed=1; fi
   fi
   if (( rollback_failed )); then
@@ -86,6 +108,11 @@ $SQLITE3 "$DB" ".backup '$backup'"
 printf 'backup=%s sha256=' "$backup"; sha256sum "$backup" | cut -d' ' -f1
 [[ "$($SQLITE3 "$backup" 'PRAGMA integrity_check;')" == ok ]]
 [[ -z "$($SQLITE3 "$backup" 'PRAGMA foreign_key_check;')" ]]
+schema_before="$($SQLITE3 "$backup" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')"
+[[ "$schema_before" =~ ^1\|[1-9][0-9]*$ ]]
+expected_schema="$($release/tpahub schema)"
+[[ "$expected_schema" =~ ^[1-9][0-9]*$ ]]
+printf 'schema_before=%s expected_candidate_schema=%s\n' "$schema_before" "$expected_schema"
 
 if ! $SYSTEMCTL --user stop "$SERVICE"; then
   echo 'Failed to stop service; attempting to leave old service running.' >&2
@@ -94,10 +121,15 @@ if ! $SYSTEMCTL --user stop "$SERVICE"; then
 fi
 service_stopped=1
 
+migration_attempted=1
+db_restore_required=1
 if ! "$release/tpahub" migrate; then deployment_failed 'candidate migration failed'; fi
+schema_after="$($SQLITE3 "$DB" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')"
+printf 'schema_after=%s\n' "$schema_after"
+if ! [[ "$schema_after" == "1|$expected_schema" ]]; then deployment_failed 'post-migration schema version mismatch'; fi
 if ! [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]; then deployment_failed 'post-migration integrity check failed'; fi
 if ! [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]; then deployment_failed 'post-migration foreign-key check failed'; fi
-if ! [[ "$($SQLITE3 "$DB" 'SELECT singleton,version FROM tpahub_schema WHERE singleton=1;')" == '1|1' ]]; then deployment_failed 'post-migration schema version check failed'; fi
+if [[ "$schema_after" == "$schema_before" ]]; then db_restore_required=0; fi
 
 if ! ln -s "$release" "$HOME_DIR/.tpahub_current.new.$$" || ! mv -Tf "$HOME_DIR/.tpahub_current.new.$$" "$CURRENT"; then
   deployment_failed 'candidate promotion failed'
