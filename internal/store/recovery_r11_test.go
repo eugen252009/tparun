@@ -383,6 +383,9 @@ func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
 		if _, err := s.db.Exec(`DROP INDEX billing_purchases_provider_reference; UPDATE billing_purchases SET provider_reference='duplicate-reference' WHERE id IN (?,?)`, a.ID, b.ID); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}

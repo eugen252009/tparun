@@ -593,7 +593,11 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		}
 	}
 	if fresh || explicitMigration {
-		if _, e = migrationExec.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(1,?); INSERT OR IGNORE INTO schema_migrations(name,applied_at) VALUES('purchase-intentstate-elimination-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, currentSchemaVersion); e != nil {
+		if _, e = migrationExec.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(1,?); INSERT OR IGNORE INTO schema_migrations(name,applied_at) VALUES
+('purchase-intentstate-elimination-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+('commerce-product-grants-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+('historical-purchase-grant-instances-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+('legacy-six-month-nano-v1',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, currentSchemaVersion); e != nil {
 			db.Close()
 			return nil, fmt.Errorf("record current schema version: %w", e)
 		}
