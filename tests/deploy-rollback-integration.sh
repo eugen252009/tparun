@@ -15,9 +15,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 repo=$(git rev-parse --show-toplevel)
 base=$(git rev-parse HEAD)
-[[ "$base" == 9854653ca5804530fe042d0d5e2556d095d204fe ]] || { echo "wrong starting revision: $base" >&2; exit 1; }
+# The harness itself is committed on top of the implementation under review.
+# Thus the candidate is its first parent, which must be the mandated start.
+candidate_rev=$(git rev-parse "$base^" 2>/dev/null || true)
+[[ "$candidate_rev" == 9854653ca5804530fe042d0d5e2556d095d204fe ]] || { echo "wrong candidate revision: $candidate_rev" >&2; exit 1; }
 previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
-candidate_rev=$base
 
 echo "building isolated previous ($previous_rev) and candidate ($candidate_rev)"
 git worktree add --detach "$WORK/previous-src" "$previous_rev" >/dev/null
