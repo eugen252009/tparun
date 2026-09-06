@@ -99,6 +99,10 @@ func (g nanoFloorGrantService) GetGrant(ctx context.Context, customer commerce.C
 	if floor.CapabilityID == "" {
 		return grant, err
 	}
+	return resolveNanoGrant(grant, err, floor)
+}
+
+func resolveNanoGrant(grant commerce.Grant, err error, floor commerce.Grant) (commerce.Grant, error) {
 	if err != nil {
 		if errors.Is(err, commerce.ErrGrantNotFound) || errors.Is(err, commerce.ErrGrantDisabled) || errors.Is(err, commerce.ErrGrantInactive) {
 			return floor, nil
