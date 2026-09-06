@@ -323,4 +323,27 @@ run_v2_case no-durable-mutation-skips-db-restore fail
 run_v2_case same-version-durable-mutation-restores-db mutate
 cp "$old_go" "$WORK/go"
 
-echo "ROLLBACK QUALIFICATION Q3-A PASSED"
+run_digest_qualification() {
+  rm -rf "$ROOT"; mkdir -p "$ROOT/data"
+  make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  local db="$ROOT/data/tpahub.db" d1 d2 d3
+  d1=$("$WORK/candidate" digest --db "$db"); d2=$("$WORK/candidate" digest --db "$db"); d3=$("$WORK/candidate" digest --db "$db")
+  [[ "$d1" == "$d2" && "$d2" == "$d3" ]]
+  echo "PASS logical-digest-deterministic"
+  sqlite3 "$db" "INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('digest-row','digest@example.invalid','x','active','2026-01-01T00:00:00Z');"
+  [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
+  sqlite3 "$db" "DELETE FROM accounts WHERE id='digest-row';"
+  [[ "$($WORK/candidate digest --db "$db")" == "$d1" ]]
+  echo "PASS complete-logical-digest-coverage"
+  sqlite3 "$db" 'CREATE TABLE digest_future_guard(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO digest_future_guard VALUES(1,"x");'
+  [[ "$($WORK/candidate digest --db "$db")" != "$d1" ]]
+  echo "PASS unclassified-table-guard"
+  local before after
+  before=$($WORK/candidate digest --db "$db"); "$WORK/candidate" schema >/dev/null; after=$($WORK/candidate digest --db "$db"); [[ "$before" == "$after" ]]
+  echo "PASS schema-query-is-read-only"
+  sqlite3 "$db" ".backup '$ROOT/data/digest-backup.db'"
+  [[ "$($WORK/candidate digest --db "$db")" == "$($WORK/candidate digest --db "$ROOT/data/digest-backup.db")" ]]
+  echo "PASS backup-does-not-change-logical-state"
+}
+run_digest_qualification
+echo "ROLLBACK QUALIFICATION Q3-B PARTIAL PASSED"

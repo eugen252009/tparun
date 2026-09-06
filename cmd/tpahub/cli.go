@@ -84,6 +84,14 @@ func cli(cfg config.Config, args []string) error {
 	case "version":
 		fmt.Println(appversion.Current)
 		return nil
+	case "digest":
+		path := flagValue(args, "--db", filepath.Join(cfg.DataDir, "tpahub.db"))
+		d, err := store.LogicalDigest(path)
+		if err != nil {
+			return err
+		}
+		fmt.Println(d)
+		return nil
 	case "migrate":
 		return store.Migrate(cfg.DataDir)
 	case "register", "login":
