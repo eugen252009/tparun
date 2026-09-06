@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,42 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	_ "modernc.org/sqlite"
 )
+
+func TestCanonicalSnapshotEncodingIsUnambiguous(t *testing.T) {
+	if bytes.Equal(canonicalRecord("t", []string{"a", "b"}, []any{"ab", "c"}), canonicalRecord("t", []string{"a", "b"}, []any{"a", "bc"})) {
+		t.Fatal("value boundaries collide")
+	}
+	if bytes.Equal(canonicalRecord("t", []string{"a"}, []any{nil}), canonicalRecord("t", []string{"a"}, []any{""})) {
+		t.Fatal("NULL and empty text collide")
+	}
+	if bytes.Equal(canonicalRecord("t", []string{"a"}, []any{"1"}), canonicalRecord("t", []string{"a"}, []any{int64(1)})) {
+		t.Fatal("text and integer collide")
+	}
+	if bytes.Equal(canonicalRecord("t", []string{"a"}, []any{[]byte("1")}), canonicalRecord("t", []string{"a"}, []any{"1"})) {
+		t.Fatal("blob and text collide")
+	}
+	if bytes.Equal(canonicalRecord("one", []string{"a"}, []any{"1"}), canonicalRecord("two", []string{"a"}, []any{"1"})) {
+		t.Fatal("table identities collide")
+	}
+	if bytes.Equal(canonicalRecord("t", []string{"a"}, []any{"1"}), canonicalRecord("t", []string{"b"}, []any{"1"})) {
+		t.Fatal("column identities collide")
+	}
+}
+
+func canonicalRecord(table string, columns []string, values []any) []byte {
+	var out bytes.Buffer
+	writeFrame(&out, 'T', []byte(table))
+	writeFrame(&out, 'C', []byte(strconv.Itoa(len(columns))))
+	for _, column := range columns {
+		writeFrame(&out, 'c', []byte(column))
+	}
+	writeFrame(&out, 'R', nil)
+	for _, value := range values {
+		tag, encoded := canonicalValue(value)
+		writeFrame(&out, tag, encoded)
+	}
+	return out.Bytes()
+}
 
 func TestNanoFloorChangesWithoutMutatingRawGrant(t *testing.T) {
 	raw := commerce.Grant{CapabilityID: CapabilityRepositoryPublish, Limits: commerce.Limits{StorageBytes: 3, EgressBytes: 3}, Source: "test"}
@@ -66,14 +105,38 @@ func TestNanoFloorPreservesHigherAndRejectsInvalid(t *testing.T) {
 	if err != nil || got.Limits != higher.Limits {
 		t.Fatalf("higher grant changed=%+v err=%v", got, err)
 	}
-	invalid := higher
-	invalid.Limits.EgressBytes = -1
-	got, err = resolveNanoGrant(invalid, nil, floor)
-	if err != nil || got.Limits.EgressBytes != -1 {
-		t.Fatalf("negative grant was not preserved for fail-closed validation: %+v err=%v", got, err)
+	for _, invalid := range []commerce.Grant{{Limits: commerce.Limits{StorageBytes: -1, EgressBytes: 10}}, {Limits: commerce.Limits{StorageBytes: 10, EgressBytes: -1}}, {Limits: commerce.Limits{StorageBytes: -1, EgressBytes: -1}}} {
+		if _, err = resolveNanoGrant(invalid, nil, floor); !errors.Is(err, ErrInvalidEntitlement) {
+			t.Fatalf("negative grant was not rejected: %+v err=%v", invalid, err)
+		}
 	}
 	if _, err = resolveNanoGrant(commerce.Grant{}, errors.New("Nano policy unavailable"), floor); err == nil {
 		t.Fatal("policy failure was softened")
+	}
+}
+
+func writeFrame(h interface{ Write([]byte) (int, error) }, tag byte, value []byte) {
+	var length [10]byte
+	n := binary.PutUvarint(length[:], uint64(len(value)))
+	_, _ = h.Write([]byte{tag})
+	_, _ = h.Write(length[:n])
+	_, _ = h.Write(value)
+}
+
+func canonicalValue(value any) (byte, []byte) {
+	switch x := value.(type) {
+	case nil:
+		return 'N', nil
+	case string:
+		return 'S', []byte(x)
+	case []byte:
+		return 'B', x
+	case int64:
+		return 'I', []byte(strconv.FormatInt(x, 10))
+	case float64:
+		return 'R', []byte(strconv.FormatFloat(x, 'g', -1, 64))
+	default:
+		return 'X', []byte(fmt.Sprintf("%T:%v", value, value))
 	}
 }
 
@@ -115,12 +178,16 @@ func logicalDatabaseDigest(t *testing.T, dir string) string {
 			cols = append(cols, name)
 		}
 		colsRows.Close()
+		writeFrame(h, 'T', []byte(table))
+		writeFrame(h, 'C', []byte(strconv.Itoa(len(cols))))
+		for _, col := range cols {
+			writeFrame(h, 'c', []byte(col))
+		}
 		quoted := make([]string, len(cols))
 		for i, col := range cols {
 			quoted[i] = `"` + col + `"`
 		}
-		query := `SELECT ` + strings.Join(quoted, ",") + ` FROM "` + table + `" ORDER BY ` + strings.Join(quoted, ",")
-		data, err := db.Query(query)
+		data, err := db.Query(`SELECT ` + strings.Join(quoted, ",") + ` FROM "` + table + `" ORDER BY ` + strings.Join(quoted, ","))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,10 +200,11 @@ func logicalDatabaseDigest(t *testing.T, dir string) string {
 			if err := data.Scan(pointers...); err != nil {
 				t.Fatal(err)
 			}
+			writeFrame(h, 'R', nil)
 			for _, value := range values {
-				fmt.Fprintf(h, "%T:%v\\x00", value, value)
+				tag, encoded := canonicalValue(value)
+				writeFrame(h, tag, encoded)
 			}
-			fmt.Fprintf(h, "\\n")
 		}
 		data.Close()
 	}

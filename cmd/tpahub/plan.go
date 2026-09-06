@@ -109,10 +109,9 @@ func resolveNanoGrant(grant commerce.Grant, err error, floor commerce.Grant) (co
 		}
 		return commerce.Grant{}, err
 	}
-	// Negative persisted limits are corruption, not a below-floor entitlement;
-	// leave them visible so resource-specific callers fail closed.
+	// Negative persisted limits are corruption, not a below-floor entitlement.
 	if grant.Limits.StorageBytes < 0 || grant.Limits.EgressBytes < 0 {
-		return grant, nil
+		return commerce.Grant{}, fmt.Errorf("%w: negative resource limit", ErrInvalidEntitlement)
 	}
 	if grant.Limits.StorageBytes >= floor.Limits.StorageBytes && grant.Limits.EgressBytes >= floor.Limits.EgressBytes {
 		return grant, nil
@@ -123,6 +122,8 @@ func resolveNanoGrant(grant commerce.Grant, err error, floor commerce.Grant) (co
 	grant.ValidFrom, grant.ValidUntil, grant.Effective = floor.ValidFrom, nil, nil
 	return grant, nil
 }
+
+var ErrInvalidEntitlement = errors.New("invalid entitlement")
 
 func (s *server) grantService() commerce.GrantService {
 	if s.grants != nil {
