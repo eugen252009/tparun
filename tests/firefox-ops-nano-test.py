@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Marionette smoke fixture for a real local /ops candidate.
+
+The candidate URL and operator session are supplied out of band through
+TPAHUB_BROWSER_URL and TPAHUB_BROWSER_SESSION. The fixture intentionally
+asserts effective finite Nano-or-higher values, not raw grant state.
+"""
+import json, os, socket, sys
+
+url = os.environ["TPAHUB_BROWSER_URL"].rstrip("/")
+session = os.environ["TPAHUB_BROWSER_SESSION"]
+host, port = os.environ.get("MARIONETTE", "127.0.0.1:2828").split(":")
+s = socket.create_connection((host, int(port)), 10)
+
+def recv():
+    b = b""
+    while not b.endswith(b":"): b += s.recv(1)
+    n, data = int(b[:-1]), b""
+    while len(data) < n: data += s.recv(n - len(data))
+    return json.loads(data)
+
+def call(i, name, params):
+    raw = json.dumps([0, i, name, params], separators=(",", ":")).encode()
+    s.sendall(str(len(raw)).encode() + b":" + raw)
+    return recv()
+
+recv()
+call(1, "WebDriver:NewSession", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+call(2, "WebDriver:Navigate", {"url": url + "/ops?scope=all"})
+call(3, "WebDriver:AddCookie", {"cookie": {"name": "tpahub_operator_session", "value": session, "path": "/ops"}})
+call(4, "WebDriver:Navigate", {"url": url + "/ops?scope=all"})
+script = """
+return {resources: [...document.querySelectorAll('.resource-usage')].map(e => ({
+  text:e.textContent, state:e.dataset.limitState, limit:Number(e.dataset.limitBytes)})),
+  headers:[...document.querySelectorAll('th')].map(e=>e.textContent),
+  scripts:[...performance.getEntriesByType('resource')].map(e=>e.name),
+  body:document.body.innerText};
+"""
+result = call(5, "WebDriver:ExecuteScript", {"script": script, "args": []})
+value = result[3]["value"]
+if not value["resources"] or any(r["state"] != "finite" or r["limit"] <= 0 for r in value["resources"]):
+    raise AssertionError(value)
+if "no applicable limit" in value["body"] or " / 0 B" in value["body"]:
+    raise AssertionError(value["body"])
+if "Egress" not in value["headers"] or "Egress (30d)" not in value["headers"]:
+    raise AssertionError(value["headers"])
+if not any(x.endswith("/static/ops.js") for x in value["scripts"]):
+    raise AssertionError(value["scripts"])
+call(6, "WebDriver:DeleteSession", {})
+print("REAL LOCAL CANDIDATE FIREFOX ESR TEST: PASS")

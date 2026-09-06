@@ -130,6 +130,10 @@ func (s *server) egressPeriod(accountID string, now time.Time) (string, string, 
 	}
 	return start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), nil
 }
+
+// egressLimited marks the soft boundary. TPA Hub deliberately keeps package
+// delivery available after exhaustion, while exposing the limited state and
+// continuing durable accounting; zero is finite and therefore limited at 0.
 func egressLimited(used, limit int64) bool { return limit >= 0 && used >= limit }
 
 func egressCapacityMessage(used, limit int64) string {

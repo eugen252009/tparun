@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 func TestNanoFloorChangesWithoutMutatingRawGrant(t *testing.T) {
@@ -23,6 +26,45 @@ func TestNanoFloorChangesWithoutMutatingRawGrant(t *testing.T) {
 	}
 	if raw.Limits.StorageBytes != 3 || raw.Limits.EgressBytes != 3 {
 		t.Fatalf("raw grant mutated=%+v", raw)
+	}
+}
+
+func TestNanoFloorLeavesPersistedHistoryUntouched(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	offer := tpahubproduct.NanoOffer()
+	purchase := store.BillingPurchase{ID: "nano-floor-history", AccountID: "a", ProductID: string(offer.ProductID), PlanCode: offer.ID, OfferVersion: offer.Version, RateCardID: "nano-history", RateCardMode: "test", TaxClassification: "saas-personal", Currency: offer.Currency, AmountMinor: offer.AmountMinor, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	if _, err := s.db.CreatePendingPurchase(ctx, purchase, purchase.CreatedAt, offer.Grants...); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.PutGrant(ctx, commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "historical", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 3, EgressBytes: 3}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	rawBefore, err := s.db.GetGrant(ctx, "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purchaseBefore, err := s.db.Purchase(ctx, purchase.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := commerce.Grant{CapabilityID: CapabilityRepositoryPublish, Limits: commerce.Limits{StorageBytes: 3, EgressBytes: 3}}
+	for _, floor := range []int64{5, 10, 120} {
+		if _, err := resolveNanoGrant(raw, nil, commerce.Grant{CapabilityID: raw.CapabilityID, Limits: commerce.Limits{StorageBytes: floor, EgressBytes: floor}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rawAfter, err := s.db.GetGrant(ctx, "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purchaseAfter, err := s.db.Purchase(ctx, purchase.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawBefore.Limits != rawAfter.Limits || purchaseBefore != purchaseAfter {
+		t.Fatalf("floor resolution mutated persisted history: before=%+v/%+v after=%+v/%+v", rawBefore.Limits, purchaseBefore, rawAfter.Limits, purchaseAfter)
 	}
 }
 
