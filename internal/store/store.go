@@ -154,10 +154,10 @@ func validateSchemaAuthority(db *sql.DB) error {
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk, &hidden); err != nil {
 			return fmt.Errorf("read schema authority columns: %w", err)
 		}
-		if hidden != 0 {
-			continue
-		}
 		columns++
+		if hidden != 0 {
+			return fmt.Errorf("schema authority has hidden or generated column %q", name)
+		}
 		if name == "singleton" {
 			if !strings.Contains(strings.ToUpper(columnType), "INT") || pk != 1 {
 				return fmt.Errorf("schema authority singleton column is not an integer primary key")
@@ -175,17 +175,11 @@ func validateSchemaAuthority(db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("inspect schema authority columns: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close schema authority columns: %w", err)
+	}
 	if columns != 2 || !singletonPK || !versionNotNull {
 		return fmt.Errorf("schema authority has invalid column structure")
-	}
-	var definition string
-	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tpahub_schema'`).Scan(&definition); err != nil {
-		return fmt.Errorf("read schema authority definition: %w", err)
-	}
-	normalized := strings.ToLower(strings.Join(strings.Fields(definition), ""))
-	normalized = strings.NewReplacer("`", "", "\"", "", "'", "").Replace(normalized)
-	if !strings.Contains(normalized, "check(singleton=1)") || !strings.Contains(normalized, "check(version>0)") {
-		return fmt.Errorf("schema authority is missing canonical constraints")
 	}
 	var rowsCount, singleton, version int
 	if err := db.QueryRow(`SELECT COUNT(*),COALESCE(MAX(singleton),0),COALESCE(MAX(version),0) FROM tpahub_schema`).Scan(&rowsCount, &singleton, &version); err != nil {
@@ -193,6 +187,31 @@ func validateSchemaAuthority(db *sql.DB) error {
 	}
 	if rowsCount != 1 || singleton != 1 || version <= 0 {
 		return fmt.Errorf("schema authority has invalid row state")
+	}
+	if _, err := db.Exec(`SAVEPOINT tpahub_schema_authority_validation`); err != nil {
+		return fmt.Errorf("begin schema authority validation: %w", err)
+	}
+	defer func() {
+		_, _ = db.Exec(`ROLLBACK TO tpahub_schema_authority_validation`)
+		_, _ = db.Exec(`RELEASE tpahub_schema_authority_validation`)
+	}()
+	probe := func(singleton any, version any, label string) error {
+		if _, err := db.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(?,?)`, singleton, version); err == nil {
+			return fmt.Errorf("schema authority does not enforce %s", label)
+		}
+		return nil
+	}
+	if err := probe(2, 1, "singleton=1"); err != nil {
+		return err
+	}
+	if err := probe(1, 0, "version>0"); err != nil {
+		return err
+	}
+	if err := probe(1, nil, "version NOT NULL"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM tpahub_schema; INSERT INTO tpahub_schema(singleton,version) VALUES(1,1); INSERT INTO tpahub_schema(singleton,version) VALUES(1,1)`); err == nil {
+		return fmt.Errorf("schema authority does not enforce singleton uniqueness")
 	}
 	return nil
 }

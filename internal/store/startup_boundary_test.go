@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,6 +78,39 @@ func TestCurrentStartupRejectsMalformedSchemaAuthority(t *testing.T) {
 	db.Close()
 	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "schema authority") {
 		t.Fatalf("malformed schema authority accepted: %v", err)
+	}
+}
+
+func TestCurrentStartupRejectsPermissiveSchemaAuthority(t *testing.T) {
+	cases := []string{
+		`CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1 OR 1),version INTEGER NOT NULL CHECK(version>0))`,
+		`CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version>0 OR 1))`,
+		`CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1 OR singleton=2),version INTEGER NOT NULL CHECK(version>0 OR version=0))`,
+		`CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version>0),extra TEXT)`,
+		`CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version>0),extra TEXT GENERATED ALWAYS AS (version) VIRTUAL)`,
+	}
+	for i, ddl := range cases {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("DROP TABLE tpahub_schema; " + ddl + "; INSERT INTO tpahub_schema(singleton,version) VALUES(1,1)"); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			if _, err := Open(dir); err == nil {
+				t.Fatal("permissive schema authority accepted")
+			}
+		})
 	}
 }
 

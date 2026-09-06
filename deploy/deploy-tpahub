@@ -55,7 +55,11 @@ deployment_failed(){
     fi
   fi
   if (( service_stopped )); then
+    if (( candidate_promoted )); then
+      if ! $SYSTEMCTL --user stop "$SERVICE"; then rollback_failed=1; fi
+    fi
     if ! $SYSTEMCTL --user start "$SERVICE"; then rollback_failed=1; fi
+    if ! $SYSTEMCTL --user is-active --quiet "$SERVICE"; then rollback_failed=1; fi
   fi
   if (( rollback_failed )); then
     echo 'DEPLOYMENT FAILED — ROLLBACK FAILED' >&2
@@ -136,7 +140,6 @@ if (( ! health_ok )); then deployment_failed 'candidate health check failed'; fi
 if ! printf '%s\n' "$commit" > "$release/.deploy-commit.new.$$" || ! mv -f "$release/.deploy-commit.new.$$" "$release/.deploy-commit"; then
   deployment_failed 'deployment marker update failed'
 fi
-succeeded=1
 trap - ERR
 rm -f "$health_body"
 echo "Deployed $short"
