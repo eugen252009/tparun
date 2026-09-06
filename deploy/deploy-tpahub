@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Authoritative TPA Hub deployment hook. Migration is performed by the staged
+# candidate while the service is stopped; promotion happens only afterwards.
+set -Eeuo pipefail
+
+HOME_DIR=${HOME_DIR:-/home/eugen}
+REPO=${REPO:-$HOME_DIR/tpahub}
+RELEASES=${RELEASES:-$HOME_DIR/tpahub_releases}
+CURRENT=${CURRENT:-$HOME_DIR/tpahub_current}
+SERVICE=${SERVICE:-tpahub.service}
+LOCK=${LOCK:-$HOME_DIR/tpahub-deploy.lock}
+ENV_FILE=${ENV_FILE:-$HOME_DIR/.config/tpahub/tpahub.env}
+if [[ -f "$ENV_FILE" ]]; then set -a; source "$ENV_FILE"; set +a; fi
+DATA_DIR=${TPAHUB_DATA_DIR:-$HOME_DIR/data/tpahub}
+DB=${TPAHUB_DB:-$DATA_DIR/tpahub.db}
+HEALTH_URL=${HEALTH_URL:-http://127.0.0.1:8082/v1/repositories/no-such-repository}
+GO=${GO:-$HOME_DIR/.local/go/bin/go}
+SQLITE3=${SQLITE3:-sqlite3}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
+TPA_SCHEMA=${TPA_SCHEMA:-/home/eugen/bin/tpa schema}
+CURL=${CURL:-curl}
+
+exec 9>"$LOCK"
+flock -n 9 || { echo 'Deployment already running; latest push will be deployed by it.'; exit 0; }
+commit=$(git --git-dir="$REPO" rev-parse refs/heads/staging)
+short=${commit:0:12}
+current_commit=''
+if [[ -L "$CURRENT" && -f "$CURRENT/.deploy-commit" ]]; then current_commit=$(cat "$CURRENT/.deploy-commit"); fi
+if [[ "$current_commit" == "$commit" ]]; then echo "Already deployed $short"; exit 0; fi
+mkdir -p "$RELEASES"
+release="$RELEASES/$commit"
+tmp="$RELEASES/.tmp-$commit-$$"
+previous=''
+[[ -L "$CURRENT" ]] && previous=$(readlink -f "$CURRENT") || true
+backup="${DB}.pre-migrate-${commit}-$(date -u +%Y%m%dT%H%M%SZ).db"
+cleanup(){ rm -rf "$tmp"; }
+trap cleanup EXIT
+
+if [[ ! -d "$release" ]]; then
+  mkdir "$tmp"
+  git --git-dir="$REPO" archive "$commit" | tar -x -C "$tmp"
+  (cd "$tmp" && "$GO" build -o "$tmp/tpahub" ./cmd/tpahub)
+  test -x "$tmp/tpahub"
+  $TPA_SCHEMA >/dev/null
+  mv "$tmp" "$release"
+fi
+
+# sqlite3 .backup is safe for WAL-mode databases and is taken before quiescing.
+$SQLITE3 "$DB" ".backup '$backup'"
+printf 'backup=%s sha256=' "$backup"; sha256sum "$backup" | cut -d' ' -f1
+[[ "$($SQLITE3 "$backup" 'PRAGMA integrity_check;')" == ok ]]
+[[ -z "$($SQLITE3 "$backup" 'PRAGMA foreign_key_check;')" ]]
+
+$SYSTEMCTL --user stop "$SERVICE"
+rollback_service(){ $SYSTEMCTL --user start "$SERVICE" || true; }
+if ! "$release/tpahub" migrate; then
+  echo 'Candidate migration failed; active release was not changed.' >&2
+  rollback_service
+  exit 1
+fi
+[[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]
+[[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
+[[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 1 ]]
+
+ln -s "$release" "$HOME_DIR/.tpahub_current.new.$$"
+mv -Tf "$HOME_DIR/.tpahub_current.new.$$" "$CURRENT"
+rollback(){
+  echo 'Health check failed; rolling back' >&2
+  if [[ -n "$previous" && -d "$previous" ]]; then
+    ln -s "$previous" "$HOME_DIR/.tpahub_current.rollback.$$"
+    mv -Tf "$HOME_DIR/.tpahub_current.rollback.$$" "$CURRENT"
+  fi
+  $SYSTEMCTL --user restart "$SERVICE" || true
+  exit 1
+}
+$SYSTEMCTL --user start "$SERVICE"
+for i in {1..30}; do
+  sleep 1
+  if ! $SYSTEMCTL --user is-active --quiet "$SERVICE"; then continue; fi
+  code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 3 "$HEALTH_URL" || true)
+  if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
+    printf '%s\n' "$commit" > "$release/.deploy-commit.new.$$"
+    mv -f "$release/.deploy-commit.new.$$" "$release/.deploy-commit"
+    echo "Deployed $short ($code)"
+    find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -name '[0-9a-f]*' -printf '%T@ %p\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf
+    exit 0
+  fi
+done
+rollback

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -54,6 +55,12 @@ func migrationState(t *testing.T, dir string) (instances, grants, projections, m
 		"SELECT COUNT(*) FROM schema_migrations WHERE name='commerce-product-grants-v1'": &markers,
 	} {
 		if err := db.QueryRow(q).Scan(out); err != nil {
+			// A fully atomic failed migration restores genuinely legacy databases,
+			// where these later-baseline tables do not yet exist.
+			if strings.Contains(err.Error(), "no such table") {
+				*out = 0
+				continue
+			}
 			t.Fatal(err)
 		}
 	}
@@ -174,7 +181,7 @@ func TestMalformedHistoricalMigrationCanBeRepairedAfterFailure(t *testing.T) {
 }
 
 func TestMigrationInterruptionReopenMatrix(t *testing.T) {
-	for _, stage := range []string{"after-source-validation", "before-materialization", "after-materialization-before-marker", "before-commit"} {
+	for _, stage := range []string{"after-schema-migration", "after-source-validation", "before-materialization", "after-materialization-before-marker", "before-commit"} {
 		t.Run(stage, func(t *testing.T) {
 			dir := historicalFixture(t, nil)
 			migrationFault = func(found string) error {
@@ -231,8 +238,8 @@ func TestHistoricalPaidGrantMaterializationInterruptionReopensCleanly(t *testing
 			}
 			migrationFault = nil
 			i, g, p, marker := migrationState(t, dir)
-			if i != 0 || g != 1 || p != 1 || marker != 1 {
-				t.Fatalf("partial paid materialization state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
+			if i != 0 || g != 1 || p != 1 || marker != 0 {
+				t.Fatalf("rolled back paid materialization state instances=%d grants=%d projections=%d marker=%d", i, g, p, marker)
 			}
 			s, err := openMigrated(dir)
 			if err != nil {

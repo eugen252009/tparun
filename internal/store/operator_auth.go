@@ -95,7 +95,7 @@ func (s *Store) DeleteOperatorCredential(ctx context.Context, id []byte) error {
 	return nil
 }
 
-func migrateOperatorRecoveryTimes(db *sql.DB) error {
+func migrateOperatorRecoveryTimes(db migrationExecutor) error {
 	if err := ensureColumn(db, "operator_recovery", "expires_at_unix_nanos", "expires_at_unix_nanos INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}

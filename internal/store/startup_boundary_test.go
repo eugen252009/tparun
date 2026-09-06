@@ -36,6 +36,50 @@ func TestOpenRejectsUnsupportedFutureSchema(t *testing.T) {
 	}
 }
 
+func TestSchemaAuthorityIsStructurallySingleton(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var singleton, version int
+	if err := s.db.QueryRow(`SELECT singleton,version FROM tpahub_schema`).Scan(&singleton, &version); err != nil {
+		t.Fatal(err)
+	}
+	if singleton != 1 || version != currentSchemaVersion {
+		t.Fatalf("schema authority = (%d,%d)", singleton, version)
+	}
+	if _, err := s.db.Exec(`INSERT INTO tpahub_schema(singleton,version) VALUES(2,1)`); err == nil {
+		t.Fatal("non-canonical schema authority row accepted")
+	}
+	if _, err := s.db.Exec(`INSERT INTO tpahub_schema(singleton,version) VALUES(1,2)`); err == nil {
+		t.Fatal("duplicate schema authority row accepted")
+	}
+}
+
+func TestCurrentStartupRejectsMissingSchemaAuthority(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM tpahub_schema`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := Open(dir); err == nil {
+		t.Fatal("missing schema authority accepted")
+	}
+}
+
 func TestCurrentStartupDoesNotRunHistoricalMigration(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
