@@ -68,6 +68,9 @@ set -e
 orig=("$@"); out=''; url=''
 while (($#)); do case "$1" in -o) out=$2; shift 2;; -w) fmt=$2; shift 2;; *) url=$1; shift;; esac; done
 rel=$(readlink -f "$TPAHUB_TEST_CURRENT")
+if [[ "$rel" != "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_HEALTH:-}" == previous-health-failure ]]; then
+  printf '%s' 'not-json' >"$out"; [[ "$fmt" == '%{http_code}' ]] && printf '200'; exit 0
+fi
 if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
   case "${TPAHUB_TEST_HEALTH:-healthy}" in
     http_failure) body='{}'; code=503;;
@@ -84,6 +87,24 @@ printf '%s' '{ "service":"tpahub", "version":"0.1.0", "started_at":"2026-01-01T0
 [[ "$fmt" == '%{http_code}' ]] && printf '200'
 EOF
 chmod +x "$WORK/curl"
+cat >"$WORK/sqlite3" <<'EOF'
+#!/usr/bin/env bash
+set -e
+file=${1:-}; sql=${2:-}
+mode=${TPAHUB_TEST_SQLITE_MODE:-}
+if [[ "$mode" == missing-backup && "$sql" == .backup* ]]; then exit 73; fi
+if [[ "$mode" == corrupt-backup && "$file" == *.pre-migrate-*.db && "$sql" == *integrity_check* ]]; then echo corrupt; exit 0; fi
+if [[ "$mode" == fk-invalid-backup && "$file" == *.pre-migrate-*.db && "$sql" == *foreign_key_check* ]]; then echo 'bad|fk'; exit 0; fi
+if [[ -f "$TPAHUB_TEST_RESTORED_FLAG" && "$file" == "$TPAHUB_TEST_DATA/tpahub.db" ]]; then
+  case "$mode" in
+    restored-integrity-failure) [[ "$sql" == *integrity_check* ]] && { echo corrupt; exit 0; };;
+    restored-fk-failure) [[ "$sql" == *foreign_key_check* ]] && { echo 'bad|fk'; exit 0; };;
+    restored-schema-incompatible) [[ "$sql" == *'SELECT version'* ]] && { echo 99; exit 0; };;
+  esac
+fi
+exec /usr/bin/sqlite3 "$@"
+EOF
+chmod +x "$WORK/sqlite3"
 
 make_db() {
   local data=$1 db=$2
@@ -106,6 +127,12 @@ run_case() {
   rm -rf "$ROOT"; mkdir -p "$ROOT/releases" "$ROOT/data" "$ROOT/home/.config"
   local db="$ROOT/data/tpahub.db" current="$ROOT/current" prev="$ROOT/releases/previous"
   make_db "$ROOT/data" "$db"
+  if [[ "$failure" == migration-rejection ]]; then
+    sqlite3 "$db" <<'SQL'
+INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('q2-account','q2@example.invalid','x','active','2026-01-01T00:00:00Z');
+INSERT INTO billing_purchases(id,account_id,product_id,plan_code,rate_card_id,rate_card_mode,currency,amount_minor,billing_environment,provider,status,entitlement_period_start,entitlement_period_end,provider_state,created_at,updated_at,intent_state) VALUES('q2-purchase','q2-account','tpa-hub','paid','paid','test','EUR',1,'test','stripe','paid','2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','open','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','superseded');
+SQL
+  fi
   cp "$WORK/previous" "$prev/tpahub" 2>/dev/null || { mkdir -p "$prev"; cp "$WORK/previous" "$prev/tpahub"; }; chmod +x "$prev/tpahub"
   printf '%s\n' "$previous_rev" > "$prev/.deploy-commit"
   ln -s "$prev" "$current"
@@ -118,8 +145,24 @@ run_case() {
   export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
-  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${failure#health:}" TPAHUB_TEST_HEALTH="${failure#health:}"
-  export TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05 TPAHUB_DEPLOY_TEST_FAILURE="$failure"
+  local health_mode="${failure#health:}"
+  [[ "$failure" == previous-health-failure ]] && health_mode=previous-health-failure
+  [[ "$failure" == after-promotion-before-start ]] && health_mode=healthy
+  export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${failure#health:}" TPAHUB_TEST_HEALTH="$health_mode"
+  export TPAHUB_TEST_SQLITE_MODE="$failure" SQLITE3="$WORK/sqlite3" TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored"
+  local deploy_failure="$failure"
+  [[ "$failure" == previous-health-failure ]] && deploy_failure=after-promotion-before-start
+  export TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05 TPAHUB_DEPLOY_TEST_FAILURE="$deploy_failure"
+  if [[ "$failure" == restored-* ]]; then
+    cat >"$WORK/cp" <<'EOF'
+#!/usr/bin/env bash
+exec /bin/cp "$@"
+EOF
+    # The production restore calls cp before validation; record that boundary.
+    sed -i '2a touch "$TPAHUB_TEST_RESTORED_FLAG"' "$WORK/cp"
+    chmod +x "$WORK/cp"; export PATH="$WORK:$PATH"
+    export TPAHUB_DEPLOY_TEST_FAILURE=after-promotion-before-start
+  fi
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
   if [[ "$failure" == healthy ]]; then
     [[ "$rc" == 0 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; return 1; }
@@ -181,5 +224,15 @@ EOF
   echo "PASS $name"
 }
 run_restore_failure
+run_case missing-backup-aborts-before-migration missing-backup
+run_case corrupt-backup-aborts-before-migration corrupt-backup
+run_case fk-invalid-backup-aborts-before-migration fk-invalid-backup
+run_case restored-integrity-failure-fail-closed restored-integrity-failure
+run_case restored-fk-failure-fail-closed restored-fk-failure
+run_case restored-schema-incompatible-fail-closed restored-schema-incompatible
+# Restore succeeds and the actual previous process starts, but its strict health
+# contract fails; deployment_failed must classify this as manual intervention.
+run_case previous-health-failure-is-manual-intervention previous-health-failure
+run_case migration-rejection-preserves-v1 migration-rejection
 
-echo "ALL DEPLOYMENT ROLLBACK INTEGRATION TESTS PASSED"
+echo "ROLLBACK QUALIFICATION Q2 PASSED"
