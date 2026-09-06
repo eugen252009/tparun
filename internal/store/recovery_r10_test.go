@@ -176,7 +176,7 @@ func TestMissingRecoveryAuthorityRetainsProviderEvidenceAndFailsClosed(t *testin
 	fresh.EntitlementPeriodEnd = "2031-01-01T00:00:00Z"
 	fresh.CreatedAt = fresh.EntitlementPeriodStart
 	fresh.UpdatedAt = fresh.CreatedAt
-	if _, err = s.CreatePendingPurchase(ctx, fresh, fresh.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish"}); err == nil || !strings.Contains(err.Error(), "purchase-reconciliation-required") {
+	if _, err = s.CreatePendingPurchase(ctx, fresh, fresh.CreatedAt, commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "repository.publish"}); err == nil || !strings.Contains(err.Error(), "purchase-reconciliation-required") {
 		t.Fatalf("new checkout was not blocked by unresolved payment: %v", err)
 	}
 }

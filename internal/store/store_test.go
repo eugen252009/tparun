@@ -276,10 +276,10 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "shared", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: now.Add(time.Hour).Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("tpa-pending", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("test-pending", testProduct), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("test-pending", testProduct), now.Format(time.RFC3339Nano), commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err != nil {
 		t.Fatalf("cross-product pending collision: %v", err)
 	}
 }
@@ -302,10 +302,10 @@ func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "paid-products", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active product purchase error=%v", err)
 	}
-	if _, err = s.CreatePendingPurchase(ctx, purchase("other", "test-product"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{CapabilityID: "test.execute"}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase("other", "test-product"), now.Format(time.RFC3339Nano), commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err != nil {
 		t.Fatalf("active TPA grant blocked other product: %v", err)
 	}
 }
@@ -568,7 +568,7 @@ func TestCreatePendingPurchasePropagatesEntitlementQueryError(t *testing.T) {
 	}
 	now := "2026-09-15T00:00:00Z"
 	purchase := BillingPurchase{ID: "guard-purchase", AccountID: "guard", PlanCode: "nano", OfferVersion: tpahubproduct.NanoOfferVersion, RateCardID: "production-nano-v1", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now, EntitlementPeriodEnd: "2027-09-15T00:00:00Z", CreatedAt: now, UpdatedAt: now}
-	if _, err = s.CreatePendingPurchase(ctx, purchase, now, commerce.GrantTemplate{CapabilityID: "test.execute"}); err == nil {
+	if _, err = s.CreatePendingPurchase(ctx, purchase, now, commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err == nil {
 		t.Fatal("grant query error was discarded")
 	}
 	if _, lookupErr := s.Purchase(ctx, purchase.ID); lookupErr != sql.ErrNoRows {

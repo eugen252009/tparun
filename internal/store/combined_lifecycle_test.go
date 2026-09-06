@@ -175,7 +175,7 @@ func TestHistoricalPaidGrantSurvivesOverlappingBoundedMigration(t *testing.T) {
 		t.Fatalf("materialized instances=%d purchase base grants=%d", instances, basePurchases)
 	}
 	fresh := BillingPurchase{ID: "duplicate", AccountID: "customer-a", ProductID: "tpa-hub", PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: anchor.Format(time.RFC3339Nano), EntitlementPeriodEnd: anchor.AddDate(1, 0, 0).Format(time.RFC3339Nano), CreatedAt: anchor.Format(time.RFC3339Nano), UpdatedAt: anchor.Format(time.RFC3339Nano)}
-	if _, err = s.CreatePendingPurchase(context.Background(), fresh, fresh.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish}); err == nil || err.Error() != "purchase-already-active" {
+	if _, err = s.CreatePendingPurchase(context.Background(), fresh, fresh.CreatedAt, commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: tpahubproduct.CapabilityRepositoryPublish}); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active historical paid instance duplicate purchase error=%v", err)
 	}
 }

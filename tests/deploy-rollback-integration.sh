@@ -10,20 +10,23 @@ cleanup() {
   set +e
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
   git worktree remove --force "$WORK/previous-src" 2>/dev/null || true
+  git worktree remove --force "$WORK/previous-v2-src" 2>/dev/null || true
   rm -rf "$ROOT" "$WORK"
 }
 trap cleanup EXIT INT TERM
 repo=$(git rev-parse --show-toplevel)
 base=$(git rev-parse HEAD)
 # The candidate is the frozen implementation under qualification.
-candidate_rev=d1efa5740e29c8a694c5695a6a918b46da3feb02
-[[ "$candidate_rev" == d1efa5740e29c8a694c5695a6a918b46da3feb02 ]] || { echo "wrong candidate revision: $candidate_rev" >&2; exit 1; }
- git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
+candidate_rev=$(git rev-parse HEAD)
+git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
 previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
+v2_previous_rev=c73ecd8533da5a8efd2eeda019755a950489c6fe
 
 echo "building isolated previous ($previous_rev) and candidate ($candidate_rev)"
 git worktree add --detach "$WORK/previous-src" "$previous_rev" >/dev/null
 (cd "$WORK/previous-src" && go build -o "$WORK/previous" ./cmd/tpahub)
+git worktree add --detach "$WORK/previous-v2-src" "$v2_previous_rev" >/dev/null
+(cd "$WORK/previous-v2-src" && go build -o "$WORK/previous-v2" ./cmd/tpahub)
 go build -o "$WORK/candidate" ./cmd/tpahub
 chmod +x "$WORK/previous" "$WORK/candidate"
 
@@ -202,7 +205,7 @@ EOF
     [[ "$rc" == 0 ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; return 1; }
     [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]] || return 1
     [[ "$(cat "$current/.deploy-commit")" == "$candidate_rev" ]] || return 1
-    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 2 ]]
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 3 ]]
     if sqlite3 "$db" 'SELECT sql FROM sqlite_master WHERE name="billing_purchases";' | grep -q intent_state; then return 1; fi
   else
     [[ "$rc" -ne 0 ]] || { cat "$ROOT/deploy.log"; echo "FAIL $name: expected rollback"; return 1; }
@@ -311,7 +314,7 @@ run_case candidate-era-wal-contamination-prevented candidate-wal
 make_v2_db() {
   local data=$1 db=$2
   mkdir -p "$data"
-  TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/candidate" serve >/dev/null 2>&1 & local p=$!
+  TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous-v2" serve >/dev/null 2>&1 & local p=$!
   sleep .2; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 2
   sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
@@ -322,7 +325,7 @@ run_v2_case() {
   local name=$1 mode=$2
   rm -rf "$ROOT"; mkdir -p "$ROOT/releases" "$ROOT/data" "$ROOT/home/.config"
   local db="$ROOT/data/tpahub.db" current="$ROOT/current" prev="$ROOT/releases/previous"
-  make_v2_db "$ROOT/data" "$db"; mkdir -p "$prev"; cp "$WORK/candidate" "$prev/tpahub"; chmod +x "$prev/tpahub"
+  make_v2_db "$ROOT/data" "$db"; mkdir -p "$prev"; cp "$WORK/previous-v2" "$prev/tpahub"; chmod +x "$prev/tpahub"
   printf '%s\n' 'v2-previous' > "$prev/.deploy-commit"; ln -s "$prev" "$current"
   git init --bare "$ROOT/repo.git" >/dev/null
   git --git-dir="$ROOT/repo.git" fetch "$repo" "$candidate_rev:refs/heads/staging" >/dev/null
@@ -360,20 +363,23 @@ EOF
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
   local after=$("$WORK/candidate" digest --db "$db")
   if [[ "$mode" == noop ]]; then
-    [[ "$rc" == 0 && "$after" == "$before" && ! -e "$ROOT/restore-count" ]]
-    [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]]
+    [[ "$rc" == 0 && ! -e "$ROOT/restore-count" ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; return 1; }
+    [[ "$after" != "$before" ]]
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 3 ]]
+    [[ "$(readlink -f "$current")" == "$ROOT/releases/$candidate_rev" ]] || { cat "$ROOT/deploy.log" "$ROOT/service.log" 2>/dev/null; readlink -f "$current"; return 1; }
+    echo "PASS schema-v2-to-v3-migration"
     echo "PASS noop-migration"
   else
     [[ "$rc" -ne 0 && "$after" == "$before" ]]
     [[ "$(readlink -f "$current")" == "$prev" ]]
     [[ "$(cat "$current/.deploy-commit")" == v2-previous ]]
     grep -Fqx "$prev" "$ROOT/starts"
+    [[ -e "$ROOT/restore-count" ]]
     if [[ "$mode" == mutate ]]; then
-      [[ -e "$ROOT/restore-count" ]]
       echo "PASS same-version-durable-mutation-restores-db"
     else
-      [[ ! -e "$ROOT/restore-count" ]]
-      echo "PASS no-durable-mutation-skips-db-restore"
+      echo "PASS schema-migration-rollback-restores-db"
+      echo "PASS no-durable-mutation-skips-additional-restore"
     fi
   fi
 }

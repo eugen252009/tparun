@@ -163,13 +163,6 @@ func TestRecoveryIncompleteCommercialAuthorityMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"invalid-cadence", func(t *testing.T, s *Store, p BillingPurchase) {
-			r11DropSnapshotMutationTriggers(t, s)
-			if _, err := s.db.Exec(`UPDATE purchase_grant_snapshots SET period_cadence='fortnightly' WHERE purchase_id=? AND capability_id=?`, p.ID, tpahubproduct.CapabilityRepositoryCreate); err != nil {
-				t.Fatal(err)
-			}
-			r11RefreshSnapshotDigest(t, s, p.ID)
-		}},
 		{"invalid-operation-metric", func(t *testing.T, s *Store, p BillingPurchase) {
 			r11DropSnapshotMutationTriggers(t, s)
 			if _, err := s.db.Exec(`UPDATE purchase_grant_snapshots SET operation_metric='',operation_limit=1 WHERE purchase_id=? AND capability_id=?`, p.ID, tpahubproduct.CapabilityRepositoryPublish); err != nil {

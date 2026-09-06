@@ -77,7 +77,7 @@ func TestExpiredPurchaseCannotFinalizeCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := BillingPurchase{ID: "expiring-checkout", AccountID: "account", ProductID: "tpa-hub", PlanCode: "nano", RateCardID: "rate", RateCardMode: "test", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 500, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: from.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: from.Format(time.RFC3339Nano), UpdatedAt: from.Format(time.RFC3339Nano)}
-	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{CapabilityID: "repository.publish"}); err != nil {
+	if _, err = s.CreatePendingPurchase(ctx, p, p.CreatedAt, commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "repository.publish"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.UpdatePurchaseCheckout(ctx, p.ID, "reference", "https://checkout.invalid", until.Format(time.RFC3339Nano)); err == nil {
