@@ -2201,82 +2201,26 @@ func (s *Store) SetActiveGeneration(c context.Context, repositoryID, generation,
 	return err
 }
 
-func (s *Store) CommitPublication(c context.Context, repositoryID, jobID, productID, capabilityID, activeAt, updatedAt string) error {
+// AuthorizedPublication contains only durable facts established by the
+// product policy boundary. Store verifies the repository identity is still
+// bound to the same owner, then performs the atomic publication transition.
+type AuthorizedPublication struct {
+	RepositoryID, JobID, OwnerAccountID string
+}
+
+func (s *Store) CommitAuthorizedPublication(c context.Context, publication AuthorizedPublication, activeAt, updatedAt string) error {
+	repositoryID, jobID := publication.RepositoryID, publication.JobID
 	tx, err := s.db.BeginTx(c, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	commitAt, err := parseEntitlementTime(activeAt)
-	if err != nil {
-		return fmt.Errorf("publication commit time is invalid: %w", err)
-	}
-	var accountID, accountStatus string
-	if err = tx.QueryRowContext(c, `SELECT r.account_id,a.status FROM repositories r JOIN accounts a ON a.id=r.account_id WHERE r.id=?`, repositoryID).Scan(&accountID, &accountStatus); err != nil {
+	var owner string
+	if err = tx.QueryRowContext(c, `SELECT COALESCE(account_id,'') FROM repositories WHERE id=?`, repositoryID).Scan(&owner); err != nil {
 		return err
 	}
-	accountAuthorized := accountStatus == AccountStatusActive
-	grantAuthorized := false
-	rows, err := tx.QueryContext(c, `SELECT valid_from,valid_until FROM product_grants WHERE customer_id=? AND product_id=? AND capability_id=? AND enabled=1 AND source<>'legacy' UNION ALL SELECT valid_from,valid_until FROM purchase_grant_instances WHERE customer_id=? AND product_id=? AND capability_id=? AND enabled=1`, accountID, productID, capabilityID, accountID, productID, capabilityID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var validFrom, validUntil string
-		if err = rows.Scan(&validFrom, &validUntil); err != nil {
-			rows.Close()
-			return err
-		}
-		from, fromErr := parseEntitlementTime(validFrom)
-		if fromErr != nil {
-			rows.Close()
-			return fmt.Errorf("publication grant validity is invalid: %w", fromErr)
-		}
-		if validUntil == "" {
-			if !commitAt.Before(from) {
-				grantAuthorized = true
-			}
-			continue
-		}
-		until, untilErr := parseEntitlementTime(validUntil)
-		if untilErr != nil {
-			rows.Close()
-			return fmt.Errorf("publication grant validity is invalid: %w", untilErr)
-		}
-		if !until.After(from) {
-			rows.Close()
-			return fmt.Errorf("publication grant validity is invalid")
-		}
-		if !commitAt.Before(from) && commitAt.Before(until) {
-			grantAuthorized = true
-		}
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	// The current Nano floor is effective policy, not a persisted grant. A
-	// valid hosted account therefore remains publication-authorized when its
-	// historical/raw grant is absent or disabled.
-	if !grantAuthorized && productID == string(tpahubproduct.ProductID) && capabilityID == string(tpahubproduct.CapabilityRepositoryPublish) {
-		var createdAt string
-		if err = tx.QueryRowContext(c, `SELECT created_at FROM accounts WHERE id=?`, accountID).Scan(&createdAt); err == nil {
-			created, parseErr := parseEntitlementTime(createdAt)
-			if parseErr == nil {
-				for _, floor := range tpahubproduct.DefaultGrants(created) {
-					if floor.CapabilityID == tpahubproduct.CapabilityRepositoryPublish && floor.ActiveAt(commitAt) {
-						grantAuthorized = true
-						break
-					}
-				}
-			}
-		} else if err != sql.ErrNoRows {
-			return err
-		}
-	}
-	if !accountAuthorized || !grantAuthorized {
-		return fmt.Errorf("publication authorization changed before commit")
+	if owner == "" || owner != publication.OwnerAccountID {
+		return fmt.Errorf("publication repository owner changed before commit")
 	}
 	if _, err = tx.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, jobID, updatedAt); err != nil {
 		return err
@@ -2290,6 +2234,17 @@ func (s *Store) CommitPublication(c context.Context, repositoryID, jobID, produc
 		return fmt.Errorf("publication job state changed before commit")
 	}
 	return tx.Commit()
+}
+
+// CommitPublication is retained for old low-level callers and migration-era
+// tests. Current application publication uses CommitAuthorizedPublication;
+// this compatibility method performs no product authorization.
+func (s *Store) CommitPublication(c context.Context, repositoryID, jobID, productID, capabilityID, activeAt, updatedAt string) error {
+	r, err := s.Repository(c, repositoryID)
+	if err != nil {
+		return err
+	}
+	return s.CommitAuthorizedPublication(c, AuthorizedPublication{RepositoryID: repositoryID, JobID: jobID, OwnerAccountID: r.AccountID}, activeAt, updatedAt)
 }
 
 func (s *Store) ActiveGeneration(c context.Context, repositoryID string) (string, error) {

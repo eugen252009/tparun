@@ -281,8 +281,8 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "name is required")
 		return
 	}
-	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), tpahubproduct.ProductID, CapabilityRepositoryCreate, s.currentTime()); err != nil {
-		bad(w, http.StatusForbidden, "repository creation grant unavailable")
+	if err := s.repositoryPolicy().AuthorizeCreation(r.Context(), accountID(r)); err != nil {
+		bad(w, http.StatusForbidden, err.Error())
 		return
 	}
 	id := newID()
@@ -371,9 +371,8 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "publishes" && r.Method == "POST" {
-		repo, e := s.db.OwnedRepository(r.Context(), accountID(r), id)
-		if e != nil || repo.ID != id {
-			bad(w, 404, "repository not found")
+		if _, e := s.repositoryPolicy().AuthorizeMutation(r.Context(), accountID(r), id); e != nil {
+			bad(w, http.StatusForbidden, e.Error())
 			return
 		}
 		s.upload(w, r, id)
@@ -388,8 +387,8 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	if _, err := s.grantService().GetGrant(r.Context(), commerce.CustomerID(accountID(r)), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); err != nil {
-		bad(w, http.StatusForbidden, "repository publishing grant unavailable")
+	if _, _, err := s.repositoryPolicy().AuthorizePublication(r.Context(), accountID(r), id); err != nil {
+		bad(w, http.StatusForbidden, err.Error())
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
@@ -991,7 +990,8 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	// This is intentionally the last external/DB work before activation.
-	if e := s.ensurePublishAuthorized(j.RepositoryID); e != nil {
+	_, _, e = s.repositoryPolicy().AuthorizePublication(context.Background(), repo.AccountID, j.RepositoryID)
+	if e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)
 		return
@@ -1033,7 +1033,7 @@ func (s *server) process(j store.Job) {
 	if s.durablePublicationFault != nil {
 		e = s.durablePublicationFault()
 	} else {
-		e = s.db.CommitPublication(context.Background(), j.RepositoryID, j.ID, string(tpahubproduct.ProductID), string(CapabilityRepositoryPublish), commitTime.Format(time.RFC3339Nano), commitTime.Format(time.RFC3339Nano))
+		e = s.db.CommitAuthorizedPublication(context.Background(), store.AuthorizedPublication{RepositoryID: j.RepositoryID, JobID: j.ID, OwnerAccountID: repo.AccountID}, commitTime.Format(time.RFC3339Nano), commitTime.Format(time.RFC3339Nano))
 	}
 	if e != nil {
 		rollback(e)
@@ -2141,33 +2141,13 @@ func (s *server) finishPublishedJob(j store.Job) error {
 	return nil
 }
 
-func (s *server) ensurePublishAuthorized(repositoryID string) error {
-	if err := s.ensurePublishAccountActive(repositoryID); err != nil {
+func (s *server) ensurePublishAccountActive(repositoryID string) error {
+	repository, err := s.repositoryPolicy().Resolve(context.Background(), repositoryID)
+	if err != nil {
 		return err
 	}
-	repository, err := s.db.Repository(context.Background(), repositoryID)
-	if err != nil {
-		return fmt.Errorf("publication repository lookup: %w", err)
-	}
-	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(repository.AccountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); err != nil {
-		return fmt.Errorf("publication grant unavailable: %w", err)
-	}
-	return nil
-}
-
-func (s *server) ensurePublishAccountActive(repositoryID string) error {
-	repository, err := s.db.Repository(context.Background(), repositoryID)
-	if err != nil {
-		return fmt.Errorf("publication repository lookup: %w", err)
-	}
-	account, err := s.db.AccountByID(context.Background(), repository.AccountID)
-	if err != nil {
-		return fmt.Errorf("publication account lookup: %w", err)
-	}
-	if account.Status != store.AccountStatusActive {
-		return fmt.Errorf("publication account is not active")
-	}
-	return nil
+	_, err = s.repositoryPolicy().AuthorizeMutation(context.Background(), repository.AccountID, repositoryID)
+	return err
 }
 
 // reserveCapacity is kept as a compatibility helper for narrow unit tests.
