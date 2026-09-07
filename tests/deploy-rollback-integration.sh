@@ -19,12 +19,22 @@ base=$(git rev-parse HEAD)
 # The candidate is the frozen implementation under qualification.
 candidate_rev=$(git rev-parse HEAD)
 git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
-previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
+previous_rev=c73ecd8533da5a8efd2eeda019755a950489c6fe
 v2_previous_rev=c73ecd8533da5a8efd2eeda019755a950489c6fe
-
-echo "building isolated previous ($previous_rev) and candidate ($candidate_rev)"
-git worktree add --detach "$WORK/previous-src" "$previous_rev" >/dev/null
-(cd "$WORK/previous-src" && go build -o "$WORK/previous" ./cmd/tpahub)
+expected_previous_sha=482e18be3a9e90cc8e0791d908f96c367ca0aa0c9a7585b17e5e8264e966f02f
+previous_artifact=${TPAHUB_EXACT_PREVIOUS_BINARY:-}
+if [[ -z "$previous_artifact" || ! -f "$previous_artifact" ]]; then
+  echo "P1-D1Q-B INCOMPLETE: exact historical c73ecd binary required (TPAHUB_EXACT_PREVIOUS_BINARY)" >&2
+  exit 2
+fi
+actual_previous_sha=$(sha256sum "$previous_artifact" | awk '{print $1}')
+if [[ "$actual_previous_sha" != "$expected_previous_sha" ]]; then
+  echo "P1-D1Q-B INCOMPLETE: previous artifact SHA mismatch: $actual_previous_sha" >&2
+  exit 2
+fi
+echo "building exact previous ($previous_rev) and candidate ($candidate_rev)"
+cp "$previous_artifact" "$WORK/previous"
+git worktree add --detach "$WORK/previous-v2-src" "$v2_previous_rev" >/dev/null
 git worktree add --detach "$WORK/previous-v2-src" "$v2_previous_rev" >/dev/null
 (cd "$WORK/previous-v2-src" && go build -o "$WORK/previous-v2" ./cmd/tpahub)
 go build -o "$WORK/candidate" ./cmd/tpahub
