@@ -68,8 +68,8 @@ The website registration and login forms use the same account/session API as the
 Registration and login store the selected server and session token in `$XDG_CONFIG_HOME/tpahub/config.json`, or `~/.config/tpahub/config.json`, mode `0600`.
 
 ```sh
-tpahub register --server http://127.0.0.1:8080
-tpahub login --server http://127.0.0.1:8080
+tpahub register
+tpahub login
 tpahub repo create private-tools
 tpahub repo list
 tpahub publish private-tools ./tool_1.0.0_amd64.deb
@@ -86,7 +86,7 @@ Create a public repository with `tpahub repo create name --public`. Repositories
 Public repository:
 
 ```sh
-tpahub repo add REPOSITORY_ID --server http://127.0.0.1:8080
+tpahub repo add REPOSITORY_ID
 apt update
 apt install package-name
 ```
@@ -94,7 +94,7 @@ apt install package-name
 Private repository registration uses a repository reader token, not the publisher session token:
 
 ```sh
-tpahub repo add REPOSITORY_ID --server http://127.0.0.1:8080 --token tph_r_...
+tpahub repo add REPOSITORY_ID --token tph_r_...
 apt update
 apt install package-name
 ```

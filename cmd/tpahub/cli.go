@@ -26,6 +26,8 @@ import (
 
 type cliConfig struct{ Server, Email, Token string }
 
+const defaultServer = "https://tpa.lupricht.net"
+
 func configPath() string {
 	d := os.Getenv("XDG_CONFIG_HOME")
 	if d == "" {
@@ -41,7 +43,7 @@ func loadCLI() cliConfig {
 		_ = json.Unmarshal(b, &c)
 	}
 	if c.Server == "" {
-		c.Server = "http://127.0.0.1:8080"
+		c.Server = defaultServer
 	}
 	return c
 }
