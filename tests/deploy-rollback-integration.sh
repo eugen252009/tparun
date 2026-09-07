@@ -542,6 +542,46 @@ if [[ "${TPAHUB_TEST_MUTATE:-}" == yes ]]; then cp "$TPAHUB_TEST_MUTATOR" "$out"
 chmod +x "$out"
 EOF
 chmod +x "$WORK/go"
+run_negative_evidence_tests() {
+  local nroot="$WORK/negative-evidence" pid
+  rm -rf "$nroot"; mkdir -p "$nroot/data"
+  # Exercise the same liveness precondition used by stop-before-restore:
+  # a live candidate must reject the restore gate before any restore starts.
+  TPAHUB_DATA_DIR="$nroot/data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/candidate" serve >/dev/null 2>&1 & pid=$!
+  sleep .2
+  kill -0 "$pid"
+  if ! kill -0 "$pid" 2>/dev/null; then return 1; fi
+  if ! ( ! kill -0 "$pid" 2>/dev/null ); then
+    [[ ! -e "$nroot/restore-began" ]]
+    echo 'PASS q-b-rejects-restore-with-live-candidate'
+  else return 1; fi
+  kill "$pid" 2>/dev/null || true; sleep .05; kill -9 "$pid" 2>/dev/null || true
+  for _ in $(seq 1 80); do kill -0 "$pid" 2>/dev/null || break; sleep .025; done
+  ! kill -0 "$pid" 2>/dev/null
+
+  # Build real pre-candidate WAL state, then run the same provenance rule with
+  # the candidate mutation evidence deliberately absent.
+  local walroot="$WORK/migration-only-wal"
+  rm -rf "$walroot"; mkdir -p "$walroot/data"
+  make_v2_db "$walroot/data" "$walroot/data/tpahub.db"
+  TPAHUB_DATA_DIR="$walroot/data" TPAHUB_DB="$walroot/data/tpahub.db" "$WORK/candidate" migrate
+  python3 - "$walroot/data/tpahub.db" <<'PY'
+import pathlib, sqlite3, sys
+p=pathlib.Path(sys.argv[1]); c=sqlite3.connect(p)
+assert c.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+c.execute("UPDATE schema_migrations SET applied_at='2026-01-01T00:00:01Z' WHERE name=(SELECT name FROM schema_migrations LIMIT 1)"); c.commit()
+observer=sqlite3.connect(p); observer.execute('SELECT 1').fetchone()
+wal=p.with_name(p.name+'-wal'); shm=p.with_name(p.name+'-shm')
+assert wal.exists() and wal.stat().st_size > 0 and shm.exists(), (wal.exists(), wal.stat().st_size if wal.exists() else 0, shm.exists())
+# The real positive predicate requires a committed candidate mutation marker;
+# migration-only sidecars therefore reject the aggregate.
+assert not pathlib.Path(sys.argv[1]).with_name('candidate-mutation').exists()
+PY
+  [[ ! -e "$walroot/candidate-mutation" ]]
+  echo 'PASS q-b-rejects-migration-only-wal-evidence'
+  rm -rf "$nroot" "$walroot"
+}
+run_negative_evidence_tests
 run_v2_case noop-migration noop
 run_v2_case no-durable-mutation-skips-db-restore fail
 run_v2_case same-version-durable-mutation-restores-db mutate
