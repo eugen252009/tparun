@@ -70,6 +70,18 @@ if [[ "$mode" == sidecar ]]; then
   [[ -e "$marker" ]] || exit 51
   grep -q '^candidate_mutation_requested ' "$events" || exit 52
   grep -q '^candidate_mutation_committed ' "$events" || exit 53
+  python3 - "$events" <<'PY'
+import sys
+values={}
+for line in open(sys.argv[1]):
+ parts=line.split()
+ if len(parts) >= 2 and parts[0] not in values: values[parts[0]]=int(parts[1])
+if 'candidate_wal_observed' not in values: raise SystemExit(56)
+if 'candidate_shm_observed' not in values: raise SystemExit(57)
+if values['candidate_mutation_requested'] >= values['candidate_mutation_committed']: raise SystemExit(58)
+if values['candidate_mutation_committed'] >= values['candidate_wal_observed']: raise SystemExit(59)
+if values['candidate_mutation_committed'] >= values['candidate_shm_observed']: raise SystemExit(60)
+PY
   python3 - "$base" "$db" <<'PY'
 import hashlib, json, pathlib, sys
 def snap(path):
@@ -179,13 +191,13 @@ if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
         touch "$TPAHUB_TEST_MUTATION_MARKER"
         printf 'candidate_digest %s %s\n' "$(date +%s%N)" "$("$TPAHUB_TEST_CANDIDATE" digest --db "$TPAHUB_TEST_DATA/tpahub.db")" >>"$TPAHUB_TEST_EVENT_LOG"
         for _ in $(seq 1 40); do [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && break; sleep .025; done
-        "$TPAHUB_QUALIFICATION_GUARDS" sidecar "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" "$TPAHUB_TEST_EVENT_LOG" "$TPAHUB_TEST_MUTATION_MARKER"
         printf 'candidate_wal_changed_after_mutation %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         printf 'candidate_shm_candidate_era %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         for _ in $(seq 1 40); do [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && break; sleep .025; done
         [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]]
         printf 'candidate_wal_observed %s size=%s mtime=%s\n' "$(date +%s%N)" "$(stat -c %s "$TPAHUB_TEST_DATA/tpahub.db-wal")" "$(stat -c %Y "$TPAHUB_TEST_DATA/tpahub.db-wal")" >>"$TPAHUB_TEST_EVENT_LOG"
         printf 'candidate_shm_observed %s mtime=%s\n' "$(date +%s%N)" "$(stat -c %Y "$TPAHUB_TEST_DATA/tpahub.db-shm")" >>"$TPAHUB_TEST_EVENT_LOG"
+        "$TPAHUB_QUALIFICATION_GUARDS" sidecar "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" "$TPAHUB_TEST_EVENT_LOG" "$TPAHUB_TEST_MUTATION_MARKER"
         break
       fi
       sleep .025
@@ -625,7 +637,7 @@ import hashlib, json, pathlib, sys
 p=pathlib.Path(sys.argv[1]); w=p/'db-wal'; s=p/'db-shm'
 def snap(x): return {'exists':True, 'size':x.stat().st_size, 'mtime_ns':x.stat().st_mtime_ns, 'sha':hashlib.sha256(x.read_bytes()).hexdigest()}
 json.dump({'wal':snap(w), 'shm':snap(s)}, open(p/'baseline.json','w'))
-(p/'events').write_text('candidate_mutation_requested 1\ncandidate_mutation_committed 2\n')
+(p/'events').write_text('candidate_mutation_requested 1\ncandidate_mutation_committed 2\ncandidate_wal_observed 3\ncandidate_shm_observed 4\n')
 (p/'candidate-mutation').touch()
 PY
   set +e
@@ -634,6 +646,22 @@ PY
   set -e
   [[ "$unchanged_rc" == 54 ]]
   echo 'PASS q-b-rejects-unchanged-post-mutation-wal'
+  printf 'candidate_mutation_requested 1\ncandidate_mutation_committed 2\ncandidate_shm_observed 3\n' >"$same/events"
+  set +e; "$WORK/qualification-guards" sidecar "$same/baseline.json" "$same/db" "$same/events" "$same/candidate-mutation"; local missing_wal_rc=$?; set -e
+  [[ "$missing_wal_rc" == 56 ]]
+  echo 'PASS q-b-rejects-missing-wal-observation'
+  printf 'candidate_mutation_requested 1\ncandidate_mutation_committed 2\ncandidate_wal_observed 3\n' >"$same/events"
+  set +e; "$WORK/qualification-guards" sidecar "$same/baseline.json" "$same/db" "$same/events" "$same/candidate-mutation"; local missing_shm_rc=$?; set -e
+  [[ "$missing_shm_rc" == 57 ]]
+  echo 'PASS q-b-rejects-missing-shm-observation'
+  printf 'candidate_mutation_requested 1\ncandidate_wal_observed 2\ncandidate_mutation_committed 3\ncandidate_shm_observed 4\n' >"$same/events"
+  set +e; "$WORK/qualification-guards" sidecar "$same/baseline.json" "$same/db" "$same/events" "$same/candidate-mutation"; local precommit_wal_rc=$?; set -e
+  [[ "$precommit_wal_rc" == 59 ]]
+  echo 'PASS q-b-rejects-precommit-wal-observation'
+  printf 'candidate_mutation_requested 1\ncandidate_shm_observed 2\ncandidate_mutation_committed 3\ncandidate_wal_observed 4\n' >"$same/events"
+  set +e; "$WORK/qualification-guards" sidecar "$same/baseline.json" "$same/db" "$same/events" "$same/candidate-mutation"; local precommit_shm_rc=$?; set -e
+  [[ "$precommit_shm_rc" == 60 ]]
+  echo 'PASS q-b-rejects-precommit-shm-observation'
   rm -rf "$nroot" "$walroot" "$same"
 }
 run_negative_evidence_tests
