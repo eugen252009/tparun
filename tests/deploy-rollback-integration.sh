@@ -37,6 +37,7 @@ echo "building legacy previous ($previous_rev), exact c73 previous ($v2_previous
 git worktree add --detach "$WORK/previous-src" "$previous_rev" >/dev/null
 (cd "$WORK/previous-src" && go build -o "$WORK/previous" ./cmd/tpahub)
 cp "$previous_artifact" "$WORK/previous-v2"
+chmod +x "$WORK/previous-v2"
 go build -o "$WORK/candidate" ./cmd/tpahub
 chmod +x "$WORK/previous" "$WORK/candidate"
 
@@ -392,14 +393,23 @@ run_case candidate-era-wal-contamination-prevented candidate-wal
 make_v2_db() {
   local data=$1 db=$2
   mkdir -p "$data"
-  TPAHUB_DATA_DIR="$data" TPAHUB_DB="$db" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous-v2" serve >/dev/null 2>&1 & local p=$!
+  # Build the historical fixture through the real schema-1 authority and the
+  # exact c73 migration; never synthesize or rewind schema metadata.
+  TPAHUB_DATA_DIR="$data" TPAHUB_DB="$db" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous" serve >/dev/null 2>&1 & local p=$!
   sleep .5; kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
-  sqlite3 "$db" 'UPDATE tpahub_schema SET version=1 WHERE singleton=1;'
+  # The historical previous fixture owns the schema-1 ledger; c73 performs
+  # the authoritative schema-1 to schema-2 transition.
+  sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 1
   TPAHUB_DATA_DIR="$data" TPAHUB_DB="$db" "$WORK/previous-v2" migrate
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 2
+  [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='table';")" == 28 ]]
   sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending';" | grep -qx 1
+  [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='global_bootstrap_repository';")" == 0 ]]
   sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
   [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
+  echo 'PASS q-b-canonical-schema2-fixture-ready'
+  echo 'PASS q-b-schema2-fixture-has-pending-purchase-authority'
+  echo 'PASS q-b-schema2-fixture-has-no-bootstrap-table'
 }
 
 run_v2_case() {
