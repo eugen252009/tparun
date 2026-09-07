@@ -17,7 +17,7 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	}
 	b, _ := io.ReadAll(r.Body)
 	r.Body.Close()
-	if r.StatusCode != 200 || !strings.Contains(string(b), "a0d8fd0f82235ee431c41581aa253ec8") {
+	if r.StatusCode != 200 || !strings.Contains(string(b), "748316a73ce0eff46f8888f956c5eeb0") {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")
