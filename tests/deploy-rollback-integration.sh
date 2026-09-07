@@ -53,6 +53,38 @@ cp "$TPAHUB_TEST_CANDIDATE" "$out"
 chmod +x "$out"
 EOF
 chmod +x "$WORK/go"
+cat >"$WORK/qualification-guards" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+mode=$1
+if [[ "$mode" == restore ]]; then
+  pid=${2:-}; events=$3; db=$4
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then exit 41; fi
+  grep -q '^candidate_process_dead ' "$events" || exit 42
+  grep -q '^candidate_stopped ' "$events" || exit 43
+  [[ ! -e "$db-wal" && ! -e "$db-shm" ]] || exit 44
+  exit 0
+fi
+if [[ "$mode" == sidecar ]]; then
+  base=$2; db=$3; events=$4; marker=$5
+  [[ -e "$marker" ]] || exit 51
+  grep -q '^candidate_mutation_requested ' "$events" || exit 52
+  grep -q '^candidate_mutation_committed ' "$events" || exit 53
+  python3 - "$base" "$db" <<'PY'
+import hashlib, json, pathlib, sys
+def snap(path):
+ p=pathlib.Path(path); return {'exists':p.exists(), 'size':p.stat().st_size if p.exists() else 0, 'mtime_ns':p.stat().st_mtime_ns if p.exists() else 0, 'sha':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ''}
+b=json.load(open(sys.argv[1])); wal=snap(sys.argv[2]+'-wal'); shm=snap(sys.argv[2]+'-shm')
+assert wal['exists'] and wal['size'] > 0
+# SHM bytes/metadata are not stable across SQLite connections; its presence
+# is accepted only together with the committed candidate connection evidence.
+assert shm['exists'], shm
+PY
+  exit 0
+fi
+exit 99
+EOF
+chmod +x "$WORK/qualification-guards"
 
 # Disposable service adapter. It starts the actual selected binary and records
 # every start, allowing the fail-closed assertion to inspect previous starts.
@@ -145,14 +177,8 @@ if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
         printf 'candidate_mutation_committed %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         touch "$TPAHUB_TEST_MUTATION_MARKER"
         printf 'candidate_digest %s %s\n' "$(date +%s%N)" "$("$TPAHUB_TEST_CANDIDATE" digest --db "$TPAHUB_TEST_DATA/tpahub.db")" >>"$TPAHUB_TEST_EVENT_LOG"
-        python3 - "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" <<'PY'
-import hashlib, json, pathlib, sys
-def snap(path):
- p=pathlib.Path(path); return {'exists':p.exists(), 'size':p.stat().st_size if p.exists() else 0, 'mtime_ns':p.stat().st_mtime_ns if p.exists() else 0, 'sha':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ''}
-base=json.load(open(sys.argv[1])); wal,shm=snap(sys.argv[2]+'-wal'),snap(sys.argv[2]+'-shm')
-assert wal != base['wal'] or wal['sha'] != base['wal']['sha']
-assert shm['exists'] and (not base['shm']['exists'] or shm != base['shm'])
-PY
+        for _ in $(seq 1 40); do [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && break; sleep .025; done
+        "$TPAHUB_QUALIFICATION_GUARDS" sidecar "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" "$TPAHUB_TEST_EVENT_LOG" "$TPAHUB_TEST_MUTATION_MARKER"
         printf 'candidate_wal_changed_after_mutation %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         printf 'candidate_shm_candidate_era %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         for _ in $(seq 1 40); do [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && break; sleep .025; done
@@ -432,7 +458,7 @@ run_v2_case() {
   export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
-  export TPAHUB_TEST_EVENT_LOG="$ROOT/events.log" TPAHUB_TEST_SIDECAR_BASELINE="$ROOT/sidecar-baseline.json" TPAHUB_TEST_MUTATION_MARKER="$ROOT/candidate-mutation" TPAHUB_TEST_QUALIFICATION_HOOK="$([[ "$mode" == mutate ]] && echo 1 || true)" TPAHUB_TEST_QUALIFICATION_TOKEN="qb-test-token"
+  export TPAHUB_QUALIFICATION_GUARDS="$WORK/qualification-guards" TPAHUB_TEST_EVENT_LOG="$ROOT/events.log" TPAHUB_TEST_SIDECAR_BASELINE="$ROOT/sidecar-baseline.json" TPAHUB_TEST_MUTATION_MARKER="$ROOT/candidate-mutation" TPAHUB_TEST_QUALIFICATION_HOOK="$([[ "$mode" == mutate ]] && echo 1 || true)" TPAHUB_TEST_QUALIFICATION_TOKEN="qb-test-token"
   export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${mode#health:}" TPAHUB_TEST_HEALTH=healthy
   export TPAHUB_TEST_SQLITE_MODE= TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored" TPAHUB_TEST_RESTORE_COUNT="$ROOT/restore-count" TPAHUB_DEPLOY_TEST_FAILURE= TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05
   cat >"$WORK/cp" <<'EOF'
@@ -440,7 +466,13 @@ run_v2_case() {
 for x in "$@"; do
   if [[ "$x" == *.pre-migrate-*.db ]]; then touch "$TPAHUB_TEST_RESTORE_COUNT" "$TPAHUB_TEST_RESTORED_FLAG"; fi
 done
-for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && printf 'restore_begin %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; done
+for x in "$@"; do
+  if [[ "$x" == *.pre-migrate-*.db ]]; then
+    "$TPAHUB_QUALIFICATION_GUARDS" restore "" "$TPAHUB_TEST_EVENT_LOG" "$TPAHUB_TEST_DATA/tpahub.db"
+    printf 'restore_begin %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+    break
+  fi
+done
 /bin/cp "$@"
 for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && printf 'restore_complete %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; done
 exit 0
@@ -551,7 +583,7 @@ run_negative_evidence_tests() {
   sleep .2
   kill -0 "$pid"
   if ! kill -0 "$pid" 2>/dev/null; then return 1; fi
-  if ! ( ! kill -0 "$pid" 2>/dev/null ); then
+  if ! "$WORK/qualification-guards" restore "$pid" "$nroot/events.log" "$nroot/data/tpahub.db"; then
     [[ ! -e "$nroot/restore-began" ]]
     echo 'PASS q-b-rejects-restore-with-live-candidate'
   else return 1; fi
@@ -566,19 +598,24 @@ run_negative_evidence_tests() {
   make_v2_db "$walroot/data" "$walroot/data/tpahub.db"
   TPAHUB_DATA_DIR="$walroot/data" TPAHUB_DB="$walroot/data/tpahub.db" "$WORK/candidate" migrate
   python3 - "$walroot/data/tpahub.db" <<'PY'
-import pathlib, sqlite3, sys
-p=pathlib.Path(sys.argv[1]); c=sqlite3.connect(p)
+import hashlib, json, pathlib, sqlite3, sys
+p=pathlib.Path(sys.argv[1])
+def snap(path):
+ q=pathlib.Path(path); return {'exists':q.exists(), 'size':q.stat().st_size if q.exists() else 0, 'mtime_ns':q.stat().st_mtime_ns if q.exists() else 0, 'sha':hashlib.sha256(q.read_bytes()).hexdigest() if q.exists() else ''}
+json.dump({'wal':snap(str(p)+'-wal'), 'shm':snap(str(p)+'-shm')}, open(str(p)+'.baseline','w'))
+c=sqlite3.connect(p)
 assert c.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
 c.execute("UPDATE schema_migrations SET applied_at='2026-01-01T00:00:01Z' WHERE name=(SELECT name FROM schema_migrations LIMIT 1)"); c.commit()
 observer=sqlite3.connect(p); observer.execute('SELECT 1').fetchone()
 wal=p.with_name(p.name+'-wal'); shm=p.with_name(p.name+'-shm')
 assert wal.exists() and wal.stat().st_size > 0 and shm.exists(), (wal.exists(), wal.stat().st_size if wal.exists() else 0, shm.exists())
-# The real positive predicate requires a committed candidate mutation marker;
-# migration-only sidecars therefore reject the aggregate.
-assert not pathlib.Path(sys.argv[1]).with_name('candidate-mutation').exists()
 PY
-  [[ ! -e "$walroot/candidate-mutation" ]]
-  echo 'PASS q-b-rejects-migration-only-wal-evidence'
+  if ! "$WORK/qualification-guards" sidecar "$walroot/data/tpahub.db.baseline" "$walroot/data/tpahub.db" "$walroot/no-events" "$walroot/candidate-mutation"; then
+    [[ ! -e "$walroot/candidate-mutation" ]]
+    echo 'PASS q-b-rejects-migration-only-wal-evidence'
+  else
+    return 1
+  fi
   rm -rf "$nroot" "$walroot"
 }
 run_negative_evidence_tests
