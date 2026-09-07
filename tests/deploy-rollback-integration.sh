@@ -404,6 +404,7 @@ EOF
       echo "PASS v2-v3-fresh-candidate-mutation-detected"
       echo "PASS exact-c73-schema2-to-recomposed-schema3-rollback"
       echo "PASS exact-c73-schema2-to-recomposed-schema3-wal-qualification"
+      grep -F 'backup=' "$ROOT/deploy.log" | tail -1
     else
       echo "PASS schema-migration-rollback-restores-db"
       echo "PASS no-durable-mutation-skips-additional-restore"
