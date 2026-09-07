@@ -75,7 +75,8 @@ import hashlib, json, pathlib, sys
 def snap(path):
  p=pathlib.Path(path); return {'exists':p.exists(), 'size':p.stat().st_size if p.exists() else 0, 'mtime_ns':p.stat().st_mtime_ns if p.exists() else 0, 'sha':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ''}
 b=json.load(open(sys.argv[1])); wal=snap(sys.argv[2]+'-wal'); shm=snap(sys.argv[2]+'-shm')
-assert wal['exists'] and wal['size'] > 0
+if not wal['exists'] or wal['size'] <= 0: raise SystemExit(55)
+if b['wal']['exists'] and wal['exists'] and b['wal']['size'] == wal['size'] and b['wal']['sha'] == wal['sha']: raise SystemExit(54)
 # SHM bytes/metadata are not stable across SQLite connections; its presence
 # is accepted only together with the committed candidate connection evidence.
 assert shm['exists'], shm
@@ -616,7 +617,24 @@ PY
   else
     return 1
   fi
-  rm -rf "$nroot" "$walroot"
+  local same="$WORK/unchanged-wal"
+  rm -rf "$same"; mkdir -p "$same"
+  printf x >"$same/db-wal"; : >"$same/db-shm"
+  python3 - "$same" <<'PY'
+import hashlib, json, pathlib, sys
+p=pathlib.Path(sys.argv[1]); w=p/'db-wal'; s=p/'db-shm'
+def snap(x): return {'exists':True, 'size':x.stat().st_size, 'mtime_ns':x.stat().st_mtime_ns, 'sha':hashlib.sha256(x.read_bytes()).hexdigest()}
+json.dump({'wal':snap(w), 'shm':snap(s)}, open(p/'baseline.json','w'))
+(p/'events').write_text('candidate_mutation_requested 1\ncandidate_mutation_committed 2\n')
+(p/'candidate-mutation').touch()
+PY
+  set +e
+  "$WORK/qualification-guards" sidecar "$same/baseline.json" "$same/db" "$same/events" "$same/candidate-mutation"
+  local unchanged_rc=$?
+  set -e
+  [[ "$unchanged_rc" == 54 ]]
+  echo 'PASS q-b-rejects-unchanged-post-mutation-wal'
+  rm -rf "$nroot" "$walroot" "$same"
 }
 run_negative_evidence_tests
 run_v2_case noop-migration noop
