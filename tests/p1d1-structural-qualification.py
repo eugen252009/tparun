@@ -151,20 +151,65 @@ def main(work):
     run('go', 'build', '-o', str(candidate), './cmd/tpahub', cwd=ROOT)
     start(old, work / 'empty-v2', 2)
     start(candidate, work / 'empty-v3', 3)
+    def lineage(name, base, migrate_binary=None, set_version=None):
+        directory = work / name
+        directory.mkdir()
+        db = directory / 'tpahub.db'
+        shutil.copyfile(work / base / 'tpahub.db', db)
+        if set_version is not None:
+            with connect(db) as c:
+                c.execute('UPDATE tpahub_schema SET version=?', (set_version,))
+                c.commit()
+        if migrate_binary:
+            run(str(migrate_binary), 'migrate', env=dict(os.environ, TPAHUB_DATA_DIR=str(directory)))
+        with connect(db) as c:
+            present = c.execute("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending'").fetchone()[0] == 1
+            count = c.execute("SELECT count(*) FROM sqlite_schema WHERE type='index'").fetchone()[0]
+            return db, present, count, metadata(c)
+    l1 = lineage('lineage-fresh-v2', 'empty-v2')
+    l2 = lineage('lineage-migrated-v2', 'empty-v2', old, 1)
+    l3 = lineage('lineage-fresh-v3', 'empty-v3')
+    l4a = lineage('lineage-fresh-v2-v3', 'empty-v2', candidate, 2)
+    # L4-B starts from the actual historical migrated-v2 file.
+    l4b = lineage('lineage-migrated-v2-v3', 'lineage-migrated-v2', candidate, 2)
+    for label, item in [('Fresh c73ecd', l1), ('c73ecd v1→v2', l2), ('Fresh current', l3), ('Fresh-v2→v3', l4a), ('Migrated-v2→v3', l4b)]:
+        print(f'LINEAGE {label} schema={sqlite3.connect(item[0]).execute("SELECT version FROM tpahub_schema").fetchone()[0]} billing_purchases_pending={"YES" if item[1] else "NO"} indexes={item[2]}')
+    assert not l1[1] and l1[2] == 37 and l2[1] and l2[2] == 38
+    assert l3[1] and l4a[1] and l4b[1]
+    assert l3[2] == l4a[2] == l4b[2]
+    v2_drift = [(t, field) for t in l1[3] for field in l1[3][t] if l1[3][t][field] != l2[3][t][field]]
+    print('FRESH_V2_MIGRATED_V2_STRUCTURAL_DIFFERENCES ' + repr(v2_drift))
+    assert v2_drift == [('billing_purchases', 'indexes')]
+    assert l3[3] == l4a[3] == l4b[3]
+    print('PASS fresh-migrated-current-schema-structural-parity')
+    print('PASS current-schema-index-authority-parity')
     def fixture(name, version, override=None):
         directory = work / name
         directory.mkdir()
         db = directory / 'tpahub.db'
-        shutil.copyfile(work / f'empty-v{version}' / 'tpahub.db', db)
-        seed(db, override)
+        if version == '2m':
+            shutil.copyfile(work / 'empty-v2' / 'tpahub.db', db)
+            with connect(db) as c:
+                c.execute('UPDATE tpahub_schema SET version=1')
+                c.commit()
+            run(str(old), 'migrate', env=dict(os.environ, TPAHUB_DATA_DIR=str(directory)))
+        else:
+            shutil.copyfile(work / f'empty-v{version}' / 'tpahub.db', db)
+        if override and override[0] == (('billing_purchases', 'provider_state')):
+            seed(db)
+            with connect(db) as c:
+                c.execute('UPDATE billing_purchases SET provider_state=?', (override[1],))
+                c.commit()
+        else:
+            seed(db, override)
         return db
-    baseline = fixture('valid-v2', 2)
+    baseline = fixture('valid-v2', '2m')
     with connect(baseline) as c:
         valid_facts, before_meta = facts(c), metadata(c)
     def digest(db):
         return run(str(candidate), 'digest', '--db', str(db))
     for i, (target, invalid) in enumerate(INVALID.items()):
-        db = fixture(f'invalid-{i}', 2, (target, invalid))
+        db = fixture(f'invalid-{i}', '2m', (target, invalid))
         with connect(db) as c:
             before, meta = facts(c), metadata(c)
             differences = [(t, j, k) for t in before for j, row in enumerate(before[t]) for k, value in enumerate(row) if value != valid_facts[t][j][k]]
@@ -243,13 +288,13 @@ def main(work):
         print(f'{field} semantic differences: NONE')
     for name in ['p1d1-schema-scope-exact', 'migration-preserves-trigger-set', 'migration-preserves-index-set', 'migration-preserves-foreign-key-definitions', 'migration-only-adds-p1d1-constraints', 'p1d1-production-fixture-business-facts-preserved']:
         print('PASS ' + name)
-    for directory in [baseline.parent, work / 'valid-0-0']:
+    for directory in [work / 'empty-v3', l4b[0].parent]:
         db = directory / 'tpahub.db'
         d = digest(db)
         with connect(db) as c:
             m = metadata(c)
         start(candidate, directory, 3)
-        assert digest(db) == d
+        assert digest(db) == d, f'startup mutated {directory}'
         with connect(db) as c:
             assert metadata(c) == m
     print('PASS current-schema-startup-no-op')

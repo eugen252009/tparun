@@ -410,6 +410,12 @@ func open(dir string, reconcileRunning, explicitMigration bool) (*Store, error) 
 			db.Close()
 			return nil, fmt.Errorf("initialize database: %w", e)
 		}
+		if fresh {
+			if _, e = migrationExec.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS billing_purchases_pending ON billing_purchases(account_id,product_id,provider,billing_environment) WHERE status='pending'`); e != nil {
+				db.Close()
+				return nil, fmt.Errorf("initialize pending purchase index: %w", e)
+			}
+		}
 		if explicitMigration {
 			var markerSQL string
 			if e = migrationExec.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tpahub_schema'`).Scan(&markerSQL); e != nil {
