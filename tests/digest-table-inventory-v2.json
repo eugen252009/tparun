@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "tables": [
     {"name":"account_entitlements","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"account_metadata","classification":"DURABLE_APPLICATION_TABLE"},
@@ -12,6 +12,7 @@
     {"name":"billing_purchases","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"egress_accounting_uncertain","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"generation_cleanup_tasks","classification":"DURABLE_APPLICATION_TABLE"},
+    {"name":"global_bootstrap_repository","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"mock_billing_events","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"operator_credentials","classification":"DURABLE_APPLICATION_TABLE"},
     {"name":"operator_identity","classification":"DURABLE_APPLICATION_TABLE"},

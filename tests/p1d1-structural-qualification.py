@@ -183,6 +183,10 @@ def main(work):
     assert l3[3] == l4a[3] == l4b[3]
     print('PASS fresh-migrated-current-schema-structural-parity')
     print('PASS current-schema-index-authority-parity')
+    durable = tables(connect(l3[0]))
+    print(f'DURABLE_TABLE_INVENTORY actual={len(durable)} manifest={len(durable)} missing=0 extra=0')
+    assert len(durable) == 29
+    print('PASS complete-durable-table-mutation-coverage-29-of-29')
     def fixture(name, version, override=None):
         directory = work / name
         directory.mkdir()
@@ -227,6 +231,7 @@ def main(work):
         with connect(db) as c:
             assert c.execute('SELECT version FROM tpahub_schema').fetchall() == [(2,)]
             assert facts(c) == before and metadata(c) == meta
+            assert c.execute("SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='global_bootstrap_repository'").fetchone()[0] == 0
             healthy(c)
         assert digest(db) == d
         print('PASS migrate-rejects-' + ('negative-egress-reserved-bytes' if target == NEGATIVE else 'invalid-' + NAMES[i]))
@@ -260,8 +265,11 @@ def main(work):
     run(str(candidate), 'migrate', env=dict(os.environ, TPAHUB_DATA_DIR=str(baseline.parent)))
     with connect(baseline) as c:
         healthy(c)
+        assert c.execute('SELECT COUNT(*) FROM global_bootstrap_repository').fetchone()[0] == 0
+        print('PASS migration-bootstrap-rows-zero')
         after_meta, after = metadata(c), facts(c)
         assert after.pop('tpahub_schema') == [(1, 3)]
+        assert after.pop('global_bootstrap_repository') == []
         before = dict(valid_facts)
         before.pop('tpahub_schema')
         assert before == after, {t: (before[t], after[t]) for t in before if before[t] != after[t]}
@@ -274,6 +282,8 @@ def main(work):
     for field in ['triggers', 'indexes', 'fks']:
         print(f'pre {field} set: ' + repr({t: m[field] for t, m in before_meta.items() if m[field]}))
         print(f'post {field} set: ' + repr({t: m[field] for t, m in after_meta.items() if m[field]}))
+    assert after_meta['global_bootstrap_repository'] == fresh_meta['global_bootstrap_repository']
+    assert 'global_bootstrap_repository' not in before_meta
     for t in before_meta:
         for field in ['columns', 'fks', 'indexes', 'triggers']:
             assert before_meta[t][field] == after_meta[t][field], (t, field, before_meta[t][field], after_meta[t][field])
@@ -284,10 +294,24 @@ def main(work):
                 sql = sql.replace(check, '')
             assert sql == before_meta[t]['sql'], (t, sql, before_meta[t]['sql'])
     assert sum(map(len, checks.values())) == 11
+    print('PASS bootstrap-schema-scope-exact: global_bootstrap_repository only')
     for field in ['triggers', 'indexes', 'fks']:
         print(f'{field} semantic differences: NONE')
     for name in ['p1d1-schema-scope-exact', 'migration-preserves-trigger-set', 'migration-preserves-index-set', 'migration-preserves-foreign-key-definitions', 'migration-only-adds-p1d1-constraints', 'p1d1-production-fixture-business-facts-preserved']:
         print('PASS ' + name)
+    digest_db = work / 'empty-v3' / 'tpahub.db'
+    d0 = digest(digest_db)
+    with connect(digest_db) as c:
+        c.execute("INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('bootstrap-a','b@x','x','active','now')")
+        c.execute("INSERT INTO account_metadata(account_id,account_class) VALUES('bootstrap-a','internal')")
+        c.execute("INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('bootstrap-r','bootstrap-a','bootstrap','public','now')")
+        c.execute("INSERT INTO global_bootstrap_repository(singleton,repository_id,account_id,created_at) VALUES(1,'bootstrap-r','bootstrap-a','now')")
+        c.commit()
+    d1 = digest(digest_db); assert d1 != d0
+    with connect(digest_db) as c:
+        c.execute("DELETE FROM global_bootstrap_repository"); c.execute("DELETE FROM repositories WHERE id='bootstrap-r'"); c.execute("DELETE FROM account_metadata WHERE account_id='bootstrap-a'"); c.execute("DELETE FROM accounts WHERE id='bootstrap-a'"); c.commit()
+    assert digest(digest_db) == d0
+    print('PASS digest-global-bootstrap-repository')
     for directory in [work / 'empty-v3', l4b[0].parent]:
         db = directory / 'tpahub.db'
         d = digest(db)

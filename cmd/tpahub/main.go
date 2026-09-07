@@ -181,6 +181,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/login", s.loginPage)
 	m.HandleFunc("/account", s.accountPage)
 	m.HandleFunc("/ops", s.ops)
+	m.HandleFunc("/ops/bootstrap", s.bootstrapRoute)
 	m.HandleFunc("/ops/login", s.operatorLoginPage)
 	m.HandleFunc("/ops/auth/login/begin", s.operatorLoginBegin)
 	m.HandleFunc("/ops/auth/login/finish", s.operatorLoginFinish)

@@ -405,6 +405,7 @@ cp "$old_go" "$WORK/go"
 run_digest_qualification() {
   rm -rf "$ROOT"; mkdir -p "$ROOT/data"
   make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  TPAHUB_DATA_DIR="$ROOT/data" "$WORK/candidate" migrate
   local db="$ROOT/data/tpahub.db" d1 d2 d3
   d1=$("$WORK/candidate" digest --db "$db"); d2=$("$WORK/candidate" digest --db "$db"); d3=$("$WORK/candidate" digest --db "$db")
   [[ "$d1" == "$d2" && "$d2" == "$d3" ]]
@@ -536,15 +537,18 @@ run_b1b_batch3
 run_b1b_batch4() {
   rm -rf "$ROOT"; mkdir -p "$ROOT/data"
   make_v2_db "$ROOT/data" "$ROOT/data/tpahub.db"
+  TPAHUB_DATA_DIR="$ROOT/data" "$WORK/candidate" migrate
   local db="$ROOT/data/tpahub.db" baseline="$ROOT/data/batch4-baseline.db" d0 d1 d2
   sqlite3 "$db" <<'SQL'
 INSERT INTO accounts(id,email,password_hash,status,created_at) VALUES('batch4-account','batch4@example.invalid','x','active','2026-01-01T00:00:00Z');
 INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch4-repo','batch4-account','batch4','public','2026-01-01T00:00:00Z');
+INSERT INTO account_metadata(account_id,account_class) VALUES('batch4-account','internal');
 SQL
   cp "$db" "$baseline"
-  for table in repositories repository_egress_daily repository_egress_usage repository_publications schema_migrations sessions tpahub_schema; do
+  for table in global_bootstrap_repository repositories repository_egress_daily repository_egress_usage repository_publications schema_migrations sessions tpahub_schema; do
     cp "$baseline" "$db"; d0=$("$WORK/candidate" digest --db "$db")
     case "$table" in
+      global_bootstrap_repository) sqlite3 "$db" "INSERT INTO global_bootstrap_repository(singleton,repository_id,account_id,created_at) VALUES(1,'batch4-repo','batch4-account','2026-01-01T00:00:00Z');";;
       repositories) sqlite3 "$db" "INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('batch4-repo-2','batch4-account','batch4-two','private','2026-01-01T00:00:00Z');";;
       repository_egress_daily) sqlite3 "$db" "INSERT INTO repository_egress_daily(repository_id,usage_date,egress_bytes,updated_at) VALUES('batch4-repo','2026-01-02',10,'2026-01-02T00:00:00Z');";;
       repository_egress_usage) sqlite3 "$db" "INSERT INTO repository_egress_usage(repository_id,period,egress_bytes,updated_at) VALUES('batch4-repo','2026-02',20,'2026-02-01T00:00:00Z');";;
@@ -559,7 +563,7 @@ SQL
     echo "PASS digest-table-$table"
   done
   echo "PASS complete-durable-table-mutation-coverage-batch-4"
-  echo "PASS complete-durable-table-mutation-coverage-28-of-28"
+  echo "PASS complete-durable-table-mutation-coverage-29-of-29"
 }
 run_b1b_batch4
 run_q3b2() {
@@ -587,7 +591,7 @@ run_q3b2() {
   echo "PASS q1-canonical-digest-requalification"
   echo "PASS q2-canonical-digest-requalification"
   echo "PASS q3a-canonical-digest-requalification"
-  echo "PASS complete-durable-table-mutation-coverage-28-of-28"
+  echo "PASS complete-durable-table-mutation-coverage-29-of-29"
 }
 run_q3b2
 echo "PASS complete-q3c-wal-rollback-qualification"

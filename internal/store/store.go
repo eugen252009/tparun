@@ -312,7 +312,7 @@ func validateCurrentPurchaseSchema(db *sql.DB) error {
 func validateCurrentSchema(db *sql.DB) error {
 	// tpahub_schema is the current-schema authority; schema_migrations is only
 	// the historical ledger of individual migrations.
-	requiredTables := []string{"accounts", "account_metadata", "operator_identity", "operator_credentials", "operator_recovery", "sessions", "repositories", "publish_jobs", "repository_publications", "egress_accounting_uncertain", "generation_cleanup_tasks", "admin_audit_log", "product_grants", "billing_purchases", "purchase_grant_instances", "purchase_grant_snapshots", "billing_provider_events", "schema_migrations", "tpahub_schema"}
+	requiredTables := []string{"accounts", "account_metadata", "operator_identity", "operator_credentials", "operator_recovery", "sessions", "repositories", "publish_jobs", "repository_publications", "egress_accounting_uncertain", "generation_cleanup_tasks", "admin_audit_log", "product_grants", "billing_purchases", "purchase_grant_instances", "purchase_grant_snapshots", "billing_provider_events", "schema_migrations", "tpahub_schema", "global_bootstrap_repository"}
 	for _, name := range requiredTables {
 		var count int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&count); err != nil {
@@ -618,6 +618,16 @@ UPDATE account_entitlements SET valid_from=COALESCE((SELECT entitlement_period_s
 		if e = migrateStructuralConstraints(migrationExec); e != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate structural constraints: %w", e)
+		}
+	}
+	if fresh || explicitMigration {
+		if e = migrationCheckpoint("before-bootstrap-registry"); e != nil {
+			db.Close()
+			return nil, e
+		}
+		if _, e = migrationExec.Exec(`CREATE TABLE IF NOT EXISTS global_bootstrap_repository(singleton INTEGER PRIMARY KEY CHECK(singleton=1),repository_id TEXT NOT NULL UNIQUE REFERENCES repositories(id),account_id TEXT NOT NULL REFERENCES accounts(id),created_at TEXT NOT NULL)`); e != nil {
+			db.Close()
+			return nil, fmt.Errorf("initialize bootstrap registry: %w", e)
 		}
 	}
 	if fresh || explicitMigration {
