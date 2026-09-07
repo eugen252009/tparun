@@ -61,13 +61,31 @@ set -e
 op=$2; pidfile=$TPAHUB_TEST_PIDFILE
 case "$op" in
  stop)
-   if [[ -s $pidfile ]]; then p=$(cat "$pidfile"); kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true; rm -f "$pidfile"; printf 'candidate_stopped %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; fi
+   if [[ -s $pidfile ]]; then
+     p=$(cat "$pidfile")
+     is_candidate=0; [[ "$(readlink -f "$TPAHUB_TEST_CURRENT")" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]] && is_candidate=1
+     [[ "$is_candidate" == 1 && -n "${TPAHUB_TEST_EVENT_LOG:-}" ]] && printf 'candidate_stop_requested %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+     kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true
+     for _ in $(seq 1 80); do kill -0 "$p" 2>/dev/null || break; sleep .025; done
+     if kill -0 "$p" 2>/dev/null; then exit 92; fi
+     [[ "$is_candidate" == 1 && -n "${TPAHUB_TEST_EVENT_LOG:-}" ]] && printf 'candidate_process_dead %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+     rm -f "$pidfile"
+     [[ "$is_candidate" == 1 && -n "${TPAHUB_TEST_EVENT_LOG:-}" ]] && printf 'candidate_stopped %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+   fi
    pkill -9 -f '/tmp/tpahub-deploy-test-[^ ]*/releases/[^ ]*/tpahub serve' 2>/dev/null || true ;;
  start)
    rel=$(readlink -f "$TPAHUB_TEST_CURRENT")
    echo "$rel" >> "$TPAHUB_TEST_START_LOG"
+   [[ "$rel" != "$TPAHUB_TEST_CANDIDATE_RELEASE" && -n "${TPAHUB_TEST_EVENT_LOG:-}" ]] && printf 'previous_start_requested %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
    if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_FAILURE:-}" == startup ]]; then exit 1; fi
    if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_QUALIFICATION_HOOK:-}" == 1 ]]; then
+     printf 'migration_complete %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+     python3 - "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" <<'PY'
+import hashlib, json, pathlib, sys
+def snap(path):
+ p=pathlib.Path(path); return {'exists':p.exists(), 'size':p.stat().st_size if p.exists() else 0, 'mtime_ns':p.stat().st_mtime_ns if p.exists() else 0, 'sha':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ''}
+json.dump({'wal':snap(sys.argv[2]+'-wal'), 'shm':snap(sys.argv[2]+'-shm')}, open(sys.argv[1],'w'))
+PY
      if /usr/bin/curl -fsS --max-time .2 -X POST -H "X-Qualification-Token: $TPAHUB_TEST_QUALIFICATION_TOKEN" "http://$TPAHUB_TEST_LISTEN/__qualification/candidate-mutate" >/dev/null 2>&1; then exit 91; fi
      [[ ! -e "$TPAHUB_TEST_MUTATION_MARKER" ]]
      printf 'pre_start_hook_rejected %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
@@ -76,7 +94,7 @@ case "$op" in
      "$rel/tpahub" serve >>"$TPAHUB_TEST_SERVICE_LOG" 2>&1 &
    echo $! >"$pidfile"
    echo "qualification-systemctl-start rel=$rel pid=$(cat "$pidfile")" >>"$TPAHUB_TEST_SERVICE_LOG"
-   [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]] && printf 'candidate_started %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+   if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then printf 'candidate_started %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; else printf 'previous_process_started %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; fi
    if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" && "${TPAHUB_TEST_FAILURE:-}" == candidate-wal ]]; then
      python3 - "$TPAHUB_TEST_DATA/tpahub.db" "$TPAHUB_TEST_WAL_OBSERVED" <<'PY'
 import os, sqlite3, sys, time
@@ -112,13 +130,30 @@ if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
   if [[ "${TPAHUB_TEST_QUALIFICATION_HOOK:-}" == 1 && ! -e "$TPAHUB_TEST_MUTATION_MARKER" ]]; then
     hook_url="${url%/version}/__qualification/candidate-mutate"
     for _ in $(seq 1 40); do
+      ready_url="${url%/version}/__qualification/candidate-ready"
+      if /usr/bin/curl -fsS -H "X-Qualification-Token: $TPAHUB_TEST_QUALIFICATION_TOKEN" "$ready_url" >/tmp/tpahub-qualification-ready.json 2>/dev/null; then
+        test "$(python3 -c 'import json; print(json.load(open("/tmp/tpahub-qualification-ready.json"))["db_opened"])')" = True
+        printf 'candidate_db_opened %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+        printf 'candidate_mutation_requested %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+      else
+        sleep .025; continue
+      fi
       if /usr/bin/curl -fsS -X POST -H "X-Qualification-Token: $TPAHUB_TEST_QUALIFICATION_TOKEN" "$hook_url" >/tmp/tpahub-qualification-hook.json 2>/dev/null; then
         test "$(python3 -c 'import json; print(json.load(open("/tmp/tpahub-qualification-hook.json"))["db_opened"])')" = True
         test "$(python3 -c 'import json; print(json.load(open("/tmp/tpahub-qualification-hook.json"))["mutation_committed"])')" = True
-        printf 'candidate_db_opened %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         printf 'candidate_mutation_committed %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         touch "$TPAHUB_TEST_MUTATION_MARKER"
         printf 'candidate_digest %s %s\n' "$(date +%s%N)" "$("$TPAHUB_TEST_CANDIDATE" digest --db "$TPAHUB_TEST_DATA/tpahub.db")" >>"$TPAHUB_TEST_EVENT_LOG"
+        python3 - "$TPAHUB_TEST_SIDECAR_BASELINE" "$TPAHUB_TEST_DATA/tpahub.db" <<'PY'
+import hashlib, json, pathlib, sys
+def snap(path):
+ p=pathlib.Path(path); return {'exists':p.exists(), 'size':p.stat().st_size if p.exists() else 0, 'mtime_ns':p.stat().st_mtime_ns if p.exists() else 0, 'sha':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ''}
+base=json.load(open(sys.argv[1])); wal,shm=snap(sys.argv[2]+'-wal'),snap(sys.argv[2]+'-shm')
+assert wal != base['wal'] or wal['sha'] != base['wal']['sha']
+assert shm['exists'] and (not base['shm']['exists'] or shm != base['shm'])
+PY
+        printf 'candidate_wal_changed_after_mutation %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+        printf 'candidate_shm_candidate_era %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
         for _ in $(seq 1 40); do [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && break; sleep .025; done
         [[ -s "$TPAHUB_TEST_DATA/tpahub.db-wal" && -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]]
         printf 'candidate_wal_observed %s size=%s mtime=%s\n' "$(date +%s%N)" "$(stat -c %s "$TPAHUB_TEST_DATA/tpahub.db-wal")" "$(stat -c %Y "$TPAHUB_TEST_DATA/tpahub.db-wal")" >>"$TPAHUB_TEST_EVENT_LOG"
@@ -140,6 +175,7 @@ if [[ "$rel" == "$TPAHUB_TEST_CANDIDATE_RELEASE" ]]; then
   esac
   printf '%s' "$body" >"$out"; [[ "$fmt" == '%{http_code}' ]] && printf '%s' "$code"; exit 0
 fi
+printf 'previous_health_passed %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
 printf '%s' '{ "service":"tpahub", "version":"0.1.0", "started_at":"2026-01-01T00:00:00Z" }' >"$out"
 [[ "$fmt" == '%{http_code}' ]] && printf '200'
 EOF
@@ -152,6 +188,9 @@ mode=${TPAHUB_TEST_SQLITE_MODE:-}
 if [[ "$mode" == missing-backup && "$sql" == .backup* ]]; then exit 73; fi
 if [[ "$mode" == corrupt-backup && "$file" == *.pre-migrate-*.db && "$sql" == *integrity_check* ]]; then echo corrupt; exit 0; fi
 if [[ "$mode" == fk-invalid-backup && "$file" == *.pre-migrate-*.db && "$sql" == *foreign_key_check* ]]; then echo 'bad|fk'; exit 0; fi
+if [[ -f "$TPAHUB_TEST_RESTORED_FLAG" && "$file" == "$TPAHUB_TEST_DATA/tpahub.db" && "$sql" == *foreign_key_check* ]]; then
+  printf 'restore_verified %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+fi
 if [[ -f "$TPAHUB_TEST_RESTORED_FLAG" && "$file" == "$TPAHUB_TEST_DATA/tpahub.db" ]]; then
   case "$mode" in
     restored-integrity-failure) [[ "$sql" == *integrity_check* ]] && { echo corrupt; exit 0; };;
@@ -353,10 +392,10 @@ run_case candidate-era-wal-contamination-prevented candidate-wal
 make_v2_db() {
   local data=$1 db=$2
   mkdir -p "$data"
-  TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous-v2" serve >/dev/null 2>&1 & local p=$!
-  sleep .2; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
+  TPAHUB_DATA_DIR="$data" TPAHUB_DB="$db" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous-v2" serve >/dev/null 2>&1 & local p=$!
+  sleep .5; kill "$p" 2>/dev/null || true; sleep .05; kill -9 "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
   sqlite3 "$db" 'UPDATE tpahub_schema SET version=1 WHERE singleton=1;'
-  TPAHUB_DATA_DIR="$data" "$WORK/previous-v2" migrate
+  TPAHUB_DATA_DIR="$data" TPAHUB_DB="$db" "$WORK/previous-v2" migrate
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 2
   sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending';" | grep -qx 1
   sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
@@ -383,23 +422,29 @@ run_v2_case() {
   export HEALTH_URL="http://127.0.0.1:$port/version" GO="$WORK/go" SQLITE3=sqlite3 SYSTEMCTL="$WORK/systemctl" CURL="$WORK/curl" TPA_SCHEMA=true
   export TPAHUB_TEST_CANDIDATE="$WORK/candidate" TPAHUB_TEST_CURRENT="$current" TPAHUB_TEST_CANDIDATE_RELEASE="$ROOT/releases/$candidate_rev"
   export TPAHUB_TEST_DATA="$ROOT/data" TPAHUB_TEST_LISTEN="127.0.0.1:$port" TPAHUB_TEST_PIDFILE="$ROOT/pid"
-  export TPAHUB_TEST_EVENT_LOG="$ROOT/events.log" TPAHUB_TEST_MUTATION_MARKER="$ROOT/candidate-mutation" TPAHUB_TEST_QUALIFICATION_HOOK="$([[ "$mode" == mutate ]] && echo 1 || true)" TPAHUB_TEST_QUALIFICATION_TOKEN="qb-test-token"
+  export TPAHUB_TEST_EVENT_LOG="$ROOT/events.log" TPAHUB_TEST_SIDECAR_BASELINE="$ROOT/sidecar-baseline.json" TPAHUB_TEST_MUTATION_MARKER="$ROOT/candidate-mutation" TPAHUB_TEST_QUALIFICATION_HOOK="$([[ "$mode" == mutate ]] && echo 1 || true)" TPAHUB_TEST_QUALIFICATION_TOKEN="qb-test-token"
   export TPAHUB_TEST_START_LOG="$ROOT/starts" TPAHUB_TEST_SERVICE_LOG="$ROOT/service.log" TPAHUB_TEST_FAILURE="${mode#health:}" TPAHUB_TEST_HEALTH=healthy
   export TPAHUB_TEST_SQLITE_MODE= TPAHUB_TEST_RESTORED_FLAG="$ROOT/restored" TPAHUB_TEST_RESTORE_COUNT="$ROOT/restore-count" TPAHUB_DEPLOY_TEST_FAILURE= TPAHUB_DEPLOY_HEALTH_ATTEMPTS=2 TPAHUB_DEPLOY_HEALTH_INTERVAL=0.05
   cat >"$WORK/cp" <<'EOF'
 #!/usr/bin/env bash
-for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && touch "$TPAHUB_TEST_RESTORE_COUNT"; done
+for x in "$@"; do
+  if [[ "$x" == *.pre-migrate-*.db ]]; then touch "$TPAHUB_TEST_RESTORE_COUNT" "$TPAHUB_TEST_RESTORED_FLAG"; fi
+done
 for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && printf 'restore_begin %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; done
-exec /bin/cp "$@"
+/bin/cp "$@"
+for x in "$@"; do [[ "$x" == *.pre-migrate-*.db ]] && printf 'restore_complete %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; done
+exit 0
 EOF
   chmod +x "$WORK/cp"
   cat >"$WORK/rm" <<'EOF'
 #!/usr/bin/env bash
 set -e
 /bin/rm "$@"
+saw_sidecar=0
 for x in "$@"; do
-  [[ "$x" == "$TPAHUB_TEST_DATA/tpahub.db-wal" || "$x" == "$TPAHUB_TEST_DATA/tpahub.db-shm" ]] && printf 'sidecars_neutralized %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
+  if [[ "$x" == "$TPAHUB_TEST_DATA/tpahub.db-wal" || "$x" == "$TPAHUB_TEST_DATA/tpahub.db-shm" ]]; then saw_sidecar=1; [[ ! -e "$x" ]]; fi
 done
+if [[ "$saw_sidecar" == 1 && -f "$TPAHUB_TEST_EVENT_LOG" && ! -e "$TPAHUB_TEST_DATA/tpahub.db-wal" && ! -e "$TPAHUB_TEST_DATA/tpahub.db-shm" ]]; then printf 'sidecars_neutralized %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"; fi
 exit 0
 EOF
   chmod +x "$WORK/rm"; export PATH="$WORK:$PATH"
@@ -431,9 +476,13 @@ EOF
     [[ "$(readlink -f "$current")" == "$prev" ]]
     [[ "$(cat "$current/.deploy-commit")" == v2-previous ]]
     grep -Fqx "$prev" "$ROOT/starts"
+    printf 'current_previous_verified %s\n' "$(date +%s%N)" >>"$TPAHUB_TEST_EVENT_LOG"
     [[ -e "$ROOT/restore-count" ]]
     if [[ "$mode" == mutate ]]; then
       [[ -e "$TPAHUB_TEST_MUTATION_MARKER" ]]
+      grep -Fq 'pre_start_hook_rejected ' "$TPAHUB_TEST_EVENT_LOG"
+      [[ ! -e "$ROOT/pre-start-mutation-committed" ]]
+      echo 'PASS q-b-rejects-prestart-mutation-evidence'
       python3 - "$TPAHUB_TEST_EVENT_LOG" "$db" "$before" <<'PY'
 import pathlib, sqlite3, sys
 p, db, d0 = sys.argv[1:]
@@ -442,9 +491,9 @@ for line in pathlib.Path(p).read_text().splitlines():
     parts = line.split()
     if len(parts) >= 2 and parts[0] not in events:
         events[parts[0]] = int(parts[1])
-required = ['pre_start_hook_rejected','candidate_started','candidate_db_opened','candidate_mutation_committed','candidate_digest','candidate_wal_observed','candidate_shm_observed','candidate_failure_triggered','candidate_stopped','sidecars_neutralized','restore_begin']
+required = ['migration_complete','pre_start_hook_rejected','candidate_started','candidate_db_opened','candidate_mutation_requested','candidate_mutation_committed','candidate_digest','candidate_wal_changed_after_mutation','candidate_shm_candidate_era','candidate_wal_observed','candidate_shm_observed','candidate_failure_triggered','candidate_stop_requested','candidate_process_dead','candidate_stopped','sidecars_neutralized','restore_begin','restore_complete','restore_verified','previous_start_requested','previous_process_started','previous_health_passed','current_previous_verified']
 assert all(x in events for x in required), (required, events)
-assert all(events[a] < events[b] for a,b in zip(required, required[1:])), events
+assert all(events[a] < events[b] for a,b in zip(required, required[1:])), [(a,b,events[a],events[b]) for a,b in zip(required, required[1:]) if not events[a] < events[b]]
 candidate_digest = next(x.split()[2] for x in pathlib.Path(p).read_text().splitlines() if x.startswith('candidate_digest '))
 assert candidate_digest != d0, (candidate_digest, d0)
 c = sqlite3.connect(db)
