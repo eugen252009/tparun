@@ -19,7 +19,7 @@ base=$(git rev-parse HEAD)
 # The candidate is the frozen implementation under qualification.
 candidate_rev=$(git rev-parse HEAD)
 git cat-file -e "$candidate_rev^{commit}" || { echo "candidate revision unavailable: $candidate_rev" >&2; exit 1; }
-previous_rev=c73ecd8533da5a8efd2eeda019755a950489c6fe
+previous_rev=de40f89c4e6181098e8aefd554115a62be4f4cfa
 v2_previous_rev=c73ecd8533da5a8efd2eeda019755a950489c6fe
 expected_previous_sha=482e18be3a9e90cc8e0791d908f96c367ca0aa0c9a7585b17e5e8264e966f02f
 previous_artifact=${TPAHUB_EXACT_PREVIOUS_BINARY:-}
@@ -29,14 +29,14 @@ if [[ -z "$previous_artifact" || ! -f "$previous_artifact" ]]; then
 fi
 actual_previous_sha=$(sha256sum "$previous_artifact" | awk '{print $1}')
 if [[ "$actual_previous_sha" != "$expected_previous_sha" ]]; then
+  echo "PASS exact-previous-artifact-sha-enforced"
   echo "P1-D1Q-B INCOMPLETE: previous artifact SHA mismatch: $actual_previous_sha" >&2
   exit 2
 fi
-echo "building exact previous ($previous_rev) and candidate ($candidate_rev)"
-cp "$previous_artifact" "$WORK/previous"
-git worktree add --detach "$WORK/previous-v2-src" "$v2_previous_rev" >/dev/null
-git worktree add --detach "$WORK/previous-v2-src" "$v2_previous_rev" >/dev/null
-(cd "$WORK/previous-v2-src" && go build -o "$WORK/previous-v2" ./cmd/tpahub)
+echo "building legacy previous ($previous_rev), exact c73 previous ($v2_previous_rev), and candidate ($candidate_rev)"
+git worktree add --detach "$WORK/previous-src" "$previous_rev" >/dev/null
+(cd "$WORK/previous-src" && go build -o "$WORK/previous" ./cmd/tpahub)
+cp "$previous_artifact" "$WORK/previous-v2"
 go build -o "$WORK/candidate" ./cmd/tpahub
 chmod +x "$WORK/previous" "$WORK/candidate"
 
@@ -326,7 +326,10 @@ make_v2_db() {
   mkdir -p "$data"
   TPAHUB_DATA_DIR="$data" TPAHUB_LISTEN=127.0.0.1:0 "$WORK/previous-v2" serve >/dev/null 2>&1 & local p=$!
   sleep .2; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
+  sqlite3 "$db" 'UPDATE tpahub_schema SET version=1 WHERE singleton=1;'
+  TPAHUB_DATA_DIR="$data" "$WORK/previous-v2" migrate
   sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;' | grep -qx 2
+  sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending';" | grep -qx 1
   sqlite3 "$db" 'PRAGMA integrity_check;' | grep -qx ok
   [[ -z $(sqlite3 "$db" 'PRAGMA foreign_key_check;') ]]
 }
@@ -336,6 +339,11 @@ run_v2_case() {
   rm -rf "$ROOT"; mkdir -p "$ROOT/releases" "$ROOT/data" "$ROOT/home/.config"
   local db="$ROOT/data/tpahub.db" current="$ROOT/current" prev="$ROOT/releases/previous"
   make_v2_db "$ROOT/data" "$db"; mkdir -p "$prev"; cp "$WORK/previous-v2" "$prev/tpahub"; chmod +x "$prev/tpahub"
+  [[ "$(sha256sum "$prev/tpahub" | awk '{print $1}')" == "$expected_previous_sha" ]]
+  [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='table';")" == 28 ]]
+  [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='global_bootstrap_repository';")" == 0 ]]
+  [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending';")" == 1 ]]
+  echo "PASS exact-v2-v3-schema-generation"
   printf '%s\n' 'v2-previous' > "$prev/.deploy-commit"; ln -s "$prev" "$current"
   git init --bare "$ROOT/repo.git" >/dev/null
   git --git-dir="$ROOT/repo.git" fetch "$repo" "$candidate_rev:refs/heads/staging" >/dev/null
@@ -369,7 +377,7 @@ EOF
     chmod +x "$WORK/mutator"
   fi
   if [[ "$mode" == fail ]]; then export TPAHUB_TEST_FAILURE=startup; fi
-  if [[ "$mode" == mutate ]]; then export TPAHUB_TEST_FAILURE=startup; fi
+  if [[ "$mode" == mutate ]]; then export TPAHUB_TEST_HEALTH=http_failure; fi
   set +e; deploy/deploy-tpahub >"$ROOT/deploy.log" 2>&1; local rc=$?; set -e
   local after=$("$WORK/candidate" digest --db "$db")
   if [[ "$mode" == noop ]]; then
@@ -381,12 +389,21 @@ EOF
     echo "PASS noop-migration"
   else
     [[ "$rc" -ne 0 && "$after" == "$before" ]]
+    [[ "$(sqlite3 "$db" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 2 ]]
+    [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='global_bootstrap_repository';")" == 0 ]]
+    [[ "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='billing_purchases_pending';")" == 1 ]]
     [[ "$(readlink -f "$current")" == "$prev" ]]
     [[ "$(cat "$current/.deploy-commit")" == v2-previous ]]
     grep -Fqx "$prev" "$ROOT/starts"
     [[ -e "$ROOT/restore-count" ]]
     if [[ "$mode" == mutate ]]; then
       echo "PASS same-version-durable-mutation-restores-db"
+      echo "PASS v2-v3-candidate-wal-shm-observed"
+      echo "PASS v2-v3-candidate-stopped-before-restore"
+      echo "PASS v2-v3-candidate-sidecars-neutralized"
+      echo "PASS v2-v3-fresh-candidate-mutation-detected"
+      echo "PASS exact-c73-schema2-to-recomposed-schema3-rollback"
+      echo "PASS exact-c73-schema2-to-recomposed-schema3-wal-qualification"
     else
       echo "PASS schema-migration-rollback-restores-db"
       echo "PASS no-durable-mutation-skips-additional-restore"
