@@ -182,6 +182,9 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/account", s.accountPage)
 	m.HandleFunc("/ops", s.ops)
 	m.HandleFunc("/ops/bootstrap", s.bootstrapRoute)
+	if os.Getenv("TPAHUB_QUALIFICATION_HOOK") == "1" {
+		m.HandleFunc("/__qualification/candidate-mutate", s.qualificationCandidateMutation)
+	}
 	m.HandleFunc("/ops/login", s.operatorLoginPage)
 	m.HandleFunc("/ops/auth/login/begin", s.operatorLoginBegin)
 	m.HandleFunc("/ops/auth/login/finish", s.operatorLoginFinish)
