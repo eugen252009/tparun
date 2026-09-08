@@ -1446,6 +1446,34 @@ func TestHTTPRepositoryAndServing(t *testing.T) {
 		t.Fatal("path escaped repository")
 	}
 }
+func TestAnonymousPublicRepositoryDiscoveryExcludesPrivateRepositories(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "public-repository-0000000000000001", AccountID: "a", Name: "public-name", Visibility: "public", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "private-repository-00000000000001", AccountID: "a", Name: "private-name", Visibility: "private", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(h.URL + "/v1/public/repositories")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var repositories []struct {
+		ID, Name, Visibility, AccountID string
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&repositories); err != nil {
+		t.Fatal(err)
+	}
+	if len(repositories) != 1 || repositories[0].ID != "public-repository-0000000000000001" || repositories[0].Name != "public-name" || repositories[0].Visibility != "public" || repositories[0].AccountID != "" {
+		t.Fatalf("unexpected public discovery response: %+v", repositories)
+	}
+}
+
 func TestHTTPInvalidUpload(t *testing.T) {
 	_, h := testServer(t)
 	resp, _ := http.Post(h.URL+"/v1/repositories/not-an-id/publishes?filename=x.deb", "application/octet-stream", strings.NewReader("x"))

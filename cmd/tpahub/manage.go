@@ -49,6 +49,9 @@ func repoCLI(c cliConfig, a []string) error {
 		}
 		return e
 	case "list":
+		if has(a, "--public") {
+			return getPrint(c.Server+"/v1/public/repositories", "")
+		}
 		return getPrint(c.Server+"/v1/repositories", c.Token)
 	case "show":
 		if len(a) < 2 {
@@ -59,7 +62,11 @@ func repoCLI(c cliConfig, a []string) error {
 		if len(a) < 2 {
 			return fmt.Errorf("repository required")
 		}
-		return addRepo(c, a[1], flagValue(a, "--token", ""))
+		repository, err := resolveRepository(c, a[1])
+		if err != nil {
+			return err
+		}
+		return addRepo(c, repository, flagValue(a, "--token", ""))
 	case "remove":
 		if len(a) < 2 {
 			return fmt.Errorf("repository required")
@@ -130,6 +137,41 @@ func tokenCLI(c cliConfig, a []string) error {
 		return fmt.Errorf("unknown token action")
 	}
 }
+func resolveRepository(c cliConfig, value string) (string, error) {
+	if len(value) == 32 {
+		valid := true
+		for _, character := range value {
+			if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return value, nil
+		}
+	}
+	var repositories []struct {
+		ID, Name, Visibility string
+	}
+	if err := getJSON(c.Server+"/v1/public/repositories", "", &repositories); err != nil {
+		return "", fmt.Errorf("discover public repositories: %w", err)
+	}
+	match := ""
+	for _, repository := range repositories {
+		if repository.Name != value {
+			continue
+		}
+		if match != "" {
+			return "", fmt.Errorf("repository name %q is ambiguous; use its repository ID", value)
+		}
+		match = repository.ID
+	}
+	if match == "" {
+		return "", fmt.Errorf("public repository %q not found", value)
+	}
+	return match, nil
+}
+
 func addRepo(c cliConfig, v, reader string) error {
 	repo, e := owned(c, v)
 	if e != nil {

@@ -212,6 +212,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/billing/purchases/nano", s.authHandler(s.createNanoPurchase))
 	m.HandleFunc("/v1/billing/providers/stripe/webhook", s.stripeWebhook)
 	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))
+	m.HandleFunc("/v1/public/repositories", s.publicRepositories)
 	m.HandleFunc("/v1/repositories/", s.repositoryRoute)
 	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))
 	m.HandleFunc("/r/", s.files)
@@ -264,6 +265,30 @@ func jsonOut(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 func bad(w http.ResponseWriter, status int, msg string) { http.Error(w, msg, status) }
+func (s *server) publicRepositories(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	repositories, err := s.db.PublicRepositories(r.Context())
+	if err != nil {
+		bad(w, http.StatusInternalServerError, "public repository lookup failed")
+		return
+	}
+	// Do not expose account ownership or administrative fields through the
+	// anonymous discovery surface.
+	type publicRepository struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Visibility string `json:"visibility"`
+	}
+	out := make([]publicRepository, 0, len(repositories))
+	for _, repository := range repositories {
+		out = append(out, publicRepository{ID: repository.ID, Name: repository.Name, Visibility: repository.Visibility})
+	}
+	jsonOut(w, out)
+}
+
 func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		repos, e := s.db.Repositories(r.Context(), accountID(r))

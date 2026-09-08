@@ -45,6 +45,9 @@ func loadCLI() cliConfig {
 	if c.Server == "" {
 		c.Server = defaultServer
 	}
+	if override := os.Getenv("TPAHUB_SERVER"); override != "" {
+		c.Server = strings.TrimRight(override, "/")
+	}
 	return c
 }
 func saveCLI(c cliConfig) error {

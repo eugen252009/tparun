@@ -2440,6 +2440,25 @@ func (s *Store) Repositories(c context.Context, account string) ([]Repository, e
 	return out, rows.Err()
 }
 
+// PublicRepositories returns only public repository identities suitable for
+// anonymous discovery. Private repositories are intentionally excluded here.
+func (s *Store) PublicRepositories(c context.Context) ([]Repository, error) {
+	rows, err := s.db.QueryContext(c, "SELECT id,COALESCE(account_id,''),name,visibility,created_at FROM repositories WHERE visibility='public' ORDER BY name,id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var repositories []Repository
+	for rows.Next() {
+		var repository Repository
+		if err = rows.Scan(&repository.ID, &repository.AccountID, &repository.Name, &repository.Visibility, &repository.CreatedAt); err != nil {
+			return nil, err
+		}
+		repositories = append(repositories, repository)
+	}
+	return repositories, rows.Err()
+}
+
 func (s *Store) AllRepositories(c context.Context) ([]Repository, error) {
 	rows, err := s.db.QueryContext(c, "SELECT id,COALESCE(account_id,''),name,visibility,created_at FROM repositories ORDER BY id")
 	if err != nil {
