@@ -98,6 +98,20 @@ func TestMultipartUploadSpoolsFilesPastMemoryLimit(t *testing.T) {
 
 type copyingPublicationRunner struct{}
 
+type stalledUploadReader struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (r stalledUploadReader) Read([]byte) (int, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.release
+	return 0, io.EOF
+}
+
 func (copyingPublicationRunner) Check(context.Context) error { return nil }
 func (copyingPublicationRunner) Publish(_ context.Context, request tpa.PublishRequest) error {
 	if err := os.MkdirAll(request.Output, 0755); err != nil {
@@ -327,6 +341,50 @@ func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
 	if len(s.reservations) != 0 {
 		t.Fatalf("reservations leaked after workers/uploads: %#v", s.reservations)
 	}
+}
+
+func TestStalledUploadDoesNotBlockAnotherTenantUpload(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxUpload = 1024
+	s.cfg.MaxStagingBytes = 4 << 20
+	s.cfg.MinDiskFreeBytes = 0
+	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "stalled-b@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, account string }{{"stalled-repo-a", "a"}, {"stalled-repo-b", "b"}} {
+		if err := s.db.CreateRepository(context.Background(), store.Repository{ID: item.id, AccountID: item.account, Name: item.id, CreatedAt: "now"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		r := httptest.NewRequest(http.MethodPost, "/?filename=stalled.deb", stalledUploadReader{started: started, release: release})
+		r = r.WithContext(context.WithValue(r.Context(), accountKey, "a"))
+		s.upload(httptest.NewRecorder(), r, "stalled-repo-a")
+	}()
+	<-started
+	secondDone := make(chan int, 1)
+	go func() {
+		r := httptest.NewRequest(http.MethodPost, "/?filename=other.deb", bytes.NewReader([]byte("payload")))
+		r.ContentLength = 7
+		r = r.WithContext(context.WithValue(r.Context(), accountKey, "b"))
+		w := httptest.NewRecorder()
+		s.upload(w, r, "stalled-repo-b")
+		secondDone <- w.Code
+	}()
+	select {
+	case code := <-secondDone:
+		if code != http.StatusAccepted {
+			t.Fatalf("unrelated upload status=%d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled upload blocked another tenant")
+	}
+	close(release)
+	<-firstDone
 }
 
 func TestRepositoryCreationUsesResourceAdmissionAndRollsBackRoot(t *testing.T) {

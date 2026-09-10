@@ -67,7 +67,7 @@ Priority: launch blocker for untrusted multi-tenant publication.
 References: `cmd/tpahub/main.go:151`, `cmd/tpahub/main.go:425-553`,
 `cmd/tpahub/main.go:786-788`, `internal/tpa/tpa.go:110-134`.
 
-- [ ] Avoid holding the global staging mutex while reading an untrusted request body; preserve atomic capacity reservation and cleanup invariants when shortening the critical section.
+- [x] Avoid holding the global staging mutex while reading an untrusted request body; preserve atomic capacity reservation and cleanup invariants when shortening the critical section. The body stream runs after physical reservation/incoming-directory creation; incomplete multipart reservations contribute observed partial bytes to same-account admission. `TestStalledUploadDoesNotBlockAnotherTenantUpload` proves a stalled tenant does not block another tenant upload.
 - [ ] Define and enforce upload duration/body-read limits appropriate to supported package sizes, including cancellation and stalled clients.
 - [ ] Test a real slow/stalled upload concurrently with another tenant's upload, repository creation, and publication worker. Observe that unrelated work progresses within a bounded time.
 - [ ] Verify timeout/disconnect cleanup releases reservations and temporary files without releasing authority for work still in use.

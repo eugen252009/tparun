@@ -428,7 +428,24 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	s.stagingMu.Lock()
-	defer s.stagingMu.Unlock()
+	locked := true
+	committed := false
+	jobID := ""
+	dir := ""
+	defer func() {
+		if !locked {
+			s.stagingMu.Lock()
+		}
+		if !committed {
+			if jobID != "" {
+				s.releaseCapacity(jobID)
+			}
+			if dir != "" {
+				_ = os.RemoveAll(dir)
+			}
+		}
+		s.stagingMu.Unlock()
+	}()
 	if err := s.checkDiskHeadroom(); err != nil {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
@@ -448,7 +465,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	jobID := newID()
+	jobID = newID()
 	reserveBytes := r.ContentLength
 	if reserveBytes <= 0 {
 		// Multipart requests with a known Content-Length use that bound too; an
@@ -481,22 +498,15 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			s.releaseCapacity(jobID)
-		}
-	}()
-	dir := filepath.Join(s.cfg.DataDir, "incoming", jobID)
+	dir = filepath.Join(s.cfg.DataDir, "incoming", jobID)
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		bad(w, 500, e.Error())
 		return
 	}
-	defer func() {
-		if r.Context().Err() != nil {
-			_ = os.RemoveAll(dir)
-		}
-	}()
+	// The reservation protects capacity while an untrusted client streams its
+	// body, so other tenants need not wait on the global allocator lock.
+	s.stagingMu.Unlock()
+	locked = false
 	var total int64
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
@@ -562,6 +572,8 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
+	s.stagingMu.Lock()
+	locked = true
 	if total == 0 {
 		_ = os.RemoveAll(dir)
 		bad(w, 400, "at least one .deb is required")
@@ -585,7 +597,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := s.currentTime().UTC().Format(time.RFC3339Nano)
 	if e := s.db.CreateJob(r.Context(), store.Job{ID: jobID, RepositoryID: id, State: "queued", IncomingPath: dir, CreatedAt: now}); e != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, 500, e.Error())
@@ -2264,6 +2276,22 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 			return fmt.Errorf("capacity accounting overflow")
 		}
 	}
+	// An in-flight incoming directory consumes its own reservation. Exclude its
+	// observed blocks here so a partially streamed upload is not double-counted
+	// as both actual storage and reserved future storage.
+	for _, reservation := range s.reservations {
+		if reservation.Kind != "incoming" {
+			continue
+		}
+		allocated, sizeErr := fileTreeAllocatedSize(filepath.Join(s.cfg.DataDir, "incoming", reservation.JobID))
+		if sizeErr != nil {
+			return fmt.Errorf("capacity accounting: %w", sizeErr)
+		}
+		if allocated > actual {
+			return fmt.Errorf("capacity accounting underflow")
+		}
+		actual -= allocated
+	}
 	prospective, overflow := addCapacity(actual, reserved-oldBytes, bytes)
 	if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging reservation exceeded")
@@ -2481,6 +2509,16 @@ func (s *server) checkAccountLogicalCapacity(ctx context.Context, accountID stri
 			reservedAccount, overflow = addCapacity(reservedAccount, reservation.LogicalBytes)
 			if overflow {
 				return fmt.Errorf("account staging reservation overflow")
+			}
+			if reservation.Kind == "incoming" && reservation.LogicalBytes == 0 {
+				partial, partialErr := fileTreeSize(filepath.Join(s.cfg.DataDir, "incoming", reservation.JobID))
+				if partialErr != nil {
+					return fmt.Errorf("account staging reservation usage unavailable: %w", partialErr)
+				}
+				reservedAccount, overflow = addCapacity(reservedAccount, partial)
+				if overflow {
+					return fmt.Errorf("account staging reservation overflow")
+				}
 			}
 		}
 	}
