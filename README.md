@@ -48,6 +48,7 @@ TPA_BIN                       tpa
 GNUPGHOME                     optional GPG home
 TPAHUB_GPG_FINGERPRINT        full signing fingerprint
 TPAHUB_PUBLISH_TIMEOUT        10m
+TPAHUB_UPLOAD_READ_TIMEOUT    15m
 TPAHUB_MAX_UPLOAD_BYTES       512 MiB
 TPAHUB_MAX_STAGING_BYTES      4 GiB
 TPAHUB_MAX_CANDIDATE_INODES   65536 (filesystem inode count)

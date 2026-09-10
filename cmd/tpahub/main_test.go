@@ -12,6 +12,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -385,6 +386,53 @@ func TestStalledUploadDoesNotBlockAnotherTenantUpload(t *testing.T) {
 	}
 	close(release)
 	<-firstDone
+}
+
+func TestUploadReadTimeoutReleasesReservation(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.UploadReadTimeout = 50 * time.Millisecond
+	s.cfg.MinDiskFreeBytes = 0
+	repo := "abababababababababababababababac"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repo, AccountID: "a", Name: "upload-timeout", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newHTTPServer(s)
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		if err := <-done; err != nil && err != http.ErrServerClosed {
+			t.Error(err)
+		}
+	})
+	connection, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if _, err = fmt.Fprintf(connection, "POST /v1/repositories/%s/publishes?filename=stalled.deb HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer tph_s_test\r\nContent-Type: application/octet-stream\r\nContent-Length: 1024\r\n\r\n", repo, listener.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.SetReadDeadline(time.Now().Add(time.Second))
+	_, _ = io.ReadAll(connection)
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.stagingMu.Lock()
+		reservations := len(s.reservations)
+		entries, readErr := os.ReadDir(filepath.Join(s.cfg.DataDir, "incoming"))
+		s.stagingMu.Unlock()
+		if readErr == nil && reservations == 0 && len(entries) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out upload was not cleaned up: reservations=%d entries=%v err=%v", reservations, entries, readErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestRepositoryCreationUsesResourceAdmissionAndRollsBackRoot(t *testing.T) {

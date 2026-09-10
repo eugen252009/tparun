@@ -13,6 +13,7 @@ type Config struct {
 	GPGHome                  string
 	GPGFingerprint           string
 	PublishTimeout           time.Duration
+	UploadReadTimeout        time.Duration
 	MaxUpload                int64
 	MaxStagingBytes          int64
 	MaxAccountStagingBytes   int64
@@ -40,6 +41,7 @@ func Load() Config {
 		GPGHome:                  os.Getenv("GNUPGHOME"),
 		GPGFingerprint:           os.Getenv("TPAHUB_GPG_FINGERPRINT"),
 		PublishTimeout:           duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
+		UploadReadTimeout:        duration("TPAHUB_UPLOAD_READ_TIMEOUT", 15*time.Minute),
 		MaxUpload:                integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		MaxStagingBytes:          integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
 		MaxAccountStagingBytes:   integer("TPAHUB_MAX_ACCOUNT_STAGING_BYTES", 1<<30),

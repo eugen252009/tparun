@@ -152,7 +152,7 @@ func run(cfg config.Config) error {
 	s.ctx = ctx
 	go s.worker()
 	go s.cleanupRetryLoop()
-	srv := &http.Server{Addr: cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
+	srv := newHTTPServer(s)
 	go func() { <-ctx.Done(); srv.Shutdown(context.Background()) }()
 	log.Printf("TPA Hub listening on http://%s", cfg.Listen)
 	e = srv.ListenAndServe()
@@ -160,6 +160,10 @@ func run(cfg config.Config) error {
 		return nil
 	}
 	return e
+}
+
+func newHTTPServer(s *server) *http.Server {
+	return &http.Server{Addr: s.cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: s.cfg.UploadReadTimeout}
 }
 
 func lockDataDirectory(dir string) (*os.File, error) {
