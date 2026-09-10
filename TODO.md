@@ -110,6 +110,10 @@ References: `cmd/tpahub/provider.go:49-72`, `cmd/tpahub/purchase.go`,
 - [ ] Validate deployment-specific return URLs and webhook endpoints rather than hardcoding the public homepage for every environment.
 - [ ] Obtain explicit authorization before activating live billing or performing real-money validation. Record the controlled checkout, receipt, activation, and refund evidence without recording secrets.
 
+Deployed test evidence: `docs/deployed-test-billing-evidence.md` records an
+active service and an isolated Stripe test Checkout creation on 2026-09-11. It
+does not close the unchecked activation or live-billing gates above.
+
 Acceptance: authorized live payment qualification proves that exactly the paid
 terms activate once and invalid/unpaid evidence does not activate access.
 
@@ -169,7 +173,7 @@ References: `README.md:47-49`, `README.md:124-138`,
 `deploy/deploy-tpahub:143-149`. External backups were not inspected.
 
 - [ ] Inventory all required recovery state: SQLite, authoritative artifacts/generations, signing material, runtime configuration, and exact application/TPA artifacts.
-- [ ] Document coordinated backup consistency, scheduling, retention, encryption/access controls, off-host storage, and recovery credentials.
+- Deferred TODO: document and verify coordinated off-host backup consistency, scheduling, retention, encryption/access controls, and recovery credentials. The owner explicitly deferred this requirement; it remains a launch-risk exception rather than a completed gate.
 - [ ] Define acceptable recovery point and recovery time objectives and customer-facing expectations.
 - [ ] Alert on failed or stale backups; verify access to recovery material without depending solely on the failed host.
 - [ ] Perform a clean-host restore drill and measure data loss window and restore time.
