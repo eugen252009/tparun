@@ -4,6 +4,232 @@ This checklist tracks the remediation work required after the architecture, corr
 
 The goal is to make every item independently verifiable.
 
+## Mini-SaaS Launch Review: 2026-09-11
+
+Reviewed source: `a962a8ddbd8d45b2dfda200ef14ec3ab29d92b73`.
+
+**Verdict: not ready for an unrestricted paid public launch.** A controlled,
+explicitly test-mode pilot is a separate decision, not production qualification.
+This section records the current launch gates; older `DONE` and `VERIFIED`
+entries below remain historical evidence, not proof that these gates are closed.
+In particular, persisted-grant tests do not establish effective runtime access
+policy when the default grant service supplies fallback grants.
+
+All unchecked items below are `TODO`. Checking an item requires recorded evidence,
+not just an implementation claim. External operational controls may satisfy a
+requirement, but must be documented and verified rather than assumed absent or
+present. Before implementation, follow capability discovery and reuse rules in
+`AGENTS.md`; the review's Bloom search returned no capability result.
+
+### Review Baseline
+
+- [ ] Restore a green current-revision test baseline. `go vet ./...` passed in this review; `go test -race ./...` failed on `TestPublicBootstrapAndVersionEndpoints`, and an isolated rerun reproduced the failure.
+- [ ] Resolve the installer/test repository identity mismatch: `cmd/tpahub/public_test.go:20` expects `748316a73ce0eff46f8888f956c5eeb0`, while `install.sh:9` selects `a0d8fd0f82235ee431c41581aa253ec8`. Establish the intended published repository and trust material before changing either side; a mismatch alone does not prove that the installer is broken.
+- [ ] Record qualification gaps explicitly: full Docker/APT qualification, historical-binary rollback qualification, deployed proxy/TLS settings, off-host backups, monitoring, and live Stripe configuration were not verified in this review.
+- [ ] Attach subsequent test and operational evidence to an exact source SHA, artifact identity, and environment. Do not reuse historical PASS claims as current release approval.
+
+### L0.1 - Decide and Enforce the Nano Access Policy
+
+Priority: launch blocker. Depends on an explicit product-policy decision.
+References: `cmd/tpahub/plan.go:82-132`, `cmd/tpahub/auth.go:41-45`,
+`docs/migration-access-policy.md`, and historical P0.3 provisioning claims below.
+
+- [ ] Decide whether Nano is permanently free, payment-gated, or a bounded trial. Document the decision before changing authorization; do not silently weaken an existing contract.
+- [ ] If Nano is free, define what a payment actually purchases and align the offer, expiry, and migration policies with that value proposition.
+- [ ] If Nano is paid or time-bounded, prevent the default runtime service from converting missing, disabled, or inactive grants into permanent Nano access.
+- [ ] Ensure raising a resource floor cannot erase a purchased or migration grant's validity boundary.
+- [ ] Keep account suspension, product access, and resource limits distinct; preserving one must not bypass another.
+- [ ] Test the production server's default grant wiring, without injecting a stricter test-only grant service: fresh unpaid account, active purchase, exact expiry boundary, expired migration access, disabled grant, and reconciliation-required purchase.
+- [ ] For each applicable case, exercise repository creation, publication admission, queued publication execution, private reads, and download/egress admission. Assert both permitted and denied operations using the same production predicates.
+- [ ] Reconcile earlier store-only `VERIFIED` claims with effective runtime results, preserving the historical evidence and documenting its narrower scope.
+
+Acceptance: effective access matches the chosen policy across real request and
+worker paths; a database-only grant assertion is insufficient.
+
+### L0.2 - Protect All Customer Authentication Entry Points
+
+Priority: launch blocker for open signup/login.
+References: `cmd/tpahub/auth.go:48-104`, `cmd/tpahub/web.go:210-264`.
+
+- [ ] Apply consistent rate admission to API registration, API login, browser registration, and browser login before expensive password work.
+- [ ] Define bounded limiter storage and concurrency behavior so an attacker cannot exhaust memory by varying identities or addresses.
+- [ ] Define the trusted client-address policy for the actual reverse proxy. Do not trust arbitrary forwarded headers or accidentally place every customer behind one shared proxy-address limit.
+- [ ] Preserve generic authentication failures and ensure rejection responses do not disclose credentials or account details.
+- [ ] Exercise every public auth route with accepted attempts, excessive attempts, concurrent attempts, and recovery after the limit window. Demonstrate that switching browser/API routes cannot bypass the intended policy.
+- [ ] Verify deployed edge limits if they are part of the protection; record sanitized configuration and observed behavior.
+
+Acceptance: unauthenticated callers cannot trigger unbounded parallel bcrypt work
+or unrestricted account creation through an alternate entry point.
+
+### L0.3 - Bound Upload Time and Shared Resource Use
+
+Priority: launch blocker for untrusted multi-tenant publication.
+References: `cmd/tpahub/main.go:151`, `cmd/tpahub/main.go:425-553`,
+`cmd/tpahub/main.go:786-788`, `internal/tpa/tpa.go:110-134`.
+
+- [ ] Avoid holding the global staging mutex while reading an untrusted request body; preserve atomic capacity reservation and cleanup invariants when shortening the critical section.
+- [ ] Define and enforce upload duration/body-read limits appropriate to supported package sizes, including cancellation and stalled clients.
+- [ ] Test a real slow/stalled upload concurrently with another tenant's upload, repository creation, and publication worker. Observe that unrelated work progresses within a bounded time.
+- [ ] Verify timeout/disconnect cleanup releases reservations and temporary files without releasing authority for work still in use.
+- [ ] Reduce multipart in-memory buffering from the configured maximum upload size; verify large admitted uploads do not require hundreds of MiB of application heap by default.
+- [ ] Bound subprocess diagnostic capture and document process memory/CPU limits. Disk/tmpfs limits alone are not memory limits.
+- [ ] Review the package-processing trust boundary: the current namespace/tmpfs setup does not isolate all host files, environment secrets, or network access. Document and validate the intended containment rather than describing output limits as a complete security sandbox.
+
+Acceptance: one admitted tenant cannot indefinitely stall shared publication or
+exhaust host resources within the documented service limits.
+
+### L0.4 - Make Deployment and Rollback Preserve Accepted State
+
+Priority: launch blocker before relying on automated production deployments.
+References: `deploy/deploy-tpahub:47-56`, `deploy/deploy-tpahub:98-120`,
+`deploy/deploy-tpahub:143-214`, `cmd/tpahub/main.go:151-158`.
+
+- [ ] Establish a write-quiescence boundary before the final rollback snapshot. Account for active HTTP requests, publication workers, payment callbacks, and usage accounting.
+- [ ] Prevent unaccounted customer/provider effects while a candidate is running but not yet accepted, or define a rollback strategy that preserves those effects.
+- [ ] Coordinate database rollback with authoritative package/generation state; do not restore SQLite into an incompatible filesystem history.
+- [ ] Explicitly propagate failure from every restore copy, permission change, rename, integrity check, foreign-key check, and schema assertion. Do not rely on `set -e` inside a function invoked as an `if` condition.
+- [ ] Await bounded HTTP/worker shutdown before closing the database and releasing the data-directory lock.
+- [ ] Capture previous and candidate build identities independently; do not validate the restored binary against the candidate's version.
+- [ ] Test through the real deploy script: writes around quiescence, failed migration, post-promotion failure, failed restore operations, integrity/FK failure with matching schema, and rollback across different application versions.
+- [ ] Observe that acknowledged writes survive, failed validation is never reported as successful restoration, and unsafe rollback leaves a clear fail-closed/manual-intervention state.
+
+Acceptance: the tested deployment procedure preserves accepted authority and
+reports every failed recovery assertion honestly.
+
+### L0.5 - Qualify Real-Money Checkout and Activation
+
+Priority: paid-launch blocker. Depends on L0.1 and safe operational recovery.
+References: `cmd/tpahub/provider.go:49-72`, `cmd/tpahub/purchase.go`,
+`internal/payments/stripe/stripe.go:33-45`.
+
+- [ ] Implement an explicitly supported production provider path; the existing code rejects live mode at multiple layers, so changing secrets is not sufficient.
+- [ ] Separate test/live checkout, webhook verification, provider correlation, and persisted environment identities. Reject cross-environment events without creating access.
+- [ ] Preserve immutable purchase terms, amount/currency checks, paid-status verification, event deduplication, and transactional activation.
+- [ ] Exercise successful payment, unpaid completion, invalid signature, wrong amount/currency/environment, duplicate events, out-of-order events, lost responses, and process restart through actual checkout/webhook handlers.
+- [ ] Verify effective customer access after activation using L0.1's runtime paths, not only purchase and grant rows.
+- [ ] Validate deployment-specific return URLs and webhook endpoints rather than hardcoding the public homepage for every environment.
+- [ ] Obtain explicit authorization before activating live billing or performing real-money validation. Record the controlled checkout, receipt, activation, and refund evidence without recording secrets.
+
+Acceptance: authorized live payment qualification proves that exactly the paid
+terms activate once and invalid/unpaid evidence does not activate access.
+
+### L1.1 - Support Uninterrupted Annual Renewal
+
+Priority: required before selling annual access. Depends on L0.1 and L0.5.
+References: `internal/store/store.go:1826-1830`,
+`internal/store/store.go:1871-1897`, `internal/payments/stripe/stripe.go:75-82`.
+
+- [ ] Implement manual advance renewal or an explicitly chosen recurring model. Automatic subscriptions are not required for a minimal launch.
+- [ ] Define renewal start/end boundaries, calendar/leap-year behavior, late renewal, overlapping purchase handling, and which offer terms are snapshotted.
+- [ ] Permit payment before the current term expires without overwriting immutable current-purchase authority.
+- [ ] Make repeated/concurrent renewal requests idempotent and keep future paid access distinct from current access.
+- [ ] Test renewal before expiry, exact term transition, renewal after expiry, duplicate webhook delivery, failed payment, and restart between payment and term activation.
+- [ ] Show the current paid-through date and renewal availability, and document any reminder/support process.
+
+Acceptance: customers can pay ahead and continue using the service across the
+term boundary without an avoidable access gap or duplicate charge.
+
+### L1.2 - Complete Customer Purchase and Support Flows
+
+Priority: required before paid self-service launch.
+References: `cmd/tpahub/purchase.go:81`, `cmd/tpahub/web.go:96-134`,
+`docs/payment-checkout-recovery.md:28-46`.
+
+- [ ] Render persisted pending, active, failed/cancelled, expired, and reconciliation-required states on the account page, including useful next actions and validity dates.
+- [ ] Distinguish checkout success and cancellation returns. A redirect must display webhook-backed state, never grant authority itself.
+- [ ] Handle delayed webhooks and already-active purchases without leaving customers at an unexplained homepage or plain conflict error.
+- [ ] Document an authorized manual reconciliation/refund/escalation procedure for customers who paid but lack usable access; avoid undocumented SQL surgery.
+- [ ] Define refund, dispute, and late-payment handling, including the case where immutable purchased validity has already expired. Automation may be deferred if the manual process is safe and usable.
+- [ ] Test the support procedure on incomplete authority, replay/restart, and already-resolved cases; preserve original purchase and provider evidence with an audit trail.
+- [ ] Verify purchase, cancellation, delayed activation, and support messaging in a browser on desktop and mobile.
+
+Acceptance: a customer can understand what was purchased, whether access is
+active, and how a payment problem will be resolved.
+
+### L1.3 - Make Customer Credentials Recoverable and Revocable
+
+Priority: required before broad public launch.
+References: `internal/store/store.go:2331-2341`, `README.md:132`,
+`cmd/tpahub/credentials.go:19-64`.
+
+- [ ] Add server-enforced customer-session expiry with an explicit browser/CLI policy. Cookie expiry alone must not leave copied tokens valid indefinitely.
+- [ ] Test expiry at the exact boundary, logout, suspension, and reuse of a copied expired cookie as a bearer token.
+- [ ] Provide a safe customer password/account recovery process, automated or documented manual, with identity checks, bounded one-time recovery authority, and appropriate session revocation.
+- [ ] Choose and enforce email verification, invitation, or another controlled registration policy before unrestricted signup.
+- [ ] Permit authenticated owners to revoke existing repository reader credentials even when their private-read entitlement has lapsed.
+- [ ] Test that a leaked reader token revoked during a lapse remains rejected after access is renewed.
+
+Acceptance: customers can recover access safely, stolen sessions have bounded
+lifetime, and security-reducing operations do not require continued payment.
+
+### L1.4 - Prove Whole-Service Disaster Recovery
+
+Priority: required before promising durable customer hosting.
+References: `README.md:47-49`, `README.md:124-138`,
+`deploy/deploy-tpahub:143-149`. External backups were not inspected.
+
+- [ ] Inventory all required recovery state: SQLite, authoritative artifacts/generations, signing material, runtime configuration, and exact application/TPA artifacts.
+- [ ] Document coordinated backup consistency, scheduling, retention, encryption/access controls, off-host storage, and recovery credentials.
+- [ ] Define acceptable recovery point and recovery time objectives and customer-facing expectations.
+- [ ] Alert on failed or stale backups; verify access to recovery material without depending solely on the failed host.
+- [ ] Perform a clean-host restore drill and measure data loss window and restore time.
+- [ ] Verify restored authentication, tenant isolation, public/private APT access, repository signatures, publishing, purchase authority, and pending/reconciliation state.
+- [ ] Document how data deletion and backup expiry interact, including restoring a backup containing previously deleted customer data.
+
+Acceptance: independently recorded restore evidence demonstrates recovery of the
+service, not merely an integrity check on a local SQLite copy.
+
+### L1.5 - Align Pricing, Terms, Tax, and Privacy
+
+Priority: required before collecting real money.
+References: `cmd/tpahub/templates/pricing.html`,
+`cmd/tpahub/templates/account.html`, `cmd/tpahub/templates/docs.html`,
+`privacy.html`, `legal.html`.
+
+- [ ] Publish one pre-signup offer describing price/currency, capacity, payment cadence, renewal, expiry, and test versus live availability.
+- [ ] Align onboarding with the selected access policy: registration alone must not imply paid activation if payment is required.
+- [ ] Remove stale claims about unavailable checkout or unfinished enforcement where implementation now differs; keep mock billing previews distinct from actual bills.
+- [ ] Confirm tax-inclusive/exclusive pricing, tax calculation, business/customer classification, and receipt/invoice handling with the responsible business/tax adviser. A Stripe product tax code alone does not establish a complete tax flow.
+- [ ] Review applicable service terms, cancellation/refund policy, consumer disclosures, acceptable use, and support contact before live sales.
+- [ ] Ensure the actually linked legal/privacy pages on `lupricht.net` contain the intended disclosures; local HTML files are not proof of published content.
+- [ ] Align cookie, operator WebAuthn, processor, logging, and retention disclosures with actual operations. The local one-cookie claim does not describe the operator cookies.
+- [ ] Establish an operable data access/export/deletion request process; self-service automation is optional if the manual process is verified.
+
+Acceptance: the actual published offer and operational/legal procedures describe
+the service customers receive. Engineering review is not legal certification.
+
+### L1.6 - Make Releases and Operations Observable
+
+Priority: required for a supportable public service.
+References: `cmd/tpahub/main.go:253-260`, `deploy/deploy-tpahub:194-204`,
+`deploy/deploy-tpahub:26-28`, `README.md:136-138`.
+
+- [ ] Expose immutable build/revision identity instead of `revision: unknown`, and validate the expected candidate during deployment.
+- [ ] Separate liveness from readiness; define checks for required database/storage/worker conditions without making probes destructive or expensive.
+- [ ] Add external HTTPS and representative repository probes plus actionable alerts for disk/inodes, publication failures, cleanup backlog, and payment/egress reconciliation.
+- [ ] Verify physical disk reporting in the operator UI; its production construction currently does not wire the test-injected `diskFree` function.
+- [ ] Provide sanitized, reproducible systemd/proxy/deploy configuration, including TLS renewal, restart/boot behavior, resource limits, namespace compatibility, and secret permissions.
+- [ ] Verify concurrent-push handling: the deploy script must queue/recheck new revisions or truthfully report a skipped deployment rather than claiming the running invocation will deploy them.
+- [ ] Establish an exact-SHA release gate, through CI or a reproducible manual approval process. Building successfully is not equivalent to qualification.
+
+Acceptance: the operator can identify the running artifact, detect user-visible
+failure, and reproduce the supported deployment configuration.
+
+### Final Release Acceptance
+
+- [ ] Close all applicable L0 and L1 gates with evidence; record owner-approved rationale for any `N/A` decision rather than silently dropping a requirement.
+- [ ] Run `go test -race ./...` and `go vet ./...` successfully on the release revision.
+- [ ] Run `./tests/qualification.sh` and the applicable clean-client bootstrap qualification against the intended package and signing identity.
+- [ ] Run `./tests/deploy-rollback-integration.sh` with its required exact historical binary/checksum and inspect every promised negative assertion, not only a final PASS label.
+- [ ] Execute the runtime paid/unpaid/expired authorization matrix, checkout/renewal flow, two-tenant abuse tests, and clean-host restore drill on the supported configuration.
+- [ ] Freeze the reviewed source SHA and immutable build artifacts; record publication and runtime activation separately. Requalify relevant changes made after the review freeze.
+- [ ] Obtain explicit approval for publication, deployment, and live billing activation. Keep signup/payment gates closed until the intended launch mode is approved.
+
+Recommended order: access-policy decision -> authentication/upload and rollback
+fixes -> backup/restore proof -> live payment and renewal qualification -> customer
+flows and commercial disclosures -> exact-revision release approval. Independent
+documentation and operational-evidence work can proceed in parallel.
+
 ## Status Legend
 
 | Status        | Meaning                                                |
