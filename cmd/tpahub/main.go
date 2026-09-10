@@ -45,7 +45,39 @@ var (
 const (
 	maxUploadFiles          = 64
 	maxMultipartMemoryBytes = 8 << 20
+	maxDiagnosticBytes      = 64 << 10
 )
+
+type boundedDiagnostic struct {
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (b *boundedDiagnostic) Len() int { return b.buf.Len() }
+
+func (b *boundedDiagnostic) Write(p []byte) (int, error) {
+	original := len(p)
+	remaining := maxDiagnosticBytes - b.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return original, nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
+		return original, nil
+	}
+	_, err := b.buf.Write(p)
+	return original, err
+}
+
+func (b *boundedDiagnostic) String() string {
+	message := b.buf.String()
+	if b.truncated {
+		return message + "\n[diagnostic output truncated]"
+	}
+	return message
+}
 
 func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
 
@@ -1762,11 +1794,15 @@ func verifyPackageIndex(ctx context.Context, candidate, packagesPath, indexArchi
 func debIdentity(ctx context.Context, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, "dpkg-deb", "--show", "--showformat=${Package}\n${Version}\n${Architecture}\n", path)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	output, err := cmd.CombinedOutput()
+	var output bytes.Buffer
+	var diagnostic boundedDiagnostic
+	cmd.Stdout = &output
+	cmd.Stderr = &diagnostic
+	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("dpkg-deb: %w: %s", err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("dpkg-deb: %w: %s", err, strings.TrimSpace(diagnostic.String()))
 	}
-	fields := strings.Fields(string(output))
+	fields := strings.Fields(output.String())
 	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
 		return "", fmt.Errorf("invalid .deb control identity")
 	}

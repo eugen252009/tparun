@@ -17,9 +17,11 @@ const defaultPublicationInodes int64 = 65536
 const maxDiagnosticBytes = 64 << 10
 
 type boundedDiagnostic struct {
-	bytes.Buffer
+	buf       bytes.Buffer
 	truncated bool
 }
+
+func (b *boundedDiagnostic) Len() int { return b.buf.Len() }
 
 func (b *boundedDiagnostic) Write(p []byte) (int, error) {
 	original := len(p)
@@ -29,16 +31,16 @@ func (b *boundedDiagnostic) Write(p []byte) (int, error) {
 		return original, nil
 	}
 	if len(p) > remaining {
-		_, _ = b.Buffer.Write(p[:remaining])
+		_, _ = b.buf.Write(p[:remaining])
 		b.truncated = true
 		return original, nil
 	}
-	_, err := b.Buffer.Write(p)
+	_, err := b.buf.Write(p)
 	return original, err
 }
 
 func (b *boundedDiagnostic) String() string {
-	message := b.Buffer.String()
+	message := b.buf.String()
 	if b.truncated {
 		return message + "\n[diagnostic output truncated]"
 	}

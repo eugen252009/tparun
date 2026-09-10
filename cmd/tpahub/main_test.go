@@ -435,6 +435,22 @@ func TestUploadReadTimeoutReleasesReservation(t *testing.T) {
 	}
 }
 
+func TestDebIdentityBoundsDiagnosticOutput(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "dpkg-deb")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nyes x | head -c 70000 >&2\nexit 2\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	_, err := debIdentity(context.Background(), "invalid.deb")
+	if err == nil {
+		t.Fatal("invalid package identity succeeded")
+	}
+	if !strings.Contains(err.Error(), "[diagnostic output truncated]") || len(err.Error()) > maxDiagnosticBytes+256 {
+		t.Fatalf("diagnostic was not bounded: length=%d err=%q", len(err.Error()), err)
+	}
+}
+
 func TestRepositoryCreationUsesResourceAdmissionAndRollsBackRoot(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MinFreeInodes = 10
