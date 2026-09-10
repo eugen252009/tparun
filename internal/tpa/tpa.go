@@ -14,10 +14,41 @@ import (
 type Runner struct{ Bin, GPGHome, Fingerprint string }
 
 const defaultPublicationInodes int64 = 65536
+const maxDiagnosticBytes = 64 << 10
+
+type boundedDiagnostic struct {
+	bytes.Buffer
+	truncated bool
+}
+
+func (b *boundedDiagnostic) Write(p []byte) (int, error) {
+	original := len(p)
+	remaining := maxDiagnosticBytes - b.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return original, nil
+	}
+	if len(p) > remaining {
+		_, _ = b.Buffer.Write(p[:remaining])
+		b.truncated = true
+		return original, nil
+	}
+	_, err := b.Buffer.Write(p)
+	return original, err
+}
+
+func (b *boundedDiagnostic) String() string {
+	message := b.Buffer.String()
+	if b.truncated {
+		return message + "\n[diagnostic output truncated]"
+	}
+	return message
+}
 
 func (r Runner) command(ctx context.Context, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, r.Bin, args...)
-	var out, errout bytes.Buffer
+	var out bytes.Buffer
+	var errout boundedDiagnostic
 	c.Stdout = &out
 	c.Stderr = &errout
 	c.Env = os.Environ()
@@ -126,7 +157,7 @@ cp -a "$sandbox/repository/." "$output/"`
 	if r.GPGHome != "" {
 		cmd.Env = append(cmd.Env, "GNUPGHOME="+r.GPGHome)
 	}
-	var stderr bytes.Buffer
+	var stderr boundedDiagnostic
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	if err != nil {
