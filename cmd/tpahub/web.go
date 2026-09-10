@@ -21,7 +21,6 @@ import (
 //go:embed templates/*.html static/site.css static/ops-auth.js static/ops.js
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
-var customerAuthRate = newAuthLimiter(4096, 10, time.Minute)
 
 type pageData struct {
 	Title, Email          string
@@ -207,8 +206,8 @@ func (s *server) registerPage(w http.ResponseWriter, r *http.Request) {
 		s.webError(w, r, "Registration is currently unavailable.")
 		return
 	}
-	if !webRateAllowed(r.RemoteAddr) {
-		http.Error(w, "too many registration attempts", http.StatusTooManyRequests)
+	if !s.customerAuthAllowed(r) {
+		http.Error(w, "too many authentication attempts", http.StatusTooManyRequests)
 		return
 	}
 	if !sameOrigin(r) {
@@ -248,6 +247,11 @@ func (s *server) loginPage(w http.ResponseWriter, r *http.Request) {
 		bad(w, 403, "invalid request origin")
 		return
 	}
+	if !s.customerAuthAllowed(r) {
+		http.Error(w, "too many authentication attempts", http.StatusTooManyRequests)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	_ = r.ParseForm()
 	a, e := s.db.ActiveAccountByEmail(r.Context(), strings.ToLower(strings.TrimSpace(r.FormValue("email"))))
 	if e != nil || bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(r.FormValue("password"))) != nil {
@@ -290,7 +294,6 @@ func (s *server) webError(w http.ResponseWriter, r *http.Request, msg string) {
 func setBrowserCookie(w http.ResponseWriter, t string) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: t, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
 }
-func webRateAllowed(remote string) bool { return customerAuthRate.allow(remote, time.Now()) }
 func clearBrowserCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: "tpahub_session", Value: "", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }

@@ -67,6 +67,7 @@ type server struct {
 	purchaseProvider        PurchaseProvider
 	paymentWebhook          payments.WebhookParser
 	grants                  commerce.GrantService
+	customerAuthRate        *authLimiter
 	purchaseMu              sync.Mutex
 	stagingMu               sync.Mutex
 	egressLookup            func(string, time.Time) (int64, int64, error)
@@ -123,7 +124,7 @@ func run(cfg config.Config) error {
 		return e
 	}
 	defer db.Close()
-	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), cleanupWake: make(chan struct{}, 1)}
+	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
 	if _, e = s.operatorState(); e != nil {
 		return fmt.Errorf("invalid operator WebAuthn configuration: %w", e)
 	}

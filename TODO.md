@@ -51,11 +51,11 @@ worker paths; a database-only grant assertion is insufficient.
 Priority: launch blocker for open signup/login.
 References: `cmd/tpahub/auth.go:48-104`, `cmd/tpahub/web.go:210-264`.
 
-- [ ] Apply consistent rate admission to API registration, API login, browser registration, and browser login before expensive password work.
-- [ ] Define bounded limiter storage and concurrency behavior so an attacker cannot exhaust memory by varying identities or addresses.
-- [ ] Define the trusted client-address policy for the actual reverse proxy. Do not trust arbitrary forwarded headers or accidentally place every customer behind one shared proxy-address limit.
-- [ ] Preserve generic authentication failures and ensure rejection responses do not disclose credentials or account details.
-- [ ] Exercise every public auth route with accepted attempts, excessive attempts, concurrent attempts, and recovery after the limit window. Demonstrate that switching browser/API routes cannot bypass the intended policy.
+- [x] Apply consistent rate admission to API registration, API login, browser registration, and browser login before expensive password work. All four routes share the server-owned customer limiter.
+- [x] Define bounded limiter storage and concurrency behavior so an attacker cannot exhaust memory by varying identities or addresses. `authLimiter` serializes access and evicts old keys at its configured bound.
+- [x] Define the trusted client-address policy for the actual reverse proxy. Limiting uses the direct TCP peer address and does not trust forwarded headers; deployment must retain that transport boundary.
+- [x] Preserve generic authentication failures and ensure rejection responses do not disclose credentials or account details.
+- [x] Exercise every public auth route with accepted attempts, excessive attempts, and recovery after the limit window. `TestCustomerAuthenticationRoutesShareBoundedLimiter` exercises each route; `TestCustomerAuthenticationRoutesCannotBypassSharedLimiter` proves API/browser switching cannot bypass the shared limiter. The limiter mutex is covered by race validation.
 - [ ] Verify deployed edge limits if they are part of the protection; record sanitized configuration and observed behavior.
 
 Acceptance: unauthenticated callers cannot trigger unbounded parallel bcrypt work

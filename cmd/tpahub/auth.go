@@ -50,6 +50,10 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		bad(w, 403, "registration disabled")
 		return
 	}
+	if !s.customerAuthAllowed(r) {
+		bad(w, http.StatusTooManyRequests, "too many authentication attempts")
+		return
+	}
 	var in struct{ Email, Password string }
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil || !emailRE.MatchString(strings.TrimSpace(strings.ToLower(in.Email))) || len(in.Password) < 10 {
 		bad(w, 400, "valid email and password of at least 10 characters required")
@@ -84,6 +88,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
+	if !s.customerAuthAllowed(r) {
+		bad(w, http.StatusTooManyRequests, "too many authentication attempts")
+		return
+	}
 	var in struct{ Email, Password string }
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil {
 		bad(w, 401, "invalid credentials")
@@ -101,6 +109,12 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, map[string]any{"account_id": a.ID, "email": a.Email, "token": t})
+}
+func (s *server) customerAuthAllowed(r *http.Request) bool {
+	if s.customerAuthRate == nil {
+		s.customerAuthRate = newAuthLimiter(4096, 10, time.Minute)
+	}
+	return s.customerAuthRate.allow(r.RemoteAddr, s.currentTime())
 }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	t, ok := bearer(r)
