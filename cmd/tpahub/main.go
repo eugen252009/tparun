@@ -42,7 +42,10 @@ var (
 	aptArchitectureRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 )
 
-const maxUploadFiles = 64
+const (
+	maxUploadFiles          = 64
+	maxMultipartMemoryBytes = 8 << 20
+)
 
 func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }
 
@@ -497,7 +500,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	var total int64
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
-		if e := r.ParseMultipartForm(s.cfg.MaxUpload); e != nil {
+		if e := r.ParseMultipartForm(maxMultipartMemoryBytes); e != nil {
 			_ = os.RemoveAll(dir)
 			bad(w, 400, "invalid upload")
 			return

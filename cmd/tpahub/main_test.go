@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +48,52 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 	h := httptest.NewServer(s.routes())
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
+}
+
+func TestMultipartUploadSpoolsFilesPastMemoryLimit(t *testing.T) {
+	s, _ := testServer(t)
+	s.cfg.MaxUpload = maxMultipartMemoryBytes + 4096
+	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.Limits.StorageBytes = s.cfg.MaxUpload * 2
+	if err = s.db.PutGrant(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	repo := "abababababababababababababababab"
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repo, AccountID: "a", Name: "multipart-spool", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("files", "large.deb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.Write(bytes.Repeat([]byte("x"), maxMultipartMemoryBytes+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/repositories/"+repo+"/publishes", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request = request.WithContext(context.WithValue(request.Context(), accountKey, "a"))
+	response := httptest.NewRecorder()
+	s.upload(response, request, repo)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("multipart upload status=%d body=%s", response.Code, response.Body.String())
+	}
+	defer request.MultipartForm.RemoveAll()
+	opened, err := request.MultipartForm.File["files"][0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if _, ok := opened.(*os.File); !ok {
+		t.Fatalf("large multipart upload remained in memory as %T", opened)
+	}
 }
 
 type copyingPublicationRunner struct{}

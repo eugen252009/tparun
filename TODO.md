@@ -71,7 +71,7 @@ References: `cmd/tpahub/main.go:151`, `cmd/tpahub/main.go:425-553`,
 - [ ] Define and enforce upload duration/body-read limits appropriate to supported package sizes, including cancellation and stalled clients.
 - [ ] Test a real slow/stalled upload concurrently with another tenant's upload, repository creation, and publication worker. Observe that unrelated work progresses within a bounded time.
 - [ ] Verify timeout/disconnect cleanup releases reservations and temporary files without releasing authority for work still in use.
-- [ ] Reduce multipart in-memory buffering from the configured maximum upload size; verify large admitted uploads do not require hundreds of MiB of application heap by default.
+- [x] Reduce multipart in-memory buffering from the configured maximum upload size; verify large admitted uploads do not require hundreds of MiB of application heap by default. Multipart parsing now has an 8 MiB memory threshold independent of `TPAHUB_MAX_UPLOAD_BYTES`; `TestMultipartUploadSpoolsFilesPastMemoryLimit` exercises the production upload path and verifies a larger file is spooled.
 - [ ] Bound subprocess diagnostic capture and document process memory/CPU limits. Disk/tmpfs limits alone are not memory limits.
 - [ ] Review the package-processing trust boundary: the current namespace/tmpfs setup does not isolate all host files, environment secrets, or network access. Document and validate the intended containment rather than describing output limits as a complete security sandbox.
 
