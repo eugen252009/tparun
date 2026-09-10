@@ -4,14 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,6 +33,7 @@ func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 	defer response.Body.Close()
 	var out struct {
 		AccountID string `json:"account_id"`
+		Token     string `json:"token"`
 	}
 	if err = json.NewDecoder(response.Body).Decode(&out); err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("registration status=%d account=%q err=%v", response.StatusCode, out.AccountID, err)
@@ -40,6 +44,84 @@ func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 	if _, err = s.db.Entitlement(context.Background(), out.AccountID); err != sql.ErrNoRows {
 		t.Fatalf("hosted registration received legacy entitlement projection: %v", err)
 	}
+	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(out.AccountID), tpahubproduct.ProductID, CapabilityRepositoryCreate, s.currentTime()); !errors.Is(err, commerce.ErrGrantNotFound) {
+		t.Fatalf("hosted default grant service=%v, want grant-not-found", err)
+	}
+	create, err := http.NewRequest(http.MethodPost, h.URL+"/v1/repositories", strings.NewReader(`{"name":"unpaid"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	create.Header.Set("Authorization", "Bearer "+out.Token)
+	create.Header.Set("Content-Type", "application/json")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusForbidden {
+		t.Fatalf("unpaid hosted repository creation status=%d, want 403", created.StatusCode)
+	}
+}
+
+func TestDefaultGrantServiceRequiresActivePersistedGrant(t *testing.T) {
+	s, _ := testServer(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	account := store.Account{ID: "paid-policy", Email: "paid-policy@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: now.Add(-time.Hour).Format(time.RFC3339Nano)}
+	if err := s.db.CreateAccount(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied := func(want error) {
+		t.Helper()
+		if _, err := s.grantService().GetGrant(ctx, commerce.CustomerID(account.ID), tpahubproduct.ProductID, CapabilityRepositoryCreate, now); !errors.Is(err, want) {
+			t.Fatalf("default grant service error=%v, want %v", err, want)
+		}
+		if err := s.repositoryPolicy().AuthorizeCreation(ctx, account.ID); !errors.Is(err, want) {
+			t.Fatalf("repository creation error=%v, want %v", err, want)
+		}
+		if _, _, err := s.accountEgress(account.ID, now); !errors.Is(err, want) {
+			t.Fatalf("egress authorization error=%v, want %v", err, want)
+		}
+	}
+	assertDenied(commerce.ErrGrantNotFound)
+
+	until := now.Add(time.Hour)
+	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
+		grant.CustomerID = commerce.CustomerID(account.ID)
+		grant.Source = "purchase"
+		grant.ValidUntil = &until
+		if err := s.db.PutGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.repositoryPolicy().AuthorizeCreation(ctx, account.ID); err != nil {
+		t.Fatalf("active purchase grant did not authorize repository creation: %v", err)
+	}
+	if _, _, err := s.accountEgress(account.ID, now); err != nil {
+		t.Fatalf("active purchase grant did not authorize egress: %v", err)
+	}
+
+	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
+		grant.CustomerID = commerce.CustomerID(account.ID)
+		grant.Source = "purchase"
+		grant.ValidUntil = &now
+		if err := s.db.PutGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDenied(commerce.ErrGrantInactive)
+
+	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
+		grant.CustomerID = commerce.CustomerID(account.ID)
+		grant.Source = "purchase"
+		grant.Enabled = false
+		grant.ValidUntil = &until
+		if err := s.db.PutGrant(ctx, grant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDenied(commerce.ErrGrantDisabled)
 }
 
 func TestLocalRegistrationExplicitlyProvisionsTPAGrants(t *testing.T) {

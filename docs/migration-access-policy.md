@@ -3,6 +3,12 @@
 Historical eligible accounts receive 6 months of free TPA Nano. No permanent
 plan grandfathering exists.
 
+Hosted TPA Hub access is payment-gated after any applicable migration period:
+authorization uses only enabled, active persisted grants. The runtime never
+manufactures a Nano grant from an account creation date, and resource limits do
+not extend grant validity. Local provisioning remains an explicit separate
+deployment mode that persists `local` grants at registration.
+
 Eligibility comes from an authoritative pre-existing active `legacy`
 entitlement or enabled, active TPA Hub `legacy` grant at the
 `legacy-six-month-nano-v1` data migration. Legacy rows for other products and

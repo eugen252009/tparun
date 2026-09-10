@@ -54,18 +54,16 @@ func TestRealFirefoxNanoOpsMatrix(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	accounts := map[string][2]int64{
-		"nano-missing": {tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes},
-		"nano-zero":    {tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes},
-		"nano-below":   {tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes},
-		"nano-equal":   {tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes},
-		"nano-high":    {tpahubproduct.NanoStorageBytes + 2_000_000, tpahubproduct.NanoEgressBytes + 8_000_000_000},
+		"nano-small": {1, 1},
+		"nano-equal": {tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes},
+		"nano-high":  {tpahubproduct.NanoStorageBytes + 2_000_000, tpahubproduct.NanoEgressBytes + 8_000_000_000},
 	}
 	for id := range accounts {
 		if err := s.db.CreateAccount(context.Background(), store.Account{ID: id, Email: id + "@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: "0123456789abcdef0123456789abcdef", AccountID: "nano-missing", Name: "firefox-nano-repository", Visibility: "public", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
+	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: "0123456789abcdef0123456789abcdef", AccountID: "nano-small", Name: "firefox-nano-repository", Visibility: "public", CreatedAt: now.Format(time.RFC3339Nano)}); err != nil {
 		t.Fatal(err)
 	}
 	put := func(id string, storage, egress int64) {
@@ -76,8 +74,7 @@ func TestRealFirefoxNanoOpsMatrix(t *testing.T) {
 			}
 		}
 	}
-	put("nano-zero", 0, 0)
-	put("nano-below", 1, 1)
+	put("nano-small", 1, 1)
 	put("nano-equal", tpahubproduct.NanoStorageBytes, tpahubproduct.NanoEgressBytes)
 	put("nano-high", accounts["nano-high"][0], accounts["nano-high"][1])
 	if response, err := http.Get(candidate.URL + "/ops"); err != nil {

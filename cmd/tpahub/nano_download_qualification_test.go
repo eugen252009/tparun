@@ -13,7 +13,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
-func TestZeroRawEgressUsesFiniteNanoDownloadQuota(t *testing.T) {
+func TestZeroEgressGrantIsNotRaisedToNanoQuota(t *testing.T) {
 	s, h := testServer(t)
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
@@ -36,12 +36,9 @@ func TestZeroRawEgressUsesFiniteNanoDownloadQuota(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(root, "package.deb"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.db.AddRepositoryEgressDaily(context.Background(), id, "2026-08-31", tpahubproduct.NanoEgressBytes-1, "now"); err != nil {
-		t.Fatal(err)
-	}
 	used, limit, err := s.accountEgress("a", now)
-	if err != nil || limit != tpahubproduct.NanoEgressBytes || used != tpahubproduct.NanoEgressBytes-1 {
-		t.Fatalf("effective egress used=%d limit=%d err=%v", used, limit, err)
+	if err != nil || limit != 0 || used != 0 {
+		t.Fatalf("persisted egress used=%d limit=%d err=%v", used, limit, err)
 	}
 	response, err := http.Get(h.URL + "/r/" + id + "/package.deb")
 	if err != nil {
@@ -49,8 +46,8 @@ func TestZeroRawEgressUsesFiniteNanoDownloadQuota(t *testing.T) {
 	}
 	body, readErr := io.ReadAll(response.Body)
 	response.Body.Close()
-	if readErr != nil || response.StatusCode != http.StatusOK || string(body) != "x" {
-		t.Fatalf("boundary download status=%d body=%q err=%v", response.StatusCode, body, readErr)
+	if readErr != nil || response.StatusCode != http.StatusOK || response.Header.Get("X-TPAHub-Egress-Limited") != "true" || string(body) != "x" {
+		t.Fatalf("zero-limit download status=%d body=%q limited=%q err=%v", response.StatusCode, body, response.Header.Get("X-TPAHub-Egress-Limited"), readErr)
 	}
 	response, err = http.Get(h.URL + "/r/" + id + "/package.deb")
 	if err != nil {
@@ -61,7 +58,7 @@ func TestZeroRawEgressUsesFiniteNanoDownloadQuota(t *testing.T) {
 	if readErr != nil || response.StatusCode != http.StatusOK || response.Header.Get("X-TPAHub-Egress-Limited") != "true" || string(body) != "x" {
 		t.Fatalf("exhausted download status=%d body=%q limited=%q err=%v", response.StatusCode, body, response.Header.Get("X-TPAHub-Egress-Limited"), readErr)
 	}
-	if got, err := s.db.RepositoryEgress(context.Background(), id, "2026-08"); err != nil || got != tpahubproduct.NanoEgressBytes+1 {
+	if got, err := s.db.RepositoryEgress(context.Background(), id, "2026-08"); err != nil || got != 2 {
 		t.Fatalf("settled egress=%d err=%v", got, err)
 	}
 }

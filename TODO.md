@@ -34,11 +34,11 @@ Priority: launch blocker. Depends on an explicit product-policy decision.
 References: `cmd/tpahub/plan.go:82-132`, `cmd/tpahub/auth.go:41-45`,
 `docs/migration-access-policy.md`, and historical P0.3 provisioning claims below.
 
-- [ ] Decide whether Nano is permanently free, payment-gated, or a bounded trial. Document the decision before changing authorization; do not silently weaken an existing contract.
+- [x] Decide whether Nano is permanently free, payment-gated, or a bounded trial. Hosted Nano is payment-gated after any active migration grant; local provisioning is an explicit persisted-grant mode. Document the decision before changing authorization; do not silently weaken an existing contract.
 - [ ] If Nano is free, define what a payment actually purchases and align the offer, expiry, and migration policies with that value proposition.
-- [ ] If Nano is paid or time-bounded, prevent the default runtime service from converting missing, disabled, or inactive grants into permanent Nano access.
-- [ ] Ensure raising a resource floor cannot erase a purchased or migration grant's validity boundary.
-- [ ] Keep account suspension, product access, and resource limits distinct; preserving one must not bypass another.
+- [x] If Nano is paid or time-bounded, prevent the default runtime service from converting missing, disabled, or inactive grants into permanent Nano access. `grantService` now uses the persisted store by default; `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants` and `TestDefaultGrantServiceRequiresActivePersistedGrant` cover hosted creation, active purchase, exact expiry, disabled grants, and egress lookup.
+- [x] Ensure raising a resource floor cannot erase a purchased or migration grant's validity boundary. The runtime floor has been removed; only stored limits and validity contribute.
+- [x] Keep account suspension, product access, and resource limits distinct; preserving one must not bypass another. Repository policy checks active account status and persisted grants independently; `TestReactivationRestoresReaderAndNewWorkerAuthorization` verifies reactivation does not restore disabled grant access.
 - [ ] Test the production server's default grant wiring, without injecting a stricter test-only grant service: fresh unpaid account, active purchase, exact expiry boundary, expired migration access, disabled grant, and reconciliation-required purchase.
 - [ ] For each applicable case, exercise repository creation, publication admission, queued publication execution, private reads, and download/egress admission. Assert both permitted and denied operations using the same production predicates.
 - [ ] Reconcile earlier store-only `VERIFIED` claims with effective runtime results, preserving the historical evidence and documenting its narrower scope.

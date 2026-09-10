@@ -3,7 +3,7 @@
 
 The candidate URL and operator session are supplied out of band through
 TPAHUB_BROWSER_URL and TPAHUB_BROWSER_SESSION. The fixture intentionally
-asserts effective finite Nano-or-higher values, not raw grant state.
+asserts effective finite persisted entitlement values.
 """
 import json, os, socket, sys
 
