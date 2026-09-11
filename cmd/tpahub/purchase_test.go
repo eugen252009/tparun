@@ -162,7 +162,7 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	}
 	webhookAt := now.AddDate(0, 1, 0)
 	s.now = func() time.Time { return webhookAt }
-	event := fmt.Sprintf(`{"id":"evt_test_1","type":"checkout.session.completed","data":{"object":{"id":"cs_test_1","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, created.PurchaseID)
+	event := fmt.Sprintf(`{"id":"evt_test_1","type":"checkout.session.completed","data":{"object":{"id":"cs_test_1","payment_status":"paid","amount_subtotal":500,"amount_total":595,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, created.PurchaseID)
 	web, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", webhookAt))
 	wr, err := http.DefaultClient.Do(web)

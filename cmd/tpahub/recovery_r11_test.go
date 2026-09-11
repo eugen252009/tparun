@@ -28,7 +28,7 @@ func TestStripeWebhookPersistsIncompleteAuthorityEvidenceWithoutActivation(t *te
 	if _, err = raw.Exec(`DROP TRIGGER purchase_grant_snapshot_sets_immutable_delete; DELETE FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, purchase.ID); err != nil {
 		t.Fatal(err)
 	}
-	event := fmt.Sprintf(`{"id":"evt-r11-http","type":"checkout.session.completed","data":{"object":{"id":%q,"payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":%q}}}}`, purchase.ProviderReference, purchase.ID)
+	event := fmt.Sprintf(`{"id":"evt-r11-http","type":"checkout.session.completed","data":{"object":{"id":%q,"payment_status":"paid","amount_subtotal":500,"amount_total":595,"currency":"eur","metadata":{"tpahub_purchase_id":%q}}}}`, purchase.ProviderReference, purchase.ID)
 	h := httptest.NewServer(s.routes())
 	defer h.Close()
 	request, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))

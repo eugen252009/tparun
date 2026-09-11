@@ -557,7 +557,7 @@ func TestProviderCheckoutProcessDeathRecoversExactPurchase(t *testing.T) {
 	mu.Unlock()
 	// The provider event deliberately occurs years after the locally persisted
 	// checkout attempt. Recovery must preserve the original 2026..2027 terms.
-	eventBody := fmt.Sprintf(`{"id":"evt_process_r6","created":1893456000,"type":"checkout.session.completed","data":{"object":{"id":"cs_process_r6","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"process-purchase"}}}}`)
+	eventBody := fmt.Sprintf(`{"id":"evt_process_r6","created":1893456000,"type":"checkout.session.completed","data":{"object":{"id":"cs_process_r6","payment_status":"paid","amount_subtotal":500,"amount_total":595,"currency":"eur","metadata":{"tpahub_purchase_id":"process-purchase"}}}}`)
 	hub := &server{cfg: config.Config{DataDir: dir, BillingPurchasesEnabled: true, BillingProvider: "stripe", BillingEnvironment: "test", BillingRateCard: "production-nano-v1", StripeTestSecret: "sk_test_example", StripeWebhookSecret: "whsec_example"}, db: db, purchaseProvider: provider, paymentWebhook: provider}
 	webhook := func() *httptest.ResponseRecorder {
 		now := time.Now().UTC()

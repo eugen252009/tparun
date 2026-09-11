@@ -75,7 +75,7 @@ func TestHostedPurchaseActivatesWithoutCompatibilityEntitlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := fmt.Sprintf(`{"id":"evt_hosted_purchase","type":"checkout.session.completed","data":{"object":{"id":"%s","payment_status":"paid","amount_total":500,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, p.ProviderReference, purchase.PurchaseID)
+	event := fmt.Sprintf(`{"id":"evt_hosted_purchase","type":"checkout.session.completed","data":{"object":{"id":"%s","payment_status":"paid","amount_subtotal":500,"amount_total":595,"currency":"eur","metadata":{"tpahub_purchase_id":"%s"}}}}`, p.ProviderReference, purchase.PurchaseID)
 	web, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/providers/stripe/webhook", strings.NewReader(event))
 	web.Header.Set("Stripe-Signature", signedStripeEvent(event, "whsec_example", s.currentTime()))
 	response, err = http.DefaultClient.Do(web)

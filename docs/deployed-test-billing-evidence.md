@@ -30,3 +30,15 @@ This verifies deployed Stripe **test-mode checkout creation**, including durable
 pending purchase creation. It does not verify hosted test-card completion,
 Stripe webhook delivery, paid activation, refunds, disputes, or live payments.
 Those claims remain unchecked until independently observed.
+
+## Historical Webhook Diagnosis
+
+On 2026-08-30, two Stripe test `checkout.session.completed` deliveries returned
+HTTP 400. Stripe records show both sessions were paid with a 500 EUR subtotal
+and 95 EUR automatic tax, for a 595 EUR total. The then-deployed webhook
+compared the 595 EUR `amount_total` with the immutable 500 EUR quoted purchase
+amount and rejected the event. The current source verifies Stripe's
+`amount_subtotal` against that quoted amount instead; its production-handler
+test covers a tax-inclusive 595 EUR total. This is source-level correction
+evidence only and does not establish deployed activation until a fresh test
+checkout is completed after an authorized deployment.

@@ -170,11 +170,12 @@ type webhookEnvelope struct {
 	Created int64  `json:"created"`
 	Data    struct {
 		Object struct {
-			ID            string            `json:"id"`
-			PaymentStatus string            `json:"payment_status"`
-			AmountTotal   int64             `json:"amount_total"`
-			Currency      string            `json:"currency"`
-			Metadata      map[string]string `json:"metadata"`
+			ID             string            `json:"id"`
+			PaymentStatus  string            `json:"payment_status"`
+			AmountSubtotal int64             `json:"amount_subtotal"`
+			AmountTotal    int64             `json:"amount_total"`
+			Currency       string            `json:"currency"`
+			Metadata       map[string]string `json:"metadata"`
 		} `json:"object"`
 	} `json:"data"`
 }
@@ -207,7 +208,9 @@ func ParseWebhook(body []byte, signature, secret string, now time.Time) (commerc
 	if envelope.Created > 0 {
 		occurredAt = time.Unix(envelope.Created, 0).UTC()
 	}
-	return commerce.PaymentEvent{ProviderEventID: envelope.ID, OperationID: operationID, Type: eventType, ProviderReference: envelope.Data.Object.ID, AmountMinor: envelope.Data.Object.AmountTotal, Currency: strings.ToUpper(envelope.Data.Object.Currency), OccurredAt: occurredAt, Metadata: envelope.Data.Object.Metadata}, nil
+	// Purchases store the quoted pre-tax price. Stripe's amount_total may add
+	// jurisdiction-specific automatic tax, so verify the matching subtotal.
+	return commerce.PaymentEvent{ProviderEventID: envelope.ID, OperationID: operationID, Type: eventType, ProviderReference: envelope.Data.Object.ID, AmountMinor: envelope.Data.Object.AmountSubtotal, Currency: strings.ToUpper(envelope.Data.Object.Currency), OccurredAt: occurredAt, Metadata: envelope.Data.Object.Metadata}, nil
 }
 
 func VerifySignature(header string, body []byte, secret string, now time.Time) error {
