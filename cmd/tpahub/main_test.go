@@ -344,11 +344,14 @@ func TestConcurrentUploadAndWorkerPathsShareCapacityAuthority(t *testing.T) {
 	}
 }
 
-func TestStalledUploadDoesNotBlockAnotherTenantUpload(t *testing.T) {
-	s, _ := testServer(t)
+func TestStalledUploadDoesNotBlockUnrelatedTenantWork(t *testing.T) {
+	s, h := testServer(t)
+	s.ctx = context.Background()
+	s.cfg.PublishTimeout = time.Second
 	s.cfg.MaxUpload = 1024
 	s.cfg.MaxStagingBytes = 4 << 20
 	s.cfg.MinDiskFreeBytes = 0
+	s.runner = copyingPublicationRunner{}
 	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "stalled-b@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
 		t.Fatal(err)
 	}
@@ -367,22 +370,53 @@ func TestStalledUploadDoesNotBlockAnotherTenantUpload(t *testing.T) {
 		s.upload(httptest.NewRecorder(), r, "stalled-repo-a")
 	}()
 	<-started
-	secondDone := make(chan int, 1)
+	unrelatedDone := make(chan error, 1)
 	go func() {
+		request, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/repositories", strings.NewReader(`{"name":"unblocked"}`))
+		request.Header.Set("Authorization", "Bearer tph_s_test")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			unrelatedDone <- err
+			return
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			unrelatedDone <- fmt.Errorf("unrelated repository creation status=%d", response.StatusCode)
+			return
+		}
 		r := httptest.NewRequest(http.MethodPost, "/?filename=other.deb", bytes.NewReader([]byte("payload")))
 		r.ContentLength = 7
 		r = r.WithContext(context.WithValue(r.Context(), accountKey, "b"))
 		w := httptest.NewRecorder()
 		s.upload(w, r, "stalled-repo-b")
-		secondDone <- w.Code
+		if w.Code != http.StatusAccepted {
+			unrelatedDone <- fmt.Errorf("unrelated upload status=%d", w.Code)
+			return
+		}
+		job, err := s.db.Claim(context.Background())
+		if err != nil {
+			unrelatedDone <- err
+			return
+		}
+		s.process(job)
+		processed, err := s.db.Job(context.Background(), job.ID)
+		if err != nil {
+			unrelatedDone <- err
+			return
+		}
+		if processed.State != "succeeded" {
+			unrelatedDone <- fmt.Errorf("unrelated worker state=%s", processed.State)
+			return
+		}
+		unrelatedDone <- nil
 	}()
 	select {
-	case code := <-secondDone:
-		if code != http.StatusAccepted {
-			t.Fatalf("unrelated upload status=%d", code)
+	case err := <-unrelatedDone:
+		if err != nil {
+			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("stalled upload blocked another tenant")
+		t.Fatal("stalled upload blocked unrelated tenant work")
 	}
 	close(release)
 	<-firstDone
