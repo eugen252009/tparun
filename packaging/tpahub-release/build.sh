@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-VERSION=${TPAHUB_RELEASE_VERSION:-0.1.1}
+VERSION=${TPAHUB_RELEASE_VERSION:-0.1.2}
 REPOSITORY_URL=${TPAHUB_RELEASE_REPOSITORY_URL:-https://tpa.lupricht.net/r/a0d8fd0f82235ee431c41581aa253ec8}
 SUITE=${TPAHUB_RELEASE_SUITE:-stable}
 COMPONENT=${TPAHUB_RELEASE_COMPONENT:-main}
@@ -41,6 +41,7 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: all
+Depends: ca-certificates
 Maintainer: TPA Hub <tpahub@lupricht.net>
 Description: TPA Hub APT repository configuration
  This package installs the TPA Hub repository source and scoped archive keyring.

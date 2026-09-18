@@ -27,7 +27,7 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	if len(bootstrapChecksum) != 2 {
 		t.Fatal("installer must define one pinned bootstrap package checksum")
 	}
-	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.1_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
+	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.2_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")

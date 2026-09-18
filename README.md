@@ -13,8 +13,8 @@ The official bootstrap trust material is also available for inspection at `https
 The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -LO https://tpa.lupricht.net/tpahub-release_0.1.1_all.deb
-sudo apt install ./tpahub-release_0.1.1_all.deb
+curl -LO https://tpa.lupricht.net/tpahub-release_0.1.2_all.deb
+sudo apt install ./tpahub-release_0.1.2_all.deb
 sudo apt update
 sudo apt install tpahub
 ```
