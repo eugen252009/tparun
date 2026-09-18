@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
+	"golang.org/x/sys/unix"
 )
 
 func awaitCapacityEvent(t *testing.T, ch <-chan struct{}) {
@@ -22,6 +24,47 @@ func awaitCapacityEvent(t *testing.T, ch <-chan struct{}) {
 	case <-ch:
 	case <-time.After(5 * time.Second):
 		t.Fatal("capacity event timed out")
+	}
+}
+
+func TestInodeHeadroomDistinguishesUnavailableFromExhausted(t *testing.T) {
+	tests := []struct {
+		name, want string
+		stat       unix.Statfs_t
+		additional int64
+	}{
+		{name: "available", stat: unix.Statfs_t{Files: 1000, Ffree: 500}, additional: 1, want: "pass"},
+		{name: "exhausted", stat: unix.Statfs_t{Files: 1000, Ffree: 0}, additional: 1, want: "reject"},
+		{name: "unavailable", stat: unix.Statfs_t{Files: 0, Ffree: 0}, additional: 1, want: "pass"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			free, known, err := inodeHeadroomFromStat(test.stat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = checkInodeHeadroomValues(free, known, 10, test.additional)
+			if test.want == "pass" && err != nil {
+				t.Fatalf("unexpected rejection: %v", err)
+			}
+			if test.want == "reject" && err == nil {
+				t.Fatal("inode exhaustion accepted")
+			}
+		})
+	}
+}
+
+func TestUnavailableInodesDoNotBypassByteHeadroom(t *testing.T) {
+	free, known, err := inodeHeadroomFromStat(unix.Statfs_t{})
+	if err != nil || known || free != 0 {
+		t.Fatalf("unexpected unavailable inode metric: free=%d known=%t err=%v", free, known, err)
+	}
+	if err = checkInodeHeadroomValues(free, known, 10, 100); err != nil {
+		t.Fatalf("unavailable inode metric rejected admission: %v", err)
+	}
+	s := &server{cfg: config.Config{MinDiskFreeBytes: 100}, diskFree: func() (int64, error) { return 50, nil }}
+	if err = s.checkDiskHeadroomFor(1); err == nil {
+		t.Fatal("byte exhaustion bypassed when inode metric was unavailable")
 	}
 }
 

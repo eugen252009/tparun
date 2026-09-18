@@ -2390,6 +2390,32 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 	return nil
 }
 
+func inodeHeadroomFromStat(stat unix.Statfs_t) (free int64, known bool, err error) {
+	// Some filesystems, including Btrfs, report no fixed inode pool through
+	// statfs. Files==0 is the portable signal that Ffree is not an exhaustion
+	// metric; zero free inodes is meaningful only when a total is reported.
+	if stat.Files == 0 {
+		return 0, false, nil
+	}
+	if stat.Ffree > math.MaxInt64 {
+		return 0, false, fmt.Errorf("inode count overflow")
+	}
+	return int64(stat.Ffree), true, nil
+}
+
+func checkInodeHeadroomValues(free int64, known bool, minimum, additional int64) error {
+	if additional < 0 {
+		return fmt.Errorf("invalid inode reservation")
+	}
+	if minimum <= 0 || !known {
+		return nil
+	}
+	if free < minimum || additional > free-minimum {
+		return fmt.Errorf("minimum inode headroom unavailable")
+	}
+	return nil
+}
+
 func (s *server) checkInodeHeadroomFor(additional int64) error {
 	if additional < 0 {
 		return fmt.Errorf("invalid inode reservation")
@@ -2398,6 +2424,7 @@ func (s *server) checkInodeHeadroomFor(additional int64) error {
 		return nil
 	}
 	var free int64
+	known := true
 	if s.freeInodes != nil {
 		var err error
 		free, err = s.freeInodes()
@@ -2409,15 +2436,13 @@ func (s *server) checkInodeHeadroomFor(additional int64) error {
 		if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
 			return fmt.Errorf("inode headroom unavailable: %w", err)
 		}
-		if stat.Ffree > math.MaxInt64 {
-			return fmt.Errorf("inode headroom unavailable: inode count overflow")
+		var err error
+		free, known, err = inodeHeadroomFromStat(stat)
+		if err != nil {
+			return fmt.Errorf("inode headroom unavailable: %w", err)
 		}
-		free = int64(stat.Ffree)
 	}
-	if free < s.cfg.MinFreeInodes || additional > free-s.cfg.MinFreeInodes {
-		return fmt.Errorf("minimum inode headroom unavailable")
-	}
-	return nil
+	return checkInodeHeadroomValues(free, known, s.cfg.MinFreeInodes, additional)
 }
 
 func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64, alreadyWritten bool) error {
