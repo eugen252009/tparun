@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build context is prepared by deploy/container/build.sh and contains ./tpahub
 # and ./tpa. The runtime image contains no source or Go toolchain.
-FROM golang:1.26-bookworm AS build
+FROM golang:1.26-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81 AS build
 ARG TPAHUB_REVISION=unknown
 ARG TPAHUB_VERSION=0.1.1
 WORKDIR /src/tpahub
@@ -11,7 +11,7 @@ WORKDIR /src/tpa
 COPY tpa/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/tpa .
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 ARG TPAHUB_REVISION=unknown
 ARG TPAHUB_VERSION=0.1.1
 LABEL org.opencontainers.image.title="TPA Hub self-hosted" \
