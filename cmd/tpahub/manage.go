@@ -70,7 +70,7 @@ func repoCLI(c cliConfig, a []string) error {
 		if err != nil {
 			return err
 		}
-		return addRepo(c, repository, flagValue(a, "--token", ""))
+		return addRepo(c, repository, flagValue(a, "--token", ""), has(a, "--dry-run"))
 	case "remove":
 		if len(a) < 2 {
 			return fmt.Errorf("repository required")
@@ -205,9 +205,13 @@ func resolveRepositoryInScope(c cliConfig, value string, ownerOnly bool) (string
 	return match, nil
 }
 
-func addRepo(c cliConfig, v, reader string) error {
+func addRepo(c cliConfig, v, reader string, dryRun bool) error {
 	// repoCLI resolved a public name or explicit ID already. Reader-based APT
 	// registration needs no publisher credential or authenticated discovery.
+	// Publishing itself never needs local APT files; only installation does.
+	if !dryRun && os.Geteuid() != 0 {
+		return fmt.Errorf("repo add installs system APT configuration and requires root; rerun with sudo, or use --dry-run to inspect the files. Publishing does not require repo add")
+	}
 	repo := v
 	var e error
 	var meta struct{ ID, Visibility string }
@@ -242,12 +246,8 @@ func addRepo(c cliConfig, v, reader string) error {
 	name := "tpahub-" + repo
 	keyPath := "/etc/apt/keyrings/" + name + ".gpg"
 	src := "/etc/apt/sources.list.d/" + name + ".list"
-	if e = os.MkdirAll("/etc/apt/keyrings", 0755); e != nil {
-		return e
-	}
-	if e = writeAPTFile(keyPath, kb, 0644); e != nil {
-		return e
-	}
+	line := fmt.Sprintf("deb [signed-by=%s] %s/r/%s/ stable main\n", keyPath, c.Server, repo)
+	auth := ""
 	if meta.Visibility == "private" {
 		if reader == "" {
 			return fmt.Errorf("private repository requires --token")
@@ -255,7 +255,23 @@ func addRepo(c cliConfig, v, reader string) error {
 		if strings.ContainsAny(reader, " \t\r\n") {
 			return fmt.Errorf("invalid reader credential")
 		}
-		auth := "machine " + strings.TrimRight(c.Server, "/") + "/r/" + repo + "/ login reader password " + reader + "\n"
+		auth = "machine " + strings.TrimRight(c.Server, "/") + "/r/" + repo + "/ login reader password " + reader + "\n"
+	}
+	if dryRun {
+		fmt.Printf("Would install %s (0644)\n", keyPath)
+		fmt.Printf("Would install %s (0644): %s", src, line)
+		if auth != "" {
+			fmt.Printf("Would install /etc/apt/auth.conf.d/%s (0600)\n", name)
+		}
+		return nil
+	}
+	if e = os.MkdirAll("/etc/apt/keyrings", 0755); e != nil {
+		return e
+	}
+	if e = writeAPTFile(keyPath, kb, 0644); e != nil {
+		return e
+	}
+	if auth != "" {
 		if e = os.MkdirAll("/etc/apt/auth.conf.d", 0755); e != nil {
 			return e
 		}
@@ -263,11 +279,18 @@ func addRepo(c cliConfig, v, reader string) error {
 			return e
 		}
 	}
-	line := fmt.Sprintf("deb [signed-by=%s] %s/r/%s/ stable main\n", keyPath, c.Server, repo)
 	if e = os.MkdirAll(filepath.Dir(src), 0755); e != nil {
 		return e
 	}
-	return writeAPTFile(src, []byte(line), 0644)
+	if e = writeAPTFile(src, []byte(line), 0644); e != nil {
+		return e
+	}
+	// A repository may have been private before. Do not leave a revoked or
+	// unnecessary reader credential behind when it is re-added as public.
+	if auth == "" {
+		_ = os.Remove("/etc/apt/auth.conf.d/" + name)
+	}
+	return nil
 }
 
 // Replace credential files atomically, even when an old file has unsafe modes.
@@ -294,6 +317,9 @@ func writeAPTFile(path string, data []byte, mode os.FileMode) error {
 }
 
 func removeRepo(c cliConfig, v string) error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("repo remove changes system APT configuration and requires root; rerun with sudo")
+	}
 	repo, e := resolveRepository(c, v)
 	if e != nil {
 		return e

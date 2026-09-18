@@ -1,0 +1,32 @@
+services:
+  tpahub:
+    image: ${TPAHUB_IMAGE:?set TPAHUB_IMAGE to a pinned image tag or digest}
+    restart: unless-stopped
+    user: "${TPAHUB_UID:-10001}:${TPAHUB_GID:-10001}"
+    ports:
+      - "${TPAHUB_BIND:-127.0.0.1:8080}:8080"
+    volumes:
+      - "${TPAHUB_CONFIG_DIR:?set TPAHUB_CONFIG_DIR}:/config"
+      - "${TPAHUB_DATA_DIR:?set TPAHUB_DATA_DIR}:/data"
+    environment:
+      HOME: /config/home
+      TPAHUB_PROFILE: self-hosted
+      TPAHUB_LISTEN: 0.0.0.0:8080
+      TPAHUB_DATA_DIR: /data
+      TPA_BIN: /usr/local/bin/tpa
+      GNUPGHOME: /config/gnupg
+      TPAHUB_REGISTRATION_ENABLED: "true"
+      TPAHUB_CAPABILITY_SOURCE: local
+      TPAHUB_BILLING: none
+      TPAHUB_BILLING_PROVIDER: none
+      TPAHUB_DELIVERY_MODE: metrics-only
+      TPAHUB_EGRESS_ENFORCEMENT: none
+      TPAHUB_OPERATOR_RP_ID: ${TPAHUB_OPERATOR_RP_ID:?set public hostname}
+      TPAHUB_OPERATOR_ORIGIN: ${TPAHUB_EXTERNAL_ORIGIN:?set https external origin}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "/usr/bin/curl", "-fsS", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 6
