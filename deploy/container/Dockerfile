@@ -26,7 +26,7 @@ RUN apt-get update \
     && chown -R 10001:10001 /config /data
 COPY --from=build /out/tpahub /usr/local/bin/tpahub
 COPY --from=build /out/tpa /usr/local/bin/tpa
-COPY deploy/container/entrypoint.sh /usr/local/bin/tpahub-entrypoint
+COPY tpahub/deploy/container/entrypoint.sh /usr/local/bin/tpahub-entrypoint
 RUN chmod 0755 /usr/local/bin/tpahub /usr/local/bin/tpa /usr/local/bin/tpahub-entrypoint
 ENV HOME=/config/home \
     TPAHUB_PROFILE=self-hosted \
