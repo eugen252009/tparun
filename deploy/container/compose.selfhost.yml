@@ -23,6 +23,15 @@ services:
       TPAHUB_EGRESS_ENFORCEMENT: none
       TPAHUB_OPERATOR_RP_ID: ${TPAHUB_OPERATOR_RP_ID:?set public hostname}
       TPAHUB_OPERATOR_ORIGIN: ${TPAHUB_EXTERNAL_ORIGIN:?set https external origin}
+    # TPA's existing publication runner creates a nested user/mount namespace
+    # and a bounded tmpfs. Docker's default seccomp/AppArmor profiles reject
+    # that operation even for this non-root UID; these are the narrow runtime
+    # permissions required by that existing sandbox (not privileged mode).
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "/usr/bin/curl", "-fsS", "http://127.0.0.1:8080/ready"]
