@@ -52,14 +52,14 @@ NAS `.env`, never `latest`.
 The qualified image is published as:
 
 ```text
-192.168.188.2:9006/tpahub-server:3d1d19359c38
+192.168.188.2:9006/tpahub-server:dfc79c0c45ca
 192.168.188.2:9006/tpahub-server:selfhost-0.1.1
 ```
 
 Both tags resolve to this immutable digest:
 
 ```text
-192.168.188.2:9006/tpahub-server@sha256:e0490566039f65f3779db24277bf98c4ba995bce7fea1acfb025b89c0f3a5dfc
+192.168.188.2:9006/tpahub-server@sha256:5143d77d87d3aca81fa46d4af95100bc11e6bf410e936025e2ba6fceaff149ad
 ```
 
 The example environment file uses the digest-pinned reference. The registry is
