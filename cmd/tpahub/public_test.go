@@ -23,11 +23,11 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical := regexp.MustCompile(`(?m)^DEFAULT_REPOSITORY_ID="([a-f0-9]{32})"$`).FindSubmatch(source)
-	if len(canonical) != 2 {
-		t.Fatal("installer must define one canonical repository identity")
+	bootstrapChecksum := regexp.MustCompile(`(?m)^RELEASE_PACKAGE_SHA256=\$\{[^}]+:-([a-f0-9]{64})\}$`).FindSubmatch(source)
+	if len(bootstrapChecksum) != 2 {
+		t.Fatal("installer must define one pinned bootstrap package checksum")
 	}
-	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), string(canonical[1])) {
+	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.1_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")

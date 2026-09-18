@@ -10,19 +10,25 @@ TPA Hub now has a small public website at `https://tpa.lupricht.net`. It explain
 
 The official bootstrap trust material is also available for inspection at `https://tpa.lupricht.net/tpahub.asc`. The public deployment marker is available at `https://tpa.lupricht.net/version` and returns the service version, startup time, and revision marker.
 
-Recommended public installation:
+The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -fsSL https://tpa.lupricht.net/install.sh | sudo bash
+curl -LO https://tpa.lupricht.net/tpahub-release_0.1.1_all.deb
+sudo apt install ./tpahub-release_0.1.1_all.deb
+sudo apt update
+sudo apt install tpahub
 ```
 
-Inspect the complete installer first:
-
-```sh
-curl -fsSL https://tpa.lupricht.net/install.sh
-```
-
-The script embeds the public signing key, installs it under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly and does not use curl or wget after it starts. The public zero-bootstrap path is qualified with `./tests/bootstrap-qualification.sh` in clean Debian. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Release qualification can bind the same installer to a local candidate package with `TPAHUB_PACKAGE_PATH` and its required `TPAHUB_PACKAGE_SHA256`; both must be supplied together. Mema support is not currently provided.
+The `tpahub-release` package contains only the public repository keyring and
+scoped `.sources` definition. It does not contain the application, initialize
+Hub state, or invoke APT recursively. Future application updates use ordinary
+`sudo apt update && sudo apt upgrade`. The convenience `install.sh` wrapper
+uses the same bootstrap path and verifies the bootstrap package checksum before
+installing it. Candidate qualification may override the package path and
+checksum with `TPAHUB_RELEASE_PACKAGE_PATH` and
+`TPAHUB_RELEASE_PACKAGE_SHA256`; both are required together. See
+[Debian bootstrap packaging](docs/debian-bootstrap.md). Mema support is not
+currently provided.
 
 ## Build and run
 
