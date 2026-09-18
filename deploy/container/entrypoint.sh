@@ -17,7 +17,7 @@ ensure_signing_key() {
     fi
     fingerprint=$(gpg --batch --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
     if [ -z "$fingerprint" ]; then
-        gpg --batch --quick-generate-key "TPA Hub self-hosted signing key" rsa2048 sign 0
+        gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key "TPA Hub self-hosted signing key" rsa2048 sign 0
         fingerprint=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
     fi
     [ -n "$fingerprint" ] || { echo 'unable to determine persistent signing fingerprint' >&2; exit 1; }
