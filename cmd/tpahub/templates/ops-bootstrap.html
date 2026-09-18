@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Global bootstrap"}}</head>
+<body>
+{{template "operator-header"}}
+<main id="main" class="narrow" tabindex="-1">
+  <p class="eyebrow">Operator configuration</p><h1>Global Bootstrap Repository</h1>
+  {{if .Found}}
+  <div class="account-card">
+    <p>Repository: <code>{{.RepositoryID}}</code><br>Owner: <code>{{.AccountID}}</code></p>
+    <p>Storage usage: {{.StorageUsed}}<br>Storage limit: {{.StorageLimit}}<br>Recommended: {{.Recommended}}</p>
+    <p>Egress usage: {{.EgressUsed}}<br>Egress limit: {{.EgressLimit}}</p>
+  </div>
+  <section class="section">
+    <h2>Change capacity</h2><p class="fine">Enter positive finite limits in bytes.</p>
+    <form method="post" class="stack-form">
+      <input type="hidden" name="action" value="capacity">
+      <label for="storage-limit">Storage limit</label><input id="storage-limit" name="storage_limit" type="number" min="1" required>
+      <label for="egress-limit">Egress limit</label><input id="egress-limit" name="egress_limit" type="number" min="1" required>
+      <button type="submit">Confirm capacity change</button>
+    </form>
+    <form method="post" class="actions"><input type="hidden" name="action" value="disable"><button type="submit">Remove bootstrap role</button></form>
+  </section>
+  {{else}}<p class="notice">No global bootstrap repository is designated.</p>{{end}}
+  <section class="section">
+    <h2>Assign</h2>
+    <form method="post" class="stack-form">
+      <input type="hidden" name="action" value="enable">
+      <label for="repository-id">Repository ID</label><input id="repository-id" name="repository_id" required>
+      <button type="submit">Designate bootstrap repository</button>
+    </form>
+  </section>
+</main>
+{{template "footer"}}
+</body>
+</html>

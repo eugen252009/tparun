@@ -1,1 +1,35 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Why Nano makes sense — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><header><a class="brand" href="/">TPA Hub</a><nav><a href="/docs">How it works</a><a href="/pricing">Pricing</a><a class="button" href="/register">Get started</a></nav></header><main class="narrow"><p class="eyebrow">NANO · AVAILABLE NOW</p><h1>Use storage for the bytes that need a home.</h1><p class="lead">Nano uses the same core TPA Hub capabilities as the larger plans. Its difference is capacity, not functionality.</p><p>If software already has a reliable upstream, you may not need to mirror its entire payload into TPA Hub.</p><div class="resource-box"><h2>5 MB sounds small. Is it?</h2><p><strong>5 MB storage</strong><br><strong>12 GB yearly repository egress</strong></p><p>For lightweight packages, it can represent a lot of software. At roughly 2 KB per recipe, 5 MB could hold about <strong>2,500 recipe-sized packages</strong>. A completely full 5 MB repository could theoretically be transferred in full roughly <strong>200 times</strong> within the 12 GB yearly egress allowance.</p><p class="estimate-note">These are simple illustrative estimates, not guarantees. Actual usage depends on package sizes, repository metadata, update patterns, HTTP overhead, APT caching, and client behavior. Your mileage may vary.</p></div><h2>Recipes instead of mirrors</h2><p><a href="https://github.com/coffeemakerstudio/mema">Mema</a> is an independent optional tool that provides a reusable installation and version-management runtime. A small application-specific recipe tells Mema how to retrieve and install software from its existing upstream.</p><div class="flow"><div><b>Upstream</b><span>actual application payload</span></div><div class="arrow">→</div><div><b>Mema</b><span>runs the recipe</span></div><div class="arrow">←</div><div><b>TPA Hub</b><span>tiny signed recipe package</span></div></div><p>The large payload is still downloaded by the user's machine. The efficiency is that it does not need to occupy TPA Hub storage or pass through TPA Hub when a suitable upstream already exists.</p><h2>Real example: Neovim</h2><div class="metric"><strong>about 2.4 KB</strong><span><code>mema-neovim_0.12.5_amd64.deb</code><br>the recipe package, not Neovim itself</span></div><p>Mema retrieves the actual Neovim 0.12.5 release from its upstream and installs it. This recipe passed through Mema's generic repository build and was independently installed successfully in clean Debian.</p><h2>One runtime, many small recipes</h2><p>The Mema runtime itself is a full package—about 1.8 MB for <code>mema_0.2_amd64.deb</code>—and is installed once. Additional recipes can remain small. The same generic mechanism is used across tools including Go, Rust, Python, Node, Bun, Deno, Wayland, wlroots, Sway, and Neovim.</p><h2>When you need more hosted storage</h2><p>Recipes are optional. Nano also works with ordinary <code>.deb</code> publishing. If you need TPA Hub to own private binaries, internal software, large custom packages, or artifacts without a dependable upstream, larger plans are the natural fit.</p><p><span class="tag muted">STANDARD · COMING SOON</span> &nbsp; <span class="tag muted">PRO · COMING SOON</span></p><p><a class="button" href="/register">Start with Nano</a></p></main><footer><a href="/">TPA Hub</a> · <a href="/docs">How it works</a> · <a href="https://lupricht.net/legal/">Legal</a> · <a href="https://lupricht.net/privacy/">Datenschutz</a></footer></body></html>
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Nano"}}</head>
+<body>
+{{template "header" "pricing"}}
+<main id="main" class="narrow" tabindex="-1">
+  <p class="eyebrow">Choosing Nano</p>
+  <h1>Small packages.<br>A useful starting point.</h1>
+  <p class="lead">Use hosted storage for the bytes that need a home—not necessarily every upstream application payload.</p>
+  <div class="resource-box">{{template "nano-resources"}}<p>Nano suits lightweight packages and small repositories. Larger binaries may not fit.</p></div>
+  <section class="section">
+    <h2>Ordinary packages work here.</h2>
+    <p>Publish your own <code>.deb</code> files using the CLI. Recipes are optional; TPA Hub does not require a special application runtime.</p>
+    <p>If a package exceeds your available storage or technical publication limits, it cannot be published. Standard and Pro are planned, not currently available upgrades.</p>
+  </section>
+  <section class="section">
+    <h2>Recipes can keep hosting small.</h2>
+    <p><a href="https://github.com/coffeemakerstudio/mema">Mema</a> is an independent installation and version-management tool. A recipe can tell Mema how to retrieve software from its existing upstream.</p>
+    <ol class="onboarding">
+      <li><b>Host the recipe</b>TPA Hub distributes the small signed Debian recipe package.</li>
+      <li><b>Retrieve the software</b>Mema downloads the application from its upstream source.</li>
+      <li><b>Keep the boundary clear</b>The application download uses that upstream's availability and trust model; it is not hosted by TPA Hub.</li>
+    </ol>
+    <p>This avoids mirroring a large payload when a suitable upstream already exists. The Mema runtime is a separate package installed on the consumer's machine.</p>
+  </section>
+  <section class="section">
+    <h2>Estimate with your own artifacts.</h2>
+    <p>At roughly 2 KB per recipe package, 5 MB is approximately 2,500 packages before other published payloads. Real packages vary, and the runtime also needs space if you host it yourself.</p>
+    <p class="estimate-note">Illustration only—not a package-count promise. Download frequency, APT metadata, caching, and package sizes affect egress.</p>
+    <div class="actions"><a class="button" href="/docs#publish">Read the publishing guide</a><a href="/pricing">Back to plans →</a></div>
+  </section>
+</main>
+{{template "footer"}}
+</body>
+</html>

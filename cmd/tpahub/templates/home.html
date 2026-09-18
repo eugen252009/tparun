@@ -1,5 +1,45 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><header><a class="brand" href="/">TPA Hub</a><nav><a href="/docs">How it works</a><a href="/pricing">Pricing</a><a href="/login">Log in</a><a class="button" href="/register">Get started</a></nav></header><main><section class="hero"><p class="eyebrow">APT repositories without the ceremony.</p><h1>Ship Debian packages<br>with confidence.</h1><p class="lead">Build a <code>.deb</code>, publish it to a signed repository, and install it with normal APT tools.</p><p><a class="button" href="/register">Start with Nano</a> <a class="text-link" href="/docs">Read the guide →</a></p></section><section><h2>How it works</h2><div class="steps"><div><b>01</b><h3>Install</h3><p>Get the CLI from the official signed APT repository.</p></div><div><b>02</b><h3>Create</h3><p>Make a repository for your tools.</p></div><div><b>03</b><h3>Publish</h3><p>Upload already-built Debian packages.</p></div><div><b>04</b><h3>Install</h3><p>Use ordinary <code>apt update</code> and <code>apt install</code>.</p></div></div></section><section class="code-section"><h2>A small, familiar workflow</h2><pre><code>tpahub login
-tpahub repo create tools
-tpahub publish tools ./my-package.deb
-apt update
-apt install my-package</code></pre></section><section><h2>Plans built around actual resources</h2><p class="lead">Same capability. Different capacity.</p><p class="fine">Every plan includes the same core TPA Hub capabilities. Choose based on the storage and repository egress you need—not artificial package or repository-count limits.</p><div class="plans"><div class="plan featured"><span class="tag">AVAILABLE NOW</span><h3>Nano</h3><p><strong>5 MB</strong> storage · <strong>12 GB</strong> yearly egress</p><p>For small repositories, internal tools, and lightweight Debian workflows.</p><a href="/register">Create an account →</a><br><a href="/nano">Why this plan makes sense →</a></div><div class="plan"><span class="tag muted">COMING SOON</span><h3>Standard</h3><p><strong>500 MB</strong> storage · <strong>20 GB</strong> monthly egress</p><p>For normal hosted package repositories and application payloads.</p></div><div class="plan"><span class="tag muted">COMING SOON</span><h3>Pro</h3><p><strong>Pay as you go</strong></p><p><strong>500 MB</strong> storage blocks<br><strong>20 GB</strong> egress blocks</p><p>Storage and egress scale independently with actual usage.</p></div></div></section>{{if .HasPackageCount}}<section class="project-stat"><strong>{{.PackageCount}}</strong><span>packages currently published through TPA Hub</span></section>{{end}}<section class="trust"><h2>Trust and transparency</h2><p><a href="/pricing">See pricing and plan details →</a></p><p><a href="/install.sh">View install.sh</a> · <a href="/tpahub.asc">View signing key</a></p><p class="fingerprint">42313D9F5F1F319AB5A18F6122380CEE20D731C6</p></section></main><footer>TPA Hub · CLI-first, APT-native package distribution · <a href="https://lupricht.net/legal/">Legal</a> · <a href="https://lupricht.net/privacy/">Datenschutz</a></footer></body></html>
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Signed Debian package hosting"}}</head>
+<body>
+{{template "header" "home"}}
+<main id="main" tabindex="-1">
+  <section class="hero">
+    <p class="eyebrow">Debian package distribution</p>
+    <h1>Your packages.<br>One familiar install.</h1>
+    <p class="lead">Publish a <code>.deb</code> to a signed repository. Your users install and update it with the APT tools they already know.</p>
+    <div class="actions"><a class="button" href="/docs">Get started</a><a href="/pricing">Explore the plans →</a></div>
+  </section>
+  {{template "release-note"}}
+  <section class="section" aria-labelledby="workflow">
+    <p class="eyebrow">A small, familiar workflow</p>
+    <h2 id="workflow">From your build to their machine.</h2>
+    <div class="steps">
+      <div><b>01 / BUILD</b><h3>Bring your package</h3><p>Use your existing build tools. TPA Hub accepts Debian packages.</p></div>
+      <div><b>02 / PUBLISH</b><h3>Upload with the CLI</h3><p>Create a repository and publish your package from the terminal.</p></div>
+      <div><b>03 / SHARE</b><h3>Choose who can install</h3><p>Distribute publicly or use repository reader tokens for private access.</p></div>
+      <div><b>04 / INSTALL</b><h3>Let APT do its job</h3><p>Your users get signed repository metadata and ordinary package updates.</p></div>
+    </div>
+    <p><a href="/docs#publish">Follow the complete publishing guide →</a></p>
+  </section>
+  <section class="section" aria-labelledby="purpose">
+    <h2 id="purpose">Package hosting, not another build system.</h2>
+    <div class="card-grid">
+      <article class="card"><h3>Keep your workflow</h3><p>TPA Hub handles hosted publication and delivery. TPA remains the independent repository generation tool.</p><a href="/docs#consume">Install public packages →</a></article>
+      <article class="card"><h3>Start with a small repository</h3><p>Nano is designed for lightweight packages and recipe-based distribution. Capacity is measured in stored bytes and repository egress.</p><a href="/nano">Is Nano a fit? →</a></article>
+    </div>
+  </section>
+  {{if .HasPackageCount}}
+  <section class="section project-stat"><strong>{{.PackageCount}}</strong><span>packages currently published through TPA Hub</span></section>
+  {{end}}
+  <section class="section" aria-labelledby="trust">
+    <p class="eyebrow">Inspect before you trust</p>
+    <h2 id="trust">Signed repositories. Visible trust material.</h2>
+    <p>APT sources use a repository-scoped <code>signed-by</code> keyring, not a global trusted key.</p>
+    <div class="actions"><a href="/install.sh">Read the installer</a><a href="/tpahub.asc">Inspect the signing key</a><a href="/docs#trust">Verify the fingerprint</a></div>
+    <p class="fingerprint">42313D9F5F1F319AB5A18F6122380CEE20D731C6</p>
+  </section>
+</main>
+{{template "footer"}}
+</body>
+</html>

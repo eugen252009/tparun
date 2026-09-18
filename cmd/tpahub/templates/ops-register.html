@@ -1,1 +1,14 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Register passkey — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><main class="narrow"><p class="eyebrow">OPERATOR SECURITY</p><h1>Register a new passkey</h1><p>This passkey will be the normal operator sign-in method.</p><button class="button" data-passkey-register>Create passkey</button><script src="/static/ops-auth.js"></script></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Register passkey"}}</head>
+<body>
+{{template "operator-header"}}
+<main id="main" class="form-page" tabindex="-1">
+  <p class="eyebrow">Operator security</p><h1>Register a new passkey</h1>
+  <p>This passkey will be the normal operator sign-in method.</p>
+  <div class="actions"><button class="button" data-passkey-register>Create passkey</button></div>
+</main>
+{{template "footer"}}
+<script src="/static/ops-auth.js"></script>
+</body>
+</html>

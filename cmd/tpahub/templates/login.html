@@ -1,1 +1,23 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Log in — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><header><a class="brand" href="/">TPA Hub</a><nav><a href="/docs">How it works</a><a href="/register">Register</a></nav></header><main class="form-page"><h1>Log in</h1><p>Continue to your TPA Hub account.</p>{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}<form method="post" action="/login"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="button" type="submit">Log in</button></form><p class="fine">New to TPA Hub? <a href="/register">Create an account</a></p></main><footer><a href="/">TPA Hub</a> · <a href="https://lupricht.net/legal/">Legal</a> · <a href="https://lupricht.net/privacy/">Datenschutz</a></footer></body></html>
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Log in"}}</head>
+<body>
+{{template "header" "account"}}
+<main id="main" class="form-page" tabindex="-1">
+  <p class="eyebrow">Your account</p>
+  <h1>Welcome back.</h1>
+  <p class="lead">Log in to view your usage and account status.</p>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/login">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="button" type="submit">Log in</button>
+  </form>
+  <p class="fine">New to TPA Hub? <a href="/register">Create an account</a></p>
+  <p class="fine">Just installing public packages? <a href="/docs#consume">No account is required.</a></p>
+</main>
+{{template "footer"}}
+</body>
+</html>

@@ -1,16 +1,138 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>How it works — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><header><a class="brand" href="/">TPA Hub</a><nav><a href="/pricing">Pricing</a><a href="/login">Log in</a><a class="button" href="/register">Get started</a></nav></header><main class="narrow"><p class="eyebrow">HOW IT WORKS</p><h1>From .deb to apt install.</h1><p class="lead">TPA Hub keeps the service layer small. TPA generates and signs the repository; TPA Hub stores, publishes, and serves it.</p><h2>1. Install the client</h2><pre><code>curl -LO https://tpa.lupricht.net/tpahub-release_0.1.2_all.deb
-sudo apt install ./tpahub-release_0.1.2_all.deb
-sudo apt update
-sudo apt install tpahub</code></pre><h2>2. Install public ecosystem packages</h2><p>No account or login is required for public repositories. The names below are resolved by the client; repository IDs are not needed.</p><pre><code>tpahub repo list --public
-tpahub repo add mema-public
-tpahub repo add bloom-public
-sudo apt update
-sudo apt install mema bloom</code></pre><h2>3. Verify Bloom</h2><pre><code>mema list
-bloom search "math min u32"
-bloom describe math.min.u32
-printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' | bloom run math.min.u32 --input-format u32le --output-format text</code></pre><p>Expected result: <code>4</code>. Repository administration and publishing require login; public discovery and consumption do not.</p><h2>4. Register and log in</h2><pre><code>tpahub register
-tpahub login</code></pre><h2>3. Create and publish</h2><pre><code>tpahub repo create tools
-tpahub publish tools ./my-package_1.0.0_amd64.deb
-tpahub status JOB_ID</code></pre><h2>4. Configure another machine</h2><pre><code>tpahub repo add REPOSITORY_ID --token READER_TOKEN
-apt update
-apt install my-package</code></pre><p>Private repositories use a repository reader token. Public repositories can be added without one. APT continues to verify the repository signature with its <code>signed-by</code> keyring.</p><h2>Plan overview</h2><p><strong>Same capability. Different capacity.</strong> Plan differentiation is resource-based, not feature-based. Nano, Standard and Pro provide the same core TPA Hub capabilities.</p><p><strong>Nano · AVAILABLE NOW:</strong> 5 MB storage and 12 GB yearly repository egress.</p><p><strong>Standard · COMING SOON:</strong> 500 MB storage and 20 GB monthly repository egress for normal hosted package repositories.</p><p><strong>Pro · COMING SOON:</strong> pay as you go, with storage and egress growing independently in 500 MB storage blocks and 20 GB egress blocks. The intended differences are resource capacity and, for Pro, the billing model—not access to core features.</p><p>Current storage usage is measured as the exact sum of the currently published canonical <code>.deb</code> payload sizes across your repositories. Repository metadata, temporary uploads, workspaces, caches and historical uploads are excluded. Measurement can decrease when packages are removed. Nano storage capacity is enforced before a publish commits canonical artifacts; egress is measured in an annual entitlement period and gracefully enforced.</p><p>Uploads are included subject to technical rate and request limits. These are intended resource numbers, not package-count limits. See the <a href="/nano">Nano efficiency explanation</a> for illustrative capacity estimates.</p><h2>Future billing model</h2><p>Pro is planned around gradual, predictable usage. Storage is measured using <code>ceil(storage usage / 500 MB)</code> and is intended to use the billing period's highest block, rather than repeated upload/delete recalculations. Egress is measured using <code>ceil(monthly egress / 20 GB)</code>. Storage and egress grow independently.</p><p>Before an intentional upload crosses a storage block, a future interface should show the current and new billed capacity and ask for confirmation. Egress cannot usually pause external downloads, so future notifications are intended around 50%, 80%, and 95% of the current block. These confirmations and notifications are not implemented yet.</p><p>The intended experience is small increases in usage leading to small increases in cost—not a dramatic jump at a threshold. Future optional spend controls may include maximum storage blocks, egress blocks, or monthly PAYG spend. No charging or production billing is implemented today.</p><h2>Repository egress</h2><p>Repository egress is measured as the actual successful response-body bytes delivered for canonical repository content. Package files and APT metadata such as <code>Packages.gz</code> and <code>InRelease</code> count; range responses count only bytes actually delivered.</p><p>Website pages, API calls, uploads, HEAD responses, 304 responses and unrelated error responses do not count. Public and private repository delivery use the same accounting. Usage is stored in UTC daily buckets and aggregated across an account's repositories. Nano sums the buckets in its anniversary-based entitlement year; future Pro usage remains monthly.</p><p>The 12 GB Nano allowance is a soft annual threshold: the pool may be consumed at any time during the current entitlement year. Transfers already in progress finish normally, while new <code>.deb</code> downloads after the threshold are rate-limited. Repository metadata remains responsive and continues to count. The allowance resets automatically at the next entitlement anniversary. Egress is not a hard cutoff; billing and PAYG charging are not implemented. Future redirects or external storage will need to report attributable payload delivery separately; a redirect itself is not the full package transfer.</p><h2>Billing preparation</h2><p>TPA Hub now keeps a provider-neutral virtual billing preview. It combines the real plan, UTC billing period, current storage, storage high-water mark, and annual Nano egress and plan-specific periods. A separate mock rate card can turn those units into virtual EUR minor-unit line items for simulations, including future Pro usage in 500 MB storage blocks and 20 GB egress blocks.</p><p>Nano and Standard remain fixed-capacity plans; Pro remains coming soon. Preview/finalization records are local and idempotent. Mock amounts are not public prices. A planned Nano annual price definition exists internally, but no invoices, payments, checkout, or plan switching are active.</p><p>The billing provider boundary supports the mock provider and a Stripe test-mode adapter. Providers receive finalized, already-rated line items; they do not recalculate storage or egress. Production billing is disabled even though Nano's planned production rate definition is now prepared; no live provider or payments are active.</p><h2>Using Mema with TPA Hub</h2><p>If your software already has a reliable upstream, you can package a Mema recipe instead of mirroring the complete application. TPA Hub distributes the small recipe package; Mema retrieves the actual software at installation time. See the <a href="/nano">Neovim example and Nano explanation</a>.</p><p><a href="/register">Create a Nano account →</a></p></main><footer><a href="/">TPA Hub</a> · <a href="/install.sh">Installer</a> · <a href="/tpahub.asc">Signing key</a> · <a href="https://lupricht.net/legal/">Legal</a> · <a href="https://lupricht.net/privacy/">Datenschutz</a></footer></body></html>
+<!doctype html>
+<html lang="en">
+
+<head>{{template "head" "Documentation"}}</head>
+
+<body>
+  {{template "header" "docs"}}
+  <main id="main" class="docs-layout" tabindex="-1">
+    <aside class="docs-nav">
+      <p class="eyebrow">Documentation</p>
+      <nav aria-label="On this page">
+        <a href="#install">Install the client</a>
+        <a href="#trust">Verify trust material</a>
+        <a href="#compatibility">Client compatibility</a>
+        <a href="#consume">Install public packages</a>
+        <a href="#bloom">Try Bloom</a>
+        <a href="#publish">Publish your package</a>
+        <a href="#private">Private repositories</a>
+        <a href="#limits">Usage & limits</a>
+      </nav>
+    </aside>
+    <div class="docs-content">
+      <div class="page-heading">
+        <p class="eyebrow">The practical guide</p>
+        <h1>From .deb to apt install.</h1>
+        <p class="lead">Install public packages without an account, or sign in to publish your own.</p>
+      </div>
+      <section id="install">
+        <h2>Install the client</h2>
+        <p>These commands target Debian 12 amd64. Run them with a user that can use <code>sudo</code>; in a root shell,
+          omit <code>sudo</code>.</p>
+        <pre><code>sudo apt-get update
+            sudo apt-get install -y ca-certificates curl gpg less
+            curl -fsSL https://tpa.lupricht.net/install.sh -o install-tpahub.sh
+            less install-tpahub.sh</code></pre>
+        <p>Inspect the installer and verify the signing key below before running it. The installer configures a signed
+          APT source and installs <code>tpahub</code>.</p>
+      </section>
+      <section id="trust">
+        <h2>Verify trust material</h2>
+        <p>Download and inspect the public signing key. Compare its primary fingerprint with the expected value before
+          trusting it.</p>
+        <pre><code>curl -fsSL https://tpa.lupricht.net/tpahub.asc -o tpahub.asc
+            gpg --show-keys --fingerprint tpahub.asc</code></pre>
+        <p class="fingerprint">Expected: 42313D9F5F1F319AB5A18F6122380CEE20D731C6</p>
+        <p>Do not continue if the fingerprint differs. The installer embeds the signing key; check that it matches too.
+          This website and download share an HTTPS trust origin—use an independently trusted fingerprint if your
+          security policy requires one.</p>
+        <p>Sources use <code>signed-by=</code> with keys under <code>/etc/apt/keyrings</code>. Do not use
+          <code>apt-key</code> or disable APT signature verification.
+        </p>
+        <p>After checking the installer and signing key, install the client:</p>
+        <pre><code>sudo bash install-tpahub.sh</code></pre>
+      </section>
+      <section id="compatibility">
+        <h2>Check client compatibility</h2>
+        <p class="notice">The public client release may lag behind the server. Older clients default to localhost and do
+          not resolve public repository names. This is an open onboarding limitation, not a problem with your
+          installation.</p>
+        <pre><code>dpkg-query -W tpahub</code></pre>
+        <p>For a client supporting discovery, use:</p>
+        <pre><code>tpahub repo list --public --server https://tpa.lupricht.net</code></pre>
+        <p>If discovery is unavailable, open the public <a href="/v1/public/repositories">repository directory</a>. Find
+          the desired repository name and copy its <code>id</code>. Add it with the compatible command:</p>
+        <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net</code></pre>
+        <p>Use the same ID for later removal. Repository names are exact and may be ambiguous; an ID disambiguates them.
+          Public discovery does not expose private repositories.</p>
+      </section>
+      <section id="consume">
+        <h2>Install public packages</h2>
+        <p>No publisher login is required. With a client supporting name resolution:</p>
+        <pre><code>sudo tpahub repo add mema-public --server https://tpa.lupricht.net
+            sudo tpahub repo add bloom-public --server https://tpa.lupricht.net
+            sudo apt update
+            sudo apt install mema tpahub</code></pre>
+        <p>For older clients, add each repository by its directory ID as described above, then run the same APT
+          commands.</p>
+        <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
+      </section>
+      <section id="publish">
+        <h2>Publish your package</h2>
+        <p>Publishing requires an account with an active publishing entitlement. Account creation alone does not promise
+          paid capacity. Check your <a href="/account">account</a> and <a href="/pricing">plan availability</a>.</p>
+        <pre><code>tpahub register --server https://tpa.lupricht.net
+            tpahub login --server https://tpa.lupricht.net
+            tpahub repo create tools --public
+            tpahub publish tools ./my-package_1.0.0_amd64.deb
+            tpahub status JOB_ID</code></pre>
+        <p>Replace the package path with your build output and <code>JOB_ID</code> with the returned job ID. Wait for
+          successful publication before configuring consumers.</p>
+        <p>On the consuming machine, add the repository's ID, then install:</p>
+        <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net
+            sudo apt update
+            sudo apt install my-package</code></pre>
+        <p>The CLI saves the server selected during login. Supported newer clients also accept
+          <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers
+          remain supported.
+        </p>
+      </section>
+      <section id="private">
+        <h2>Private repositories</h2>
+        <p>Repositories are private unless created with <code>--public</code>. As the publisher, create a reader token:
+        </p>
+        <pre><code>tpahub repo create private-tools
+            tpahub repo token create private-tools workstation</code></pre>
+        <p>On the consuming machine:</p>
+        <pre><code>sudo tpahub repo add REPOSITORY_ID --token READER_TOKEN --server https://tpa.lupricht.net</code>
+        </pre>
+        <p>Reader tokens authorize downloads from one repository, not administration or publishing. Treat them as
+          secrets; avoid shared shell histories. APT credentials are written to a restricted file under
+          <code>/etc/apt/auth.conf.d</code>.
+        </p>
+      </section>
+      <section id="limits">
+        <h2>Usage & limits</h2>
+        <h3>Published storage</h3>
+        <p>Storage is the sum of canonical published <code>.deb</code> payload sizes across an account's repositories.
+          Metadata, temporary workspaces, caches, and historical uploads are excluded from that measurement. Technical
+          staging and request limits still apply independently.</p>
+        <h3>Repository egress</h3>
+        <p>Actual delivered package and repository metadata body bytes count, including partial range responses. Website
+          pages, uploads, API calls, HEAD and 304 responses do not count. Public and private delivery use the same
+          accounting.</p>
+        <p>Nano aggregates egress over its anniversary-based entitlement year. Active transfers finish normally at the
+          annual threshold; new package downloads are rate-limited. Metadata remains available and continues to count.
+        </p>
+        <h3>Billing status</h3>
+        <p>Account usage previews are operational information, not invoices. Stripe Sandbox checkout, where enabled, is
+          test-only. Standard, Pro, live usage-based charging, and future spend controls are not available purchase
+          options.</p>
+        <p><a href="/pricing">Compare plan capacity →</a></p>
+      </section>
+    </div>
+  </main>
+  {{template "footer"}}
+</body>
+
+</html>

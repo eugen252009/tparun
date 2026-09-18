@@ -162,7 +162,7 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 func notFoundPage(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(404)
-	w.Write([]byte("<!doctype html><title>Not found — TPA Hub</title><h1>Not found</h1><p><a href=\"/\">Return to TPA Hub</a></p>"))
+	_ = websiteTemplates.ExecuteTemplate(w, "not-found.html", nil)
 }
 func (s *server) webAuth(w http.ResponseWriter, r *http.Request) bool {
 	if !sameOrigin(r) {

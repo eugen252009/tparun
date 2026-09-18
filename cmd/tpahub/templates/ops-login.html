@@ -1,1 +1,15 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Operator sign in — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><main class="narrow"><p class="eyebrow">TPA HUB OPERATIONS</p><h1>Operator sign in</h1><button class="button" data-passkey-login>Sign in with passkey</button><p><a href="/ops/recover">Emergency recovery</a></p><script src="/static/ops-auth.js"></script></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Operator sign in"}}</head>
+<body>
+{{template "operator-header"}}
+<main id="main" class="form-page" tabindex="-1">
+  <p class="eyebrow">Operator access</p><h1>Operator sign in</h1>
+  <p>Use your registered passkey to access service operations. This is separate from your customer account.</p>
+  <div class="actions"><button class="button" data-passkey-login>Sign in with passkey</button></div>
+  <p class="fine"><a href="/ops/recover">Emergency recovery</a></p>
+</main>
+{{template "footer"}}
+<script src="/static/ops-auth.js"></script>
+</body>
+</html>

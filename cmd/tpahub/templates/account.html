@@ -1,1 +1,85 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Account — TPA Hub</title><link rel="stylesheet" href="/static/site.css"></head><body><header><a class="brand" href="/">TPA Hub</a><nav><a href="/docs">How it works</a><a href="/logout">Log out</a></nav></header><main class="narrow"><p class="eyebrow">ACCOUNT</p><h1>Welcome to TPA Hub.</h1><div class="account-card"><p class="fine">Signed in as</p><strong>{{.Email}}</strong><p><span class="tag">NANO · AVAILABLE NOW</span></p></div>{{if .HasStorageUsage}}<div class="account-card"><p class="fine">Storage</p><strong>{{.StorageUsed}} used</strong><p class="fine">Nano capacity: {{.StorageCapacity}}</p><p class="fine">Nano storage capacity is enforced before publishing.</p></div>{{else}}<div class="account-card"><p class="fine">Storage usage unavailable</p><p class="fine">Your account remains usable while measurement is unavailable.</p></div>{{end}}{{if .HasEgressUsage}}<div class="account-card"><p class="fine">Egress</p>{{if .EgressMeasured}}<strong>{{.EgressUsed}} {{if .EgressEnforced}}used this entitlement year{{else}}observed locally{{end}}</strong>{{if .EgressEnforced}}<p class="fine">Nano capacity: {{.EgressCapacity}}</p>{{else}}<p class="fine">{{.EgressRequests}} admitted file requests</p>{{end}}<p class="fine">Usage period: {{.EgressPeriod}}</p>{{end}}<p class="fine">{{.EgressStatus}}</p></div>{{else}}<div class="account-card"><p class="fine">Egress usage unavailable</p><p class="fine">Your account remains usable while measurement is unavailable.</p></div>{{end}}{{if .ShowBillingPreviewLink}}<p><a href="/account?billing=preview">Billing preview (local simulator, explicit request)</a></p>{{end}}{{if .HasBillingPreview}}<div class="account-card"><p class="fine">Billing preview</p><strong>Nano</strong><p class="fine">Billing mode: {{.BillingMode}} · period: {{.BillingPeriod}}</p><p class="fine">Storage high-water (operational month): {{.StorageHighWater}}</p><p class="fine">This is a virtual usage preview. No prices, invoices or charges are active.</p></div>{{end}}{{if .ShowSandboxPurchase}}<div class="account-card"><p class="fine">Hosted test purchase</p><strong>Nano · €5/year</strong><p class="fine">5 MB storage · 12 GB annual egress. This is a TEST checkout and is not a live payment.</p><form method="post" action="/account/billing/nano/purchase"><label><input type="checkbox" name="business_use" value="on"> Ich kaufe TPA Hub für geschäftliche Nutzung.</label><br><button class="button" type="submit">Start test checkout</button></form></div>{{end}}<h2>Get started</h2><ol class="onboarding"><li><b>Install the CLI</b><code>curl -fsSL https://tpa.lupricht.net/install.sh | sudo bash</code></li><li><b>Log in</b><code>tpahub login --server https://tpa.lupricht.net</code></li><li><b>Create a repository</b><code>tpahub repo create myrepo</code></li><li><b>Publish a package</b><code>tpahub publish myrepo ./package.deb</code></li></ol><a href="/docs">Read the complete guide →</a></main><footer><a href="/">TPA Hub</a> · <a href="https://lupricht.net/legal/">Legal</a> · <a href="https://lupricht.net/privacy/">Datenschutz</a></footer></body></html>
+<!doctype html>
+<html lang="en">
+
+<head>{{template "head" "Account"}}</head>
+
+<body>
+  {{template "header" "account"}}
+  <main id="main" class="page" tabindex="-1">
+    <div class="page-heading">
+      <p class="eyebrow">Account</p>
+      <h1>Your workspace.</h1>
+      <p>Signed in as <strong>{{.Email}}</strong></p>
+      <div class="actions"><a href="/docs#publish">Publishing guide</a><a href="/logout">Log out</a></div>
+    </div>
+    <section class="section" aria-labelledby="usage">
+      <h2 id="usage">Usage & capacity</h2>
+      <div class="card-grid">
+        <article class="account-card">
+          <h3>Published storage</h3>
+          {{if .HasStorageUsage}}
+          <p class="lead"><strong>{{.StorageUsed}}</strong> used</p>
+          <p>Storage capacity: {{.StorageCapacity}}</p>
+          <p class="fine">Canonical package payloads across your repositories. Capacity is checked before publication.
+          </p>
+          {{else}}
+          <p>Storage usage unavailable</p>
+          <p class="fine">Your account remains usable while measurement is unavailable.</p>
+          {{end}}
+        </article>
+        <article class="account-card">
+          <h3>Repository egress</h3>
+          {{if .HasEgressUsage}}
+          <p class="lead"><strong>{{.EgressUsed}}</strong> used this entitlement year</p>
+          <p>Egress capacity: {{.EgressCapacity}}</p>
+          <p class="fine">Current entitlement period: {{.BillingPeriod}}</p>
+          <p class="fine">{{.EgressStatus}}</p>
+          {{else}}
+          <p>Egress usage unavailable</p>
+          <p class="fine">Your account remains usable while measurement is unavailable.</p>
+          {{end}}
+        </article>
+      </div>
+    </section>
+    {{if .HasBillingPreview}}
+    <section class="section" aria-labelledby="billing">
+      <h2 id="billing">Billing preview</h2>
+      <div class="account-card">
+        <p>Billing mode: <strong>{{.BillingMode}}</strong> · period: {{.BillingPeriod}}</p>
+        <p>Storage high-water (operational month): {{.StorageHighWater}}</p>
+        <p class="fine">This is a virtual usage preview, not an invoice or a live charge.</p>
+      </div>
+    </section>
+    {{end}}
+    {{if .ShowSandboxPurchase}}
+    <section class="section" aria-labelledby="sandbox">
+      <p class="eyebrow">Test environment</p>
+      <h2 id="sandbox">Stripe Sandbox test purchase</h2>
+      <div class="account-card">
+        <span class="tag">Test only</span>
+        <h3>Nano · €5/year</h3>
+        {{template "nano-resources"}}
+        <p>This is a TEST checkout and is not a live payment.</p>
+        <form method="post" action="/account/billing/nano/purchase">
+          <label class="checkbox-label"><input type="checkbox" name="business_use" value="on"> I am purchasing TPA Hub
+            for business use.</label>
+          <button class="button" type="submit">Start Stripe Sandbox checkout</button>
+        </form>
+      </div>
+    </section>
+    {{end}}
+    <section class="section" aria-labelledby="next">
+      <h2 id="next">Publish from your terminal.</h2>
+      <p>The CLI handles repository creation, publication, and reader tokens. The guide includes installation, client
+        compatibility, and complete consumer setup.</p>
+      <pre><code>tpahub login --server https://tpa.lupricht.net
+          tpahub repo create myrepo
+          tpahub publish myrepo ./package.deb</code></pre>
+      <p class="fine">Repositories are private by default. Publishing requires an active entitlement.</p>
+      <a class="button secondary" href="/docs#publish">Open the publishing guide</a>
+    </section>
+  </main>
+  {{template "footer"}}
+</body>
+
+</html>
