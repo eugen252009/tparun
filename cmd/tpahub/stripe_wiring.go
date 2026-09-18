@@ -3,12 +3,26 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
 	stripepayments "github.com/eugen252009/tpahub/internal/payments/stripe"
 	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func (s *server) registerHostedRoutes(m *http.ServeMux) {
+	m.HandleFunc("/v1/billing/providers/stripe/webhook", s.stripeWebhook)
+}
+
+func (s *server) configureHostedPayment() error {
+	provider, err := NewStripeBillingProvider(s.db, s.cfg.StripeTestSecret, BillingEnvironment(s.cfg.BillingEnvironment))
+	if err != nil {
+		return err
+	}
+	s.purchaseProvider, s.paymentWebhook = provider, provider
+	return nil
+}
 
 // stripeProvider is composition-root compatibility wiring. Product and commerce
 // code depend only on payment ports; the legacy metadata fallback keeps already

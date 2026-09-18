@@ -1,5 +1,13 @@
 # TPA Hub Production Readiness Checklist
 
+## Schema 5 release-cut status
+
+The [Schema 5 contract](docs/schema-upgrades.md) and [qualification report](docs/schema5-qualification.md)
+supersede historical schema migration, lineage and installer-test blockers below.
+Schemas 1–4 are unsupported development state, not migration sources. Historical
+`DONE` entries are not current implementation claims. This local qualification
+is not a public release, deployment authorization or unrestricted paid-launch approval.
+
 This checklist tracks the remediation work required after the architecture, correctness, commerce, payment, migration, authorization, and repository audit.
 
 The goal is to make every item independently verifiable.
@@ -10,7 +18,7 @@ Reviewed source: `a962a8ddbd8d45b2dfda200ef14ec3ab29d92b73`.
 
 **Verdict: not ready for an unrestricted paid public launch.** A controlled,
 explicitly test-mode pilot is a separate decision, not production qualification.
-This section records the current launch gates; older `DONE` and `VERIFIED`
+This section records launch gates at that historical revision; older `DONE` and `VERIFIED`
 entries below remain historical evidence, not proof that these gates are closed.
 In particular, persisted-grant tests do not establish effective runtime access
 policy when the default grant service supplies fallback grants.

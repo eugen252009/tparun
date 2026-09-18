@@ -13,40 +13,32 @@ import (
 
 type repositoryCountingWriter struct {
 	http.ResponseWriter
-	bytes int64
+	bytes       int64
+	status      int
+	writeFailed bool
 }
 
 func (w *repositoryCountingWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
 	n, err := w.ResponseWriter.Write(p)
 	w.bytes += int64(n)
+	if err != nil || n != len(p) {
+		w.writeFailed = true
+	}
 	return n, err
+}
+func (w *repositoryCountingWriter) WriteHeader(status int) {
+	if w.status == 0 && status >= 200 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
 }
 func (w *repositoryCountingWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	if w.status == 0 {
+		w.status = http.StatusOK
 	}
-}
-
-type rateLimitedResponseWriter struct {
-	http.ResponseWriter
-	rate    int64
-	started time.Time
-	written int64
-}
-
-func (w *rateLimitedResponseWriter) Write(p []byte) (int, error) {
-	if w.started.IsZero() {
-		w.started = time.Now()
-	}
-	target := time.Duration(float64(w.written+int64(len(p))) / float64(w.rate) * float64(time.Second))
-	if wait := target - time.Since(w.started); wait > 0 {
-		time.Sleep(wait)
-	}
-	n, err := w.ResponseWriter.Write(p)
-	w.written += int64(n)
-	return n, err
-}
-func (w *rateLimitedResponseWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}

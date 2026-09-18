@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/usage"
 )
 
 // PublishedUsage describes package payloads in one canonical published repository.
@@ -52,14 +53,30 @@ func publishedUsage(root string) (PublishedUsage, error) {
 }
 
 func (s *server) repositoryUsage(repositoryID string) (PublishedUsage, error) {
-	root, exists, err := s.repositoryUsageRoot(repositoryID)
+	stats, _, err := s.repositoryStorageObservation(store.Repository{ID: repositoryID})
+	return stats, err
+}
+
+// Reuse the canonical payload scan and resolve its generation once. The returned
+// gauge describes that scan, not physical allocation or a billable quantity.
+func (s *server) repositoryStorageObservation(repo store.Repository) (PublishedUsage, usage.Storage, error) {
+	root, exists, err := s.repositoryUsageRoot(repo.ID)
 	if err != nil {
-		return PublishedUsage{}, err
+		return PublishedUsage{}, usage.Storage{}, err
 	}
-	if !exists {
-		return PublishedUsage{}, nil
+	var stats PublishedUsage
+	if exists {
+		stats, err = publishedUsage(root)
+		if err != nil {
+			return PublishedUsage{}, usage.Storage{}, err
+		}
 	}
-	return publishedUsage(root)
+	fact := usage.Storage{RepositoryID: repo.ID, AccountID: repo.AccountID,
+		Scope: usage.PublishedPackagePayloads, ObservedAt: s.currentTime().UTC(), Bytes: stats.StoredBytes}
+	if exists && filepath.Base(filepath.Dir(root)) == "generations" {
+		fact.Generation = filepath.Base(root)
+	}
+	return stats, fact, nil
 }
 
 func (s *server) repositoryUsageRoot(repositoryID string) (string, bool, error) {
@@ -161,7 +178,7 @@ func (s *server) accountUsage(ctx context.Context, accountID string) (AccountUsa
 	}
 	usage := AccountUsage{RepositoryCount: len(repositories)}
 	for _, repository := range repositories {
-		stats, err := s.repositoryUsage(repository.ID)
+		stats, storage, err := s.repositoryStorageObservation(repository)
 		if err != nil {
 			return AccountUsage{}, err
 		}
@@ -170,7 +187,7 @@ func (s *server) accountUsage(ctx context.Context, accountID string) (AccountUsa
 		if overflow {
 			return AccountUsage{}, fmt.Errorf("account package count overflow")
 		}
-		usage.StoredBytes, overflow = addCapacity(usage.StoredBytes, stats.StoredBytes)
+		usage.StoredBytes, overflow = addCapacity(usage.StoredBytes, storage.Bytes)
 		if overflow {
 			return AccountUsage{}, fmt.Errorf("account storage usage overflow")
 		}

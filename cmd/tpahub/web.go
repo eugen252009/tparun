@@ -23,26 +23,30 @@ var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
 
 type pageData struct {
-	Title, Email          string
-	LoggedIn              bool
-	Error                 string
-	CSRF                  string
-	PackageCount          int64
-	HasPackageCount       bool
-	StorageUsed           string
-	StorageBytes          int64
-	HasStorageUsage       bool
-	StorageCapacity       string
-	EgressUsed            string
-	EgressCapacity        string
-	EgressStatus          string
-	HasEgressUsage        bool
-	BillingMode           string
-	BillingPeriod         string
-	StorageHighWater      string
-	HasBillingPreview     bool
-	ShowSandboxPurchase   bool
-	SandboxPurchaseStatus string
+	Title, Email                   string
+	LoggedIn                       bool
+	Error                          string
+	CSRF                           string
+	PackageCount                   int64
+	HasPackageCount                bool
+	StorageUsed                    string
+	StorageBytes                   int64
+	HasStorageUsage                bool
+	StorageCapacity                string
+	EgressUsed                     string
+	EgressCapacity                 string
+	EgressStatus                   string
+	HasEgressUsage                 bool
+	EgressMeasured, EgressEnforced bool
+	EgressPeriod                   string
+	EgressRequests                 uint64
+	ShowBillingPreviewLink         bool
+	BillingMode                    string
+	BillingPeriod                  string
+	StorageHighWater               string
+	HasBillingPreview              bool
+	ShowSandboxPurchase            bool
+	SandboxPurchaseStatus          string
 }
 
 func (s *server) browserSession(next http.Handler) http.Handler {
@@ -86,11 +90,13 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	}
 	var accountUsage AccountUsage
 	var usageErr error
-	var egressBytes, egressLimit, storageLimit int64
+	var storageLimit int64
+	var egress deliveryUsageView
 	var egressErr, storageGrantErr error
 	var billingSnapshot BillingUsageSnapshot
 	var billingPreview BillingPreview
 	var billingErr error
+	billingRequested := r.URL.Query().Get("billing") == "preview" && s.billingEnabled()
 	var billingMode BillingMode
 	showSandboxPurchase := false
 	if name == "account" && id != "" {
@@ -105,19 +111,21 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		if grantErr == nil {
 			storageLimit = storageGrant.Limits.StorageBytes
 		}
-		egressBytes, egressLimit, egressErr = s.accountEgress(id, s.currentTime())
+		egress, egressErr = s.readDeliveryUsage(id, s.currentTime())
 		if egressErr != nil {
 			log.Printf("account egress usage: %v", egressErr)
 		}
-		billingSnapshot, billingErr = s.billingSnapshot(r.Context(), id, s.currentTime())
-		if billingErr == nil {
-			if plan, ok := planCatalog[billingSnapshot.PlanCode]; ok {
-				billingMode = plan.BillingMode
+		if billingRequested {
+			billingSnapshot, billingErr = s.billingSnapshot(r.Context(), id, s.currentTime())
+			if billingErr == nil {
+				if plan, ok := planCatalog[billingSnapshot.PlanCode]; ok {
+					billingMode = plan.BillingMode
+				}
+				billingPreview, billingErr = s.billingProvider().Preview(r.Context(), billingSnapshot)
 			}
-			billingPreview, billingErr = s.billingProvider().Preview(r.Context(), billingSnapshot)
-		}
-		if billingErr != nil {
-			log.Printf("billing preview: %v", billingErr)
+			if billingErr != nil {
+				log.Printf("billing preview: %v", billingErr)
+			}
 		}
 	}
 	if id != "" {
@@ -130,7 +138,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egressBytes), EgressCapacity: formatBytes(egressLimit), EgressStatus: egressCapacityMessage(egressBytes, egressLimit), HasEgressUsage: egressErr == nil, BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egress.Bytes), EgressCapacity: formatBytes(egress.Limit), EgressStatus: egress.Status, HasEgressUsage: egressErr == nil, EgressMeasured: egress.Measured, EgressEnforced: egress.Enforced, EgressPeriod: egress.Period, EgressRequests: egress.Requests, ShowBillingPreviewLink: s.billingEnabled(), BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingRequested && billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -189,7 +197,11 @@ func (s *server) createAccount(r *http.Request, email, password string) (store.A
 		return store.Account{}, e
 	}
 	a := store.Account{ID: newID(), Email: email, PasswordHash: string(h), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if e = s.db.CreateAccount(r.Context(), a, s.initialTPAGrants(a.CreatedAt)...); e != nil {
+	grants, e := s.initialTPAGrants(a.CreatedAt)
+	if e != nil {
+		return store.Account{}, e
+	}
+	if e = s.db.CreateAccount(r.Context(), a, grants...); e != nil {
 		return store.Account{}, e
 	}
 	return a, nil

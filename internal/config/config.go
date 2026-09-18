@@ -1,40 +1,58 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/provisioning"
 )
 
 type Config struct {
-	Listen                   string
-	DataDir                  string
-	TPABin                   string
-	GPGHome                  string
-	GPGFingerprint           string
-	PublishTimeout           time.Duration
-	UploadReadTimeout        time.Duration
-	MaxUpload                int64
-	MaxStagingBytes          int64
-	MaxAccountStagingBytes   int64
-	MaxCandidateInodes       int64
-	MinDiskFreeBytes         int64
-	MinFreeInodes            int64
-	MaxGenerations           int64
-	RegistrationEnabled      bool
-	LocalProvisioningEnabled bool
-	BillingProvider          string
-	BillingEnvironment       string
-	BillingRateCard          string
-	StripeTestSecret         string
-	StripeWebhookSecret      string
-	BillingPurchasesEnabled  bool
-	OperatorRelyingPartyID   string
-	OperatorOrigin           string
+	CapabilitySource                      string
+	LocalPolicy                           *provisioning.LocalPolicy
+	Profile                               string
+	BillingIntegration                    string
+	CheckoutSuccessURL, CheckoutCancelURL string
+	DeliveryMode                          string
+	EgressEnforcement                     string
+	Listen                                string
+	DataDir                               string
+	TPABin                                string
+	GPGHome                               string
+	GPGFingerprint                        string
+	PublishTimeout                        time.Duration
+	UploadReadTimeout                     time.Duration
+	ShutdownTimeout                       time.Duration
+	MaxUpload                             int64
+	MaxStagingBytes                       int64
+	MaxAccountStagingBytes                int64
+	MaxCandidateInodes                    int64
+	MinDiskFreeBytes                      int64
+	MinFreeInodes                         int64
+	MaxGenerations                        int64
+	RegistrationEnabled                   bool
+	LocalProvisioningEnabled              bool
+	BillingProvider                       string
+	BillingEnvironment                    string
+	BillingRateCard                       string
+	StripeTestSecret                      string
+	StripeWebhookSecret                   string
+	BillingPurchasesEnabled               bool
+	OperatorRelyingPartyID                string
+	OperatorOrigin                        string
 }
 
 func Load() Config {
 	return Config{
+		CapabilitySource:         os.Getenv("TPAHUB_CAPABILITY_SOURCE"),
+		Profile:                  os.Getenv("TPAHUB_PROFILE"),
+		BillingIntegration:       os.Getenv("TPAHUB_BILLING"),
+		CheckoutSuccessURL:       os.Getenv("TPAHUB_CHECKOUT_SUCCESS_URL"),
+		CheckoutCancelURL:        os.Getenv("TPAHUB_CHECKOUT_CANCEL_URL"),
+		DeliveryMode:             env("TPAHUB_DELIVERY_MODE", DeliveryStrictAccounted),
+		EgressEnforcement:        os.Getenv("TPAHUB_EGRESS_ENFORCEMENT"),
 		Listen:                   env("TPAHUB_LISTEN", "127.0.0.1:8080"),
 		DataDir:                  env("TPAHUB_DATA_DIR", "./data"),
 		TPABin:                   env("TPA_BIN", "tpa"),
@@ -42,6 +60,7 @@ func Load() Config {
 		GPGFingerprint:           os.Getenv("TPAHUB_GPG_FINGERPRINT"),
 		PublishTimeout:           duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
 		UploadReadTimeout:        duration("TPAHUB_UPLOAD_READ_TIMEOUT", 15*time.Minute),
+		ShutdownTimeout:          duration("TPAHUB_SHUTDOWN_TIMEOUT", 20*time.Second),
 		MaxUpload:                integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
 		MaxStagingBytes:          integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
 		MaxAccountStagingBytes:   integer("TPAHUB_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
@@ -61,6 +80,57 @@ func Load() Config {
 		OperatorOrigin:           env("TPAHUB_OPERATOR_ORIGIN", "https://tpa.lupricht.net"),
 	}
 }
+
+const (
+	DeliveryUnmetered       = "unmetered"
+	DeliveryMetricsOnly     = "metrics-only"
+	DeliveryStrictAccounted = "strict-accounted"
+)
+
+// Empty preserves the historical strict behavior, including Config literals.
+func ResolveDeliveryMode(mode string) (string, error) {
+	switch mode {
+	case "", DeliveryStrictAccounted:
+		return DeliveryStrictAccounted, nil
+	case DeliveryUnmetered, DeliveryMetricsOnly:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid TPAHUB_DELIVERY_MODE %q", mode)
+	}
+}
+
+const (
+	EnforcementNone            = "none"
+	EnforcementStrictAccounted = "strict-accounted"
+)
+
+// Delivery modes remain compatibility presets. Explicit enforcement overrides
+// their enforcement default, never the selection of measurement. Strict
+// accounting without measurement is invalid, not silently repaired.
+func ResolveEgressEnforcement(delivery, selected string) (string, error) {
+	mode, err := ResolveDeliveryMode(delivery)
+	if err != nil {
+		return "", err
+	}
+	if selected == "" {
+		selected = EnforcementNone
+		if mode == DeliveryStrictAccounted {
+			selected = EnforcementStrictAccounted
+		}
+	}
+	switch selected {
+	case EnforcementNone:
+		return selected, nil
+	case EnforcementStrictAccounted:
+		if mode == DeliveryUnmetered {
+			return "", fmt.Errorf("strict-accounted enforcement requires measured delivery")
+		}
+		return selected, nil
+	default:
+		return "", fmt.Errorf("unsupported TPAHUB_EGRESS_ENFORCEMENT %q", selected)
+	}
+}
+
 func env(k, fallback string) string {
 	if v := os.Getenv(k); v != "" {
 		return v

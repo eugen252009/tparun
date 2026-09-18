@@ -47,6 +47,8 @@ type opsRepositoryRow struct {
 	StorageBytes, EgressBytes  int64
 }
 type opsPageData struct {
+	EgressSummary, RepositoryEgressPeriod                                                   string
+	HasBilling                                                                              bool
 	GeneratedAt, Scope, BillingEnvironment                                                  string
 	TotalAccounts, ProductionAccounts, TestAccounts, InternalAccounts, UnclassifiedAccounts int
 	TotalRepositories, ProductionRepositories                                               int
@@ -76,6 +78,10 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusNotFound, "not found")
 		return
 	}
+	if err := s.initDelivery(); err != nil {
+		bad(w, 503, "delivery configuration unavailable")
+		return
+	}
 	ctx := r.Context()
 	now := s.currentTime().UTC()
 	scope := r.URL.Query().Get("scope")
@@ -93,6 +99,7 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := opsPageData{GeneratedAt: now.Format(time.RFC3339), Scope: scope, BillingEnvironment: s.cfg.BillingProvider + " " + strings.ToUpper(s.cfg.BillingEnvironment), PhysicalCapacity: "Unavailable"}
+	page.EgressSummary, page.RepositoryEgressPeriod = s.delivery.displayPeriods()
 	if s.diskFree != nil {
 		if free, freeErr := s.diskFree(); freeErr == nil {
 			page.PhysicalCapacity = formatBytes(free) + " free"
@@ -135,12 +142,18 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mergeResourceLimit(&page.StorageLimit, storageLimit)
-		egressUsed, egressBytes, egressErr := s.accountEgress(account.ID, now)
+		view, egressErr := s.readDeliveryUsage(account.ID, now)
+		egressUsed := view.Bytes
 		egressLimit := resourceLimit{State: resourceLimitNone}
 		egressPeriod := "no applicable entitlement; trailing 30-day usage"
 		if egressErr == nil {
-			egressLimit = resourceLimit{Bytes: egressBytes, State: resourceLimitFinite}
-			egressPeriod = "current entitlement period"
+			if view.Enforced {
+				egressLimit = resourceLimit{Bytes: view.Limit, State: resourceLimitFinite}
+			}
+			egressPeriod = view.Period
+			if !view.Measured {
+				egressPeriod = view.Status
+			}
 		} else if !errors.Is(egressErr, commerce.ErrGrantNotFound) && !errors.Is(egressErr, commerce.ErrGrantInactive) {
 			bad(w, 500, "dashboard egress unavailable")
 			return
@@ -169,14 +182,17 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 			bad(w, 500, "dashboard storage unavailable")
 			return
 		}
-		page.Repositories = append(page.Repositories, opsRepositoryRow{ID: repository.ID, Name: repository.Name, AccountID: repository.AccountID, Class: accountClass, StorageBytes: stats.StoredBytes, EgressBytes: repository.EgressBytes})
+		page.Repositories = append(page.Repositories, opsRepositoryRow{ID: repository.ID, Name: repository.Name, AccountID: repository.AccountID, Class: accountClass, StorageBytes: stats.StoredBytes, EgressBytes: s.repositoryDisplayEgress(store.Repository{ID: repository.ID, AccountID: repository.AccountID}, repository.EgressBytes)})
 	}
-	billing, err := s.db.DashboardBillingScoped(ctx, scope)
-	if err != nil {
-		bad(w, 500, "dashboard billing unavailable")
-		return
+	page.HasBilling = s.billingEnabled()
+	if page.HasBilling {
+		billing, err := s.db.DashboardBillingScoped(ctx, scope)
+		if err != nil {
+			bad(w, 500, "dashboard billing unavailable")
+			return
+		}
+		page.Pending, page.Paid, page.Failed, page.Expired, page.Reconciliation = billing.Pending, billing.Paid, billing.Failed, billing.Expired, billing.ReconciliationRequired
 	}
-	page.Pending, page.Paid, page.Failed, page.Expired, page.Reconciliation = billing.Pending, billing.Paid, billing.Failed, billing.Expired, billing.ReconciliationRequired
 	attention, err := s.db.DashboardAttentionScoped(ctx, scope)
 	if err != nil {
 		bad(w, 500, "dashboard attention unavailable")

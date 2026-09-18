@@ -1,33 +1,9 @@
-# Historical migration access policy
+# Retired pre-release migration policy
 
-Historical eligible accounts receive 6 months of free TPA Nano. No permanent
-plan grandfathering exists.
+The former bounded historical-access conversion applied only to internal development
+schemas. It is **not implemented or supported in Schema 5**. Historical checklist
+entries referring here are not current capability or migration promises.
 
-Hosted TPA Hub access is payment-gated after any applicable migration period:
-authorization uses only enabled, active persisted grants. The runtime never
-manufactures a Nano grant from an account creation date, and resource limits do
-not extend grant validity. Local provisioning remains an explicit separate
-deployment mode that persists `local` grants at registration.
-
-Eligibility comes from an authoritative pre-existing active `legacy`
-entitlement or enabled, active TPA Hub `legacy` grant at the
-`legacy-six-month-nano-v1` data migration. Legacy rows for other products and
-disabled, expired, or future TPA Hub grants are ineligible. New hosted accounts
-receive no grant; new self-hosted/local accounts use the separate `local`
-source and are not migration-eligible.
-
-Migration validates legacy plan and offer identities and parses validity
-timestamps as timestamps before evaluating eligibility. Accounts without a
-pre-existing legacy entitlement or TPA Hub legacy grant are not manufactured
-during startup.
-
-The first successful migration stores one `migration` grant set using the
-current product-owned Nano offer. Its `valid_from` is the migration commit
-anchor and `valid_until` is exactly six calendar months later. The marker and
-stored timestamps make reopen idempotent: restart, purchase, suspension, and
-reactivation cannot extend the window. Historical Standard/Pro limits are
-removed from runtime authorization and replaced by Nano limits.
-
-Migration and purchase grants remain independent. Only enabled grants active at
-the evaluation time contribute. At migration expiry, paid instances continue
-normally; without one, hosted product access ends.
+Schema 5 is the first supported persistent baseline. Schemas 1–4 are rejected
+without conversion or automatic deletion. Local, administrative and paid authority
+follow one current grant rule. See the authoritative [schema and upgrade contract](schema-upgrades.md).

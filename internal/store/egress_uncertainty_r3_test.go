@@ -12,7 +12,10 @@ func TestCompleteEgressDeliveryRollsBackUsageAndPreservesUncertainty(t *testing.
 	}
 	defer s.Close()
 	ctx := context.Background()
-	if err = s.CreateRepository(ctx, Repository{ID: "repo", Name: "repo", CreatedAt: "now"}); err != nil {
+	if err = s.CreateAccount(ctx, Account{ID: "owner", Email: "owner@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CreateRepository(ctx, Repository{ID: "repo", AccountID: "owner", Name: "repo", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.BeginEgressDelivery(ctx, "delivery", "repo", "now"); err != nil {

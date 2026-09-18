@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-func TestOpenRequiresExplicitMigrationForLegacyDatabase(t *testing.T) {
-	dir := historicalFixture(t, nil)
-	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "migration required") {
-		t.Fatalf("legacy database was silently migrated: %v", err)
-	}
-}
-
 func TestOpenRejectsUnsupportedFutureSchema(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -32,7 +25,7 @@ func TestOpenRejectsUnsupportedFutureSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "unsupported database schema version") {
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "newer than this binary") {
 		t.Fatalf("future schema was accepted: %v", err)
 	}
 }
@@ -76,7 +69,7 @@ func TestCurrentStartupRejectsMalformedSchemaAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "schema authority") {
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "tpahub_schema") {
 		t.Fatalf("malformed schema authority accepted: %v", err)
 	}
 }
@@ -103,7 +96,7 @@ func TestCurrentStartupRejectsPermissiveSchemaAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.Exec("DROP TABLE tpahub_schema; " + ddl + "; INSERT INTO tpahub_schema(singleton,version) VALUES(1,1)"); err != nil {
+			if _, err := db.Exec("DROP TABLE tpahub_schema; " + ddl + "; INSERT INTO tpahub_schema(singleton,version) VALUES(1,5)"); err != nil {
 				t.Fatal(err)
 			}
 			db.Close()

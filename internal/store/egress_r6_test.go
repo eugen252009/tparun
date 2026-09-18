@@ -175,7 +175,8 @@ func TestEgressRecoveryListsAndRecoversUnownedRepository(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	if err = s.CreateRepository(ctx, Repository{ID: "unowned-repo", Name: "legacy", CreatedAt: "now"}); err != nil {
+	// Model corrupt ownership, which the Schema 5 creation API rejects.
+	if _, err = s.db.Exec(`PRAGMA foreign_keys=OFF; INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES('unowned-repo','','corrupt','public','now'); PRAGMA foreign_keys=ON`); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.CreateAccount(ctx, Account{ID: "owned-account", Email: "owned@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now"}); err != nil {

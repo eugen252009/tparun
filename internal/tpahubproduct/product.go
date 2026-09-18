@@ -4,18 +4,19 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
+	"github.com/eugen252009/tpahub/internal/tpahubcapability"
 )
 
 const (
-	ProductID        commerce.ProductID     = "tpa-hub"
+	ProductID        commerce.ProductID     = tpahubcapability.ProductID
 	NanoOfferVersion string                 = "nano-v1"
 	NanoCadence      commerce.PeriodCadence = commerce.PeriodAnnual
 	NanoPriceMinor   int64                  = 500
 
-	CapabilityRepositoryCreate      commerce.CapabilityID = "repository.create"
-	CapabilityRepositoryPublish     commerce.CapabilityID = "repository.publish"
-	CapabilityRepositoryDownload    commerce.CapabilityID = "repository.download"
-	CapabilityRepositoryReadPrivate commerce.CapabilityID = "repository.read.private"
+	CapabilityRepositoryCreate      commerce.CapabilityID = tpahubcapability.RepositoryCreate
+	CapabilityRepositoryPublish     commerce.CapabilityID = tpahubcapability.RepositoryPublish
+	CapabilityRepositoryDownload    commerce.CapabilityID = tpahubcapability.RepositoryDownload
+	CapabilityRepositoryReadPrivate commerce.CapabilityID = tpahubcapability.RepositoryReadPrivate
 
 	NanoStorageBytes          int64 = 5_000_000
 	NanoEgressBytes           int64 = 12_000_000_000

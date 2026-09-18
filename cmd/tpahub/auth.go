@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
@@ -38,13 +37,6 @@ func bearer(r *http.Request) (string, bool) {
 
 var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-func (s *server) initialTPAGrants(createdAt string) []commerce.Grant {
-	if s.cfg.BillingPurchasesEnabled || !s.cfg.LocalProvisioningEnabled {
-		return nil
-	}
-	return defaultTPAGrants(createdAt)
-}
-
 func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || !s.cfg.RegistrationEnabled {
 		bad(w, 403, "registration disabled")
@@ -65,7 +57,12 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if e = s.db.CreateAccount(r.Context(), a, s.initialTPAGrants(a.CreatedAt)...); e != nil {
+	grants, e := s.initialTPAGrants(a.CreatedAt)
+	if e != nil {
+		bad(w, 500, "account provisioning unavailable")
+		return
+	}
+	if e = s.db.CreateAccount(r.Context(), a, grants...); e != nil {
 		bad(w, 409, "account already exists")
 		return
 	}

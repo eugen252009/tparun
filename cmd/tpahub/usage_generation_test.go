@@ -256,7 +256,7 @@ func TestRepositoryUsagePreservesLegacyRootAndDoesNotFollowNestedSymlinks(t *tes
 func setStorageLimit(t *testing.T, s *server, bytes int64) {
 	t.Helper()
 	now := s.currentTime().UTC()
-	grant := commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "test", CreatedAt: now, UpdatedAt: now}
+	grant := commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "r8", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: bytes}, Source: "local", CreatedAt: now, UpdatedAt: now}
 	if err := s.db.PutGrant(context.Background(), grant); err != nil {
 		t.Fatal(err)
 	}

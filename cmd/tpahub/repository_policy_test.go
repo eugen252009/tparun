@@ -62,7 +62,7 @@ func TestForeignPrivatePublicationIsCloaked(t *testing.T) {
 func TestRepositoryPolicyQuarantinesUnownedRepository(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()
-	if err := s.db.CreateRepository(ctx, store.Repository{ID: "legacy", Name: "legacy", CreatedAt: "now"}); err != nil {
+	if err := insertCorruptUnownedRepository(s, store.Repository{ID: "legacy", Name: "legacy", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.repositoryPolicy().AuthorizeMutation(ctx, "a", "legacy"); err == nil {

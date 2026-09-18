@@ -190,7 +190,9 @@ func TestMalformedFinalizedValidityRollsBackActivation(t *testing.T) {
 				t.Fatalf("instances=%d", n)
 			}
 			var projection int
-			_ = s.db.QueryRow(`SELECT COUNT(*) FROM account_entitlements WHERE account_id=?`, p.AccountID).Scan(&projection)
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='account_entitlements'`).Scan(&projection); err != nil {
+				t.Fatal(err)
+			}
 			if projection != 0 {
 				t.Fatalf("projection=%d", projection)
 			}

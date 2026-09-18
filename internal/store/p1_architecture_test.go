@@ -55,7 +55,7 @@ func TestProductAwareMockBillingRejectsMissingProductIdentity(t *testing.T) {
 func TestCreateAccountRejectsMissingGrantProductIdentityAtomically(t *testing.T) {
 	ctx := context.Background()
 	validGrant := func(product commerce.ProductID) commerce.Grant {
-		return commerce.Grant{ProductID: product, CapabilityID: "capability", OfferID: "offer", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Source: "test", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+		return commerce.Grant{ProductID: product, CapabilityID: "capability", OfferID: "offer", Enabled: true, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Period: commerce.PeriodAnnual, Source: "local", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	}
 	for _, tc := range []struct {
 		name   string
@@ -97,8 +97,8 @@ func TestCreateAccountPreservesExplicitGrantProducts(t *testing.T) {
 	ctx := context.Background()
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	grants := []commerce.Grant{
-		{ProductID: "product-x", CapabilityID: "x", OfferID: "offer-x", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "test", CreatedAt: created, UpdatedAt: created},
-		{ProductID: tpahubproduct.ProductID, CapabilityID: "tpa", OfferID: "offer-tpa", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "test", CreatedAt: created, UpdatedAt: created},
+		{ProductID: "product-x", CapabilityID: "x", OfferID: "offer-x", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "local", CreatedAt: created, UpdatedAt: created},
+		{ProductID: tpahubproduct.ProductID, CapabilityID: "tpa", OfferID: "offer-tpa", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "local", CreatedAt: created, UpdatedAt: created},
 	}
 	if err = s.CreateAccount(ctx, Account{ID: "explicit-products", Email: "explicit@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: created.Format(time.RFC3339Nano)}, grants...); err != nil {
 		t.Fatal(err)

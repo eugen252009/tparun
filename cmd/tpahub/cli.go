@@ -24,7 +24,11 @@ import (
 	appversion "github.com/eugen252009/tpahub/internal/version"
 )
 
-type cliConfig struct{ Server, Email, Token string }
+type cliConfig struct {
+	Server, Email, Token string
+	state                *clientState
+	err                  error
+}
 
 const defaultServer = "https://tpa.lupricht.net"
 
@@ -35,28 +39,6 @@ func configPath() string {
 		d = filepath.Join(h, ".config")
 	}
 	return filepath.Join(d, "tpahub", "config.json")
-}
-func loadCLI() cliConfig {
-	var c cliConfig
-	b, e := os.ReadFile(configPath())
-	if e == nil {
-		_ = json.Unmarshal(b, &c)
-	}
-	if c.Server == "" {
-		c.Server = defaultServer
-	}
-	if override := os.Getenv("TPAHUB_SERVER"); override != "" {
-		c.Server = strings.TrimRight(override, "/")
-	}
-	return c
-}
-func saveCLI(c cliConfig) error {
-	p := configPath()
-	if e := os.MkdirAll(filepath.Dir(p), 0700); e != nil {
-		return e
-	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(p, append(b, '\n'), 0600)
 }
 func input(prompt string, secret bool) string {
 	fmt.Print(prompt)
@@ -71,18 +53,31 @@ func input(prompt string, secret bool) string {
 }
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub serve | schema | migrate | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
+		fmt.Println("tpahub init | serve | schema | migrate | register | login | logout | repo create/list/show/add/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
+		return nil
+	}
+	if args[0] == "init" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: tpahub init (TPAHUB_DATA_DIR selects the new directory)")
+		}
+		lock, err := lockDataDirectory(cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		if err = config.InitializeSelfHosted(cfg.DataDir); err != nil {
+			return err
+		}
+		fmt.Println("Initialized self-hosted profile defaults: metrics-only delivery, billing none. Explicit environment settings take precedence. Run tpahub serve with the same TPAHUB_DATA_DIR.")
 		return nil
 	}
 	if args[0] == "admin" {
 		return adminCLI(cfg, args[1:])
 	}
-	c := loadCLI()
-	server := flagValue(args, "--server", c.Server)
-	if server != "" {
-		c.Server = strings.TrimRight(server, "/")
-	}
+	// Local state/version commands must not depend on client credentials.
 	switch args[0] {
+	case "diagnostics":
+		return diagnostics()
 	case "schema":
 		fmt.Println(store.CurrentSchemaVersion())
 		return nil
@@ -90,8 +85,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println(appversion.Current)
 		return nil
 	case "digest":
-		path := flagValue(args, "--db", filepath.Join(cfg.DataDir, "tpahub.db"))
-		d, err := store.LogicalDigest(path)
+		d, err := store.LogicalDigest(flagValue(args, "--db", filepath.Join(cfg.DataDir, "tpahub.db")))
 		if err != nil {
 			return err
 		}
@@ -99,6 +93,35 @@ func cli(cfg config.Config, args []string) error {
 		return nil
 	case "migrate":
 		return store.Migrate(cfg.DataDir)
+	}
+	for i, arg := range args {
+		if arg == "--server=" || (arg == "--server" && (i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "--"))) {
+			return fmt.Errorf("--server requires an explicit origin")
+		}
+	}
+	c := loadCLIForServer(flagValue(args, "--server", ""))
+	if c.err != nil {
+		return c.err
+	}
+	var operands []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--server" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--server=") {
+			continue
+		}
+		operands = append(operands, args[i])
+	}
+	args = operands
+	if len(args) == 0 {
+		return fmt.Errorf("command required after --server")
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("client command required")
+	}
+	switch args[0] {
 	case "register", "login":
 		email := os.Getenv("TPAHUB_EMAIL")
 		if email == "" {
@@ -120,7 +143,14 @@ func cli(cfg config.Config, args []string) error {
 		if c.Token != "" {
 			req, _ := http.NewRequest("POST", c.Server+"/v1/logout", nil)
 			req.Header.Set("Authorization", "Bearer "+c.Token)
-			_, _ = http.DefaultClient.Do(req)
+			res, err := doCLIRequest(req)
+			if err != nil {
+				return err
+			}
+			res.Body.Close()
+			if res.StatusCode >= 300 {
+				return fmt.Errorf("logout failed: %s", res.Status)
+			}
 		}
 		c.Token = ""
 		return saveCLI(c)
@@ -143,9 +173,11 @@ func cli(cfg config.Config, args []string) error {
 		}
 		w.Close()
 		req, _ := http.NewRequest("POST", c.Server+"/v1/repositories/"+repo+"/publishes", &body)
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
 		req.Header.Set("Content-Type", w.FormDataContentType())
-		res, e := http.DefaultClient.Do(req)
+		res, e := doCLIRequest(req)
 		if e != nil {
 			return e
 		}
@@ -300,7 +332,12 @@ func flagValue(a []string, k, d string) string {
 }
 func postJSON(u string, v any, out any) error {
 	b, _ := json.Marshal(v)
-	r, e := http.Post(u, "application/json", bytes.NewReader(b))
+	req, e := http.NewRequest("POST", u, bytes.NewReader(b))
+	if e != nil {
+		return e
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r, e := doCLIRequest(req)
 	if e != nil {
 		return e
 	}
@@ -315,7 +352,7 @@ func getPrint(u, t string) error {
 	if t != "" {
 		r.Header.Set("Authorization", "Bearer "+t)
 	}
-	res, e := http.DefaultClient.Do(r)
+	res, e := doCLIRequest(r)
 	if e != nil {
 		return e
 	}
@@ -331,10 +368,17 @@ func printResponse(r *http.Response) error {
 	return nil
 }
 func owned(c cliConfig, v string) (string, error) {
+	id, err := resolveRepositoryInScope(c, v, true)
+	if err != nil {
+		return "", err
+	}
 	var r struct {
 		ID string `json:"id"`
 	}
-	e := getJSON(c.Server+"/v1/repositories/"+url.PathEscape(v), c.Token, &r)
+	e := getJSON(c.Server+"/v1/repositories/"+url.PathEscape(id), c.Token, &r)
+	if e == nil && r.ID != id {
+		return "", fmt.Errorf("repository identity changed during lookup")
+	}
 	return r.ID, e
 }
 func getJSON(u, t string, out any) error {
@@ -342,7 +386,7 @@ func getJSON(u, t string, out any) error {
 	if t != "" {
 		r.Header.Set("Authorization", "Bearer "+t)
 	}
-	res, e := http.DefaultClient.Do(r)
+	res, e := doCLIRequest(r)
 	if e != nil {
 		return e
 	}

@@ -32,6 +32,11 @@ import (
 
 func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
+	return configuredTestServer(t, nil)
+}
+
+func configuredTestServer(t *testing.T, configure func(*server)) (*server, *httptest.Server) {
+	t.Helper()
 	d := t.TempDir()
 	db, e := store.Open(d)
 	if e != nil {
@@ -46,13 +51,30 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 		}
 		return nil
 	}}
+	if configure != nil {
+		configure(s)
+	}
 	h := httptest.NewServer(s.routes())
 	t.Cleanup(func() { h.Close(); db.Close() })
 	return s, h
 }
 
-func TestMultipartUploadSpoolsFilesPastMemoryLimit(t *testing.T) {
+func TestMultipartUploadStreamsWithoutUnownedDiskSpool(t *testing.T) {
+	const maxMultipartMemoryBytes = 8 << 20 // exercise the former spool threshold
 	s, _ := testServer(t)
+	spool := t.TempDir()
+	t.Setenv("TMPDIR", spool)
+	observed := false
+	s.capacityObserve = func(stage, path string) {
+		if stage != "before-write" || observed {
+			return
+		}
+		observed = true
+		entries, err := os.ReadDir(spool)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("unowned spool: %v %v", entries, err)
+		}
+	}
 	s.cfg.MaxUpload = maxMultipartMemoryBytes + 4096
 	grant, err := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
 	if err != nil {
@@ -86,14 +108,19 @@ func TestMultipartUploadSpoolsFilesPastMemoryLimit(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("multipart upload status=%d body=%s", response.Code, response.Body.String())
 	}
-	defer request.MultipartForm.RemoveAll()
-	opened, err := request.MultipartForm.File["files"][0].Open()
+	if !observed || request.MultipartForm != nil && len(request.MultipartForm.File) != 0 {
+		t.Fatal("upload did not use the observed streaming path")
+	}
+	var job struct{ ID string }
+	if err = json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "incoming", job.ID, "large.deb"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer opened.Close()
-	if _, ok := opened.(*os.File); !ok {
-		t.Fatalf("large multipart upload remained in memory as %T", opened)
+	if !bytes.Equal(stored, bytes.Repeat([]byte("x"), maxMultipartMemoryBytes+1)) {
+		t.Fatal("streamed payload changed")
 	}
 }
 
@@ -561,7 +588,8 @@ func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.cfg.MaxStagingBytes = 5 * block
+	// Two permanent staging roots plus two directory/file upload allocations.
+	s.cfg.MaxStagingBytes = 6 * block
 	s.cfg.MinDiskFreeBytes = 0
 	if err := s.db.CreateAccount(context.Background(), store.Account{ID: "b", Email: "b@invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}, defaultTPAGrants("2024-01-01T00:00:00Z")...); err != nil {
 		t.Fatal(err)
@@ -1139,7 +1167,7 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 	now := time.Now().UTC()
 	until := now.AddDate(1, 0, 0)
 	s.cfg.MaxStagingBytes = 3
-	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Minute), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: now.Add(-time.Minute), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 100}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, "incoming", "queued"), 0700); err != nil {

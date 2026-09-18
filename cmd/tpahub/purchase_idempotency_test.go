@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,7 +52,7 @@ func TestHostedPurchaseActivatesWithoutCompatibilityEntitlement(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("registration status=%d", response.StatusCode)
 	}
-	if _, err = s.db.Entitlement(context.Background(), account.AccountID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(account.AccountID), tpahubproduct.ProductID, tpahubproduct.CapabilityRepositoryPublish, s.currentTime()); !errors.Is(err, commerce.ErrGrantNotFound) {
 		t.Fatalf("hosted entitlement=%v", err)
 	}
 	request, _ := http.NewRequest(http.MethodPost, h.URL+"/v1/billing/purchases/nano", strings.NewReader(`{}`))
@@ -102,45 +101,23 @@ func TestActivePaidEntitlementBlocksPurchaseAndExpiredAllowsIt(t *testing.T) {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	ctx := context.Background()
-	active := store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2026-09-15T00:00:00Z", ValidFrom: "2026-09-15T00:00:00Z", ValidUntil: "2027-09-15T00:00:00Z", CreatedAt: "2026-09-15T00:00:00Z", UpdatedAt: "2026-09-15T00:00:00Z", Source: "purchase", PurchaseID: "paid-active"}
-	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
+	p, _, err := s.startNanoPurchase(ctx, "a", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// The compatibility projection is intentionally conflicting history; the
-	// active commercial grant is the only purchase-admission authority.
-	for _, grant := range tpahubproduct.DefaultGrants(now) {
-		grant.CustomerID = "a"
-		grant.Source = "purchase"
-		grant.PurchaseID = active.PurchaseID
-		grant.ValidFrom, _ = time.Parse(time.RFC3339Nano, active.ValidFrom)
-		until, _ := time.Parse(time.RFC3339Nano, active.ValidUntil)
-		grant.ValidUntil = &until
-		if err := s.db.PutGrant(ctx, grant); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, _, err := s.startNanoPurchase(ctx, "a", false); err == nil || err.Error() != "purchase-already-active" {
-		t.Fatalf("active entitlement purchase error=%v", err)
-	}
-	active.ValidFrom = "2025-09-15T00:00:00Z"
-	active.ValidUntil = "2026-09-15T12:00:00Z"
-	if err := s.db.SetLegacyTPAEntitlement(ctx, active); err != nil {
+	if err = s.db.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "paid", OperationID: p.ID, Type: commerce.PaymentSucceeded, ProviderReference: p.ProviderReference, AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: now}, Provider: p.Provider, Environment: p.BillingEnvironment, Kind: "success", AmountMinor: p.AmountMinor, Currency: p.Currency}); err != nil {
 		t.Fatal(err)
 	}
-	for _, grant := range tpahubproduct.DefaultGrants(now) {
-		grant.CustomerID = "a"
-		grant.Source = "purchase"
-		grant.PurchaseID = active.PurchaseID
-		grant.ValidFrom, _ = time.Parse(time.RFC3339Nano, active.ValidFrom)
-		until, _ := time.Parse(time.RFC3339Nano, active.ValidUntil)
-		grant.ValidUntil = &until
-		if err := s.db.PutGrant(ctx, grant); err != nil {
-			t.Fatal(err)
-		}
+	if _, _, err = s.startNanoPurchase(ctx, "a", false); err == nil || err.Error() != "purchase-already-active" {
+		t.Fatalf("active paid grant: %v", err)
+	}
+	now, err = time.Parse(time.RFC3339Nano, p.EntitlementPeriodEnd)
+	if err != nil {
+		t.Fatal(err)
 	}
 	purchase, checkout, err := s.startNanoPurchase(ctx, "a", false)
 	if err != nil || purchase.ID == "" || checkout.URL == "" {
-		t.Fatalf("expired entitlement purchase=%+v checkout=%+v err=%v", purchase, checkout, err)
+		t.Fatalf("expired purchase=%+v checkout=%+v err=%v", purchase, checkout, err)
 	}
 }
 

@@ -1,34 +1,113 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 5,
   "tables": [
-    {"name":"account_entitlements","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"account_metadata","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"account_storage_high_water","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"accounts","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"admin_audit_log","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"billing_provider_accounts","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"billing_provider_events","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"billing_provider_submissions","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"billing_purchases","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"egress_accounting_uncertain","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"generation_cleanup_tasks","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"global_bootstrap_repository","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"mock_billing_events","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"operator_credentials","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"operator_identity","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"operator_recovery","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"product_grants","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"publish_jobs","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"purchase_grant_instances","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"purchase_grant_snapshot_sets","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"purchase_grant_snapshots","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"reader_credentials","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"repositories","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"repository_egress_daily","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"repository_egress_usage","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"repository_publications","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"schema_migrations","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"sessions","classification":"DURABLE_APPLICATION_TABLE"},
-    {"name":"tpahub_schema","classification":"DURABLE_APPLICATION_TABLE"}
+    {
+      "name": "account_metadata",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "account_storage_high_water",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "accounts",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "admin_audit_log",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "billing_provider_accounts",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "billing_provider_events",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "billing_provider_submissions",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "billing_purchases",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "egress_accounting_uncertain",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "generation_cleanup_tasks",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "global_bootstrap_repository",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "mock_billing_events",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "operator_credentials",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "operator_identity",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "operator_recovery",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "product_grants",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "publish_jobs",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "purchase_grant_instances",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "purchase_grant_snapshot_sets",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "purchase_grant_snapshots",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "reader_credentials",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "repositories",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "repository_egress_daily",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "repository_egress_usage",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "repository_publications",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "sessions",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    },
+    {
+      "name": "tpahub_schema",
+      "classification": "DURABLE_APPLICATION_TABLE"
+    }
   ]
 }

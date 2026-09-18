@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,11 +29,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/billing"
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/payments"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
+	"github.com/eugen252009/tpahub/internal/usage"
 	appversion "github.com/eugen252009/tpahub/internal/version"
 	"golang.org/x/sys/unix"
 )
@@ -43,9 +46,8 @@ var (
 )
 
 const (
-	maxUploadFiles          = 64
-	maxMultipartMemoryBytes = 8 << 20
-	maxDiagnosticBytes      = 64 << 10
+	maxUploadFiles     = 64
+	maxDiagnosticBytes = 64 << 10
 )
 
 type boundedDiagnostic struct {
@@ -93,6 +95,12 @@ type boundedPublicationRunnerWithInodes interface {
 }
 
 type server struct {
+	commercial              billing.Service
+	commercialResolved      bool
+	deliveryOnce            sync.Once
+	delivery                *deliveryBehavior
+	deliveryErr             error
+	usageConsumers          []*usage.Mailbox // configured before routes; empty is valid
 	cfg                     config.Config
 	db                      *store.Store
 	runner                  publicationRunner
@@ -111,6 +119,8 @@ type server struct {
 	publicationFault        func(string) error
 	diskFree                func() (int64, error)
 	freeInodes              func() (int64, error)
+	lifecycle               *serverLifecycle
+	capacityObserve         func(stage, path string)
 	reservations            map[string]capacityReservation
 	verifyCandidate         func(candidate, work string) error
 	operatorAuth            *operatorAuthState
@@ -138,11 +148,22 @@ func main() {
 		}
 		return
 	}
+	var err error
+	cfg, err = config.LoadServer()
+	if err != nil {
+		log.Fatal(err)
+	}
 	if err := run(cfg); err != nil {
 		log.Fatal(err)
 	}
 }
 func run(cfg config.Config) error {
+	if _, err := initialGrantSource(cfg); err != nil {
+		return err
+	}
+	if _, err := config.ResolveEgressEnforcement(cfg.DeliveryMode, cfg.EgressEnforcement); err != nil {
+		return err
+	}
 	if e := ValidateBillingConfiguration(cfg); e != nil {
 		return e
 	}
@@ -150,7 +171,11 @@ func run(cfg config.Config) error {
 	if e != nil {
 		return e
 	}
+	safeToClose := true
 	defer func() {
+		if !safeToClose {
+			return
+		} // forced process exit retains ownership until OS exit
 		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 		_ = lock.Close()
 	}()
@@ -158,17 +183,20 @@ func run(cfg config.Config) error {
 	if e != nil {
 		return e
 	}
-	defer db.Close()
+	defer func() {
+		if safeToClose {
+			db.Close()
+		}
+	}()
+	if e = os.Chmod(filepath.Join(cfg.DataDir, "tpahub.db"), 0600); e != nil {
+		return fmt.Errorf("secure database permissions: %w", e)
+	}
 	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
 	if _, e = s.operatorState(); e != nil {
 		return fmt.Errorf("invalid operator WebAuthn configuration: %w", e)
 	}
-	if cfg.BillingPurchasesEnabled {
-		paymentProvider, providerErr := NewStripeBillingProvider(db, cfg.StripeTestSecret, BillingEnvironment(cfg.BillingEnvironment))
-		if providerErr != nil {
-			return providerErr
-		}
-		s.purchaseProvider, s.paymentWebhook = paymentProvider, paymentProvider
+	if err := s.composeCommercial(); err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -181,25 +209,26 @@ func run(cfg config.Config) error {
 	if e = s.reconcileStagingState(); e != nil {
 		return e
 	}
-	s.ctx = ctx
-	go s.worker()
-	go s.cleanupRetryLoop()
 	srv := newHTTPServer(s)
-	go func() { <-ctx.Done(); srv.Shutdown(context.Background()) }()
-	log.Printf("TPA Hub listening on http://%s", cfg.Listen)
-	e = srv.ListenAndServe()
-	if errors.Is(e, http.ErrServerClosed) {
-		return nil
+	listener, e := net.Listen("tcp", cfg.Listen)
+	if e != nil {
+		return e
 	}
+	log.Printf("TPA Hub listening on http://%s", listener.Addr())
+	safeToClose, e = s.serveAndDrain(ctx, srv, listener, cfg.ShutdownTimeout, 5*time.Second)
 	return e
 }
 
 func newHTTPServer(s *server) *http.Server {
-	return &http.Server{Addr: s.cfg.Listen, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: s.cfg.UploadReadTimeout}
+	s.lifecycle = &serverLifecycle{}
+	return &http.Server{Addr: s.cfg.Listen, Handler: s.lifecycle.wrap(s.routes()), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: s.cfg.UploadReadTimeout}
 }
 
 func lockDataDirectory(dir string) (*os.File, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, err
 	}
 	lock, err := os.OpenFile(filepath.Join(dir, ".tpahub.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -214,6 +243,11 @@ func lockDataDirectory(dir string) (*os.File, error) {
 }
 
 func (s *server) routes() http.Handler {
+	if err := s.initDelivery(); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			bad(w, http.StatusServiceUnavailable, "delivery configuration unavailable")
+		})
+	}
 	m := http.NewServeMux()
 	m.HandleFunc("/install.sh", s.install)
 	m.HandleFunc("/static/", s.static)
@@ -246,11 +280,12 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/", s.web)
 	m.HandleFunc("/tpahub.asc", s.publicKey)
 	m.HandleFunc("/version", s.version)
+	m.HandleFunc("/ready", s.ready)
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
 	m.HandleFunc("/v1/logout", s.logout)
 	m.HandleFunc("/v1/billing/purchases/nano", s.authHandler(s.createNanoPurchase))
-	m.HandleFunc("/v1/billing/providers/stripe/webhook", s.stripeWebhook)
+	s.registerHostedRoutes(m)
 	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))
 	m.HandleFunc("/v1/public/repositories", s.publicRepositories)
 	m.HandleFunc("/v1/repositories/", s.repositoryRoute)
@@ -297,7 +332,7 @@ func (s *server) version(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]string{"service": appversion.Service, "version": appversion.Current, "revision": "unknown", "started_at": s.startedAt.Format(time.RFC3339)})
+	json.NewEncoder(w).Encode(map[string]string{"service": appversion.Service, "version": appversion.Current, "revision": appversion.BuildRevision, "schema": strconv.Itoa(store.CurrentSchemaVersion()), "started_at": s.startedAt.Format(time.RFC3339)})
 }
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -501,6 +536,12 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
+	for _, name := range []string{"incoming", "work"} {
+		if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, name), 0700); err != nil {
+			bad(w, http.StatusInsufficientStorage, "staging directory unavailable")
+			return
+		}
+	}
 	jobID = newID()
 	reserveBytes := r.ContentLength
 	if reserveBytes <= 0 {
@@ -530,7 +571,11 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") && r.ContentLength > 0 {
 		logicalReserve = r.ContentLength
 	}
-	if err := s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, logicalReserve, maxUploadFiles+1); err != nil {
+	inodeReserve := int64(2)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		inodeReserve = maxUploadFiles + 1
+	}
+	if err := s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, logicalReserve, inodeReserve); err != nil {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
@@ -546,65 +591,54 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	var total int64
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
-		if e := r.ParseMultipartForm(maxMultipartMemoryBytes); e != nil {
-			_ = os.RemoveAll(dir)
+		// Stream directly to the reserved incoming tree. ParseMultipartForm
+		// would create an additional, unowned disk spool above its RAM limit.
+		reader, e := r.MultipartReader()
+		if e != nil {
 			bad(w, 400, "invalid upload")
 			return
 		}
 		fileCount := 0
-		for _, hs := range r.MultipartForm.File {
-			for _, h := range hs {
-				fileCount++
-				if fileCount > maxUploadFiles {
-					_ = os.RemoveAll(dir)
-					bad(w, http.StatusBadRequest, "too many upload files")
-					return
-				}
-				if !strings.HasSuffix(strings.ToLower(h.Filename), ".deb") {
-					_ = os.RemoveAll(dir)
-					bad(w, 400, "only .deb files are accepted")
-					return
-				}
-				name := filepath.Base(h.Filename)
-				f, e := h.Open()
-				if e != nil {
-					bad(w, 400, "cannot read upload")
-					return
-				}
-				dst, e := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-				if e == nil {
-					n, ce := io.Copy(dst, io.LimitReader(f, s.cfg.MaxUpload-total+1))
-					dst.Close()
-					f.Close()
-					total += n
-					e = ce
-					if total > s.cfg.MaxUpload {
-						e = fmt.Errorf("upload too large")
-					}
-				} else {
-					f.Close()
-				}
-				if e != nil {
-					_ = os.RemoveAll(dir)
-					bad(w, 413, e.Error())
-					return
-				}
+		for {
+			part, e := reader.NextPart()
+			if e == io.EOF {
+				break
 			}
+			if e != nil {
+				bad(w, 400, "invalid upload")
+				return
+			}
+			if part.FileName() == "" {
+				part.Close()
+				continue
+			}
+			fileCount++
+			if fileCount > maxUploadFiles {
+				bad(w, 400, "too many upload files")
+				return
+			}
+			name := filepath.Base(part.FileName())
+			if !strings.HasSuffix(strings.ToLower(name), ".deb") {
+				bad(w, 400, "only .deb files are accepted")
+				return
+			}
+			n, e := s.copyUploadFile(filepath.Join(dir, name), part, s.cfg.MaxUpload-total+1)
+			total += n
+			if e != nil || total > s.cfg.MaxUpload {
+				bad(w, 413, "upload copy failed or too large")
+				return
+			}
+			part.Close()
 		}
 	} else {
 		if !strings.HasSuffix(strings.ToLower(r.URL.Query().Get("filename")), ".deb") {
-			_ = os.RemoveAll(dir)
 			bad(w, 400, "filename query ending in .deb is required")
 			return
 		}
-		dst, e := os.OpenFile(filepath.Join(dir, filepath.Base(r.URL.Query().Get("filename"))), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if e == nil {
-			total, e = io.Copy(dst, io.LimitReader(r.Body, s.cfg.MaxUpload+1))
-			dst.Close()
-		}
+		var e error
+		total, e = s.copyUploadFile(filepath.Join(dir, filepath.Base(r.URL.Query().Get("filename"))), r.Body, s.cfg.MaxUpload+1)
 		if e != nil || total > s.cfg.MaxUpload {
-			_ = os.RemoveAll(dir)
-			bad(w, 413, "upload too large")
+			bad(w, 413, "upload copy failed or too large")
 			return
 		}
 	}
@@ -616,7 +650,9 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if logicalReserve == 0 {
-		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), total); err != nil {
+		// The in-flight directory already represents these materialized bytes.
+		// Validate under stagingMu without adding them again as prospective input.
+		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), 0); err != nil {
 			_ = os.RemoveAll(dir)
 			bad(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
@@ -703,91 +739,20 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	path := filepath.Join(root, rel)
-	info, e := os.Stat(path)
+	// Pin the authorized root and reject symlink traversal outside it. The old
+	// os.Stat/ServeFile pair followed escaping symlinks in repository content.
+	files, e := os.OpenRoot(root)
+	if e != nil {
+		bad(w, 404, "not found")
+		return
+	}
+	defer files.Close()
+	info, e := files.Stat(rel)
 	if e != nil || !info.Mode().IsRegular() {
 		bad(w, 404, "not found")
 		return
 	}
-	startedAt := s.currentTime().UTC()
-	usageAt := startedAt.Format(time.RFC3339Nano)
-	limited := false
-	egressLimit := int64(0)
-	if uncertain, err := s.db.RepositoryEgressUncertain(r.Context(), repo.ID); err != nil || uncertain {
-		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
-		return
-	}
-	if used, limit, err := s.accountEgress(repo.AccountID, startedAt); err != nil {
-		limited = grantDenied(err)
-		if limited {
-			egressLimit = store.UnlimitedEgressLimit
-		} // -1 is the explicit no-applicable-limit sentinel for reservation.
-		log.Printf("repository egress enforcement lookup: repository=%s: %v", repo.ID, err)
-		if !limited {
-			bad(w, http.StatusServiceUnavailable, "egress authority unavailable")
-			return
-		}
-	} else {
-		egressLimit = limit
-		limited = egressLimited(used, limit)
-	}
-	deliveryID := newID()
-	begin := s.beginEgressDelivery
-	if begin == nil {
-		begin = s.db.BeginEgressDelivery
-	}
-	if err := begin(r.Context(), deliveryID, repo.ID, startedAt.Format(time.RFC3339Nano)); err != nil {
-		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
-		return
-	}
-	periodStart, periodEnd, periodErr := s.egressPeriod(repo.AccountID, startedAt)
-	if periodErr != nil {
-		if !grantDenied(periodErr) {
-			_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, periodErr.Error())
-			bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
-			return
-		}
-		periodStart = time.Date(startedAt.Year(), time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
-		periodEnd = time.Date(startedAt.Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
-	}
-	reserve := s.reserveEgressDelivery
-	if reserve == nil {
-		reserve = s.db.ReserveEgressDelivery
-	}
-	reservationLimited := false
-	var reserveErr error
-	reservationLimited, reserveErr = reserve(r.Context(), deliveryID, repo.ID, periodStart, periodEnd, info.Size(), egressLimit, startedAt.Format(time.RFC3339Nano))
-	if reserveErr != nil {
-		_ = s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, reserveErr.Error())
-		bad(w, http.StatusServiceUnavailable, "egress accounting unavailable")
-		return
-	}
-	limited = limited || reservationLimited
-	counted := &repositoryCountingWriter{ResponseWriter: w}
-	var output http.ResponseWriter = counted
-	if limited {
-		w.Header().Set("X-TPAHub-Egress-Limited", "true")
-		output = &rateLimitedResponseWriter{ResponseWriter: counted, rate: NanoOverageBytesPerSecond}
-	}
-	defer func() {
-		complete := s.completeEgressDelivery
-		if complete == nil {
-			complete = s.db.CompleteEgressDelivery
-		}
-		if err := complete(context.Background(), deliveryID, repo.ID, usageAt, counted.bytes, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
-			if markErr := s.db.MarkEgressDeliveryUncertain(context.Background(), deliveryID, repo.ID, err.Error()); markErr != nil {
-				log.Printf("repository egress uncertainty: repository=%s delivery=%s: %v", repo.ID, deliveryID, markErr)
-			}
-			s.egressMu.Lock()
-			if s.egressDegraded == nil {
-				s.egressDegraded = map[string]bool{}
-			}
-			s.egressDegraded[repo.AccountID] = true
-			s.egressMu.Unlock()
-			log.Printf("repository egress accounting: repository=%s bytes=%d at=%s: %v", repo.ID, counted.bytes, usageAt, err)
-		}
-	}()
-	http.ServeFile(output, r, path)
+	s.serveRepositoryFile(w, r, repo, files.FS(), rel, info.Size())
 }
 func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "GET" {
@@ -817,6 +782,9 @@ func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 }
 func (s *server) worker() {
 	for {
+		if s.lifecycle != nil && s.lifecycle.draining.Load() {
+			return
+		}
 		select {
 		case <-s.ctx.Done():
 			return
@@ -824,12 +792,19 @@ func (s *server) worker() {
 		}
 		j, e := s.db.Claim(s.ctx)
 		if e != nil {
-			if errors.Is(e, store.ErrNotFound) {
-				time.Sleep(100 * time.Millisecond)
-				continue
+			delay := 100 * time.Millisecond
+			if !errors.Is(e, store.ErrNotFound) {
+				if s.ctx.Err() != nil {
+					return
+				}
+				log.Printf("worker claim: %v", e)
+				delay = time.Second
 			}
-			log.Printf("worker claim: %v", e)
-			time.Sleep(time.Second)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 			continue
 		}
 		s.process(j)
@@ -1830,6 +1805,9 @@ func (s *server) reconcileStagingState() error {
 }
 
 func (s *server) reconcileOrphanedStagingState() error {
+	if s.capacityObserve != nil {
+		s.capacityObserve("before-cleanup", s.cfg.DataDir)
+	}
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
 	paths, err := s.db.TerminalJobIncomingPaths(context.Background())
@@ -1851,6 +1829,14 @@ func (s *server) reconcileOrphanedStagingState() error {
 	active := make(map[string]struct{}, len(activePaths))
 	for _, path := range activePaths {
 		active[filepath.Clean(path)] = struct{}{}
+	}
+	// Upload copying releases stagingMu, but retains its incoming reservation.
+	// Under this lock ownership transfers atomically from reservation to job.
+	// Neither representation may be mistaken for an orphan by live cleanup.
+	for _, reservation := range s.reservations {
+		if reservation.Kind == "incoming" {
+			active[filepath.Clean(filepath.Join(s.cfg.DataDir, "incoming", reservation.JobID))] = struct{}{}
+		}
 	}
 	incoming := filepath.Join(s.cfg.DataDir, "incoming")
 	incomingEntries, err := os.ReadDir(incoming)
@@ -2279,6 +2265,9 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 	}
 	oldBytes, oldLogicalBytes, oldInodes := int64(0), int64(0), int64(0)
 	if old, ok := s.reservations[jobID]; ok {
+		if old.AccountID != accountID || old.RepositoryID != repositoryID || old.Kind != kind {
+			return fmt.Errorf("physical reservation identity conflict")
+		}
 		oldBytes = old.Bytes
 		oldLogicalBytes = old.LogicalBytes
 		oldInodes = old.Inodes
@@ -2291,59 +2280,22 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 			return err
 		}
 	}
-	var reserved int64
-	var reservedInodes int64
-	var overflow bool
-	for _, r := range s.reservations {
-		reserved, overflow = addCapacity(reserved, r.Bytes)
-		if overflow {
-			return fmt.Errorf("capacity reservation overflow")
-		}
-		reservedInodes, overflow = addCapacity(reservedInodes, r.Inodes)
-		if overflow {
-			return fmt.Errorf("inode reservation overflow")
-		}
+	snapshot, err := s.physicalCapacity(ctx, accountID)
+	if err != nil {
+		return err
 	}
-	var actual int64
-	var err error
-	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
-		tree, sizeErr := fileTreeAllocatedSize(root)
-		if sizeErr != nil {
-			return fmt.Errorf("capacity accounting: %w", sizeErr)
-		}
-		actual, overflow = addCapacity(actual, tree)
-		if overflow {
-			return fmt.Errorf("capacity accounting overflow")
-		}
-	}
-	// An in-flight incoming directory consumes its own reservation. Exclude its
-	// observed blocks here so a partially streamed upload is not double-counted
-	// as both actual storage and reserved future storage.
-	for _, reservation := range s.reservations {
-		if reservation.Kind != "incoming" {
-			continue
-		}
-		allocated, sizeErr := fileTreeAllocatedSize(filepath.Join(s.cfg.DataDir, "incoming", reservation.JobID))
-		if sizeErr != nil {
-			return fmt.Errorf("capacity accounting: %w", sizeErr)
-		}
-		if allocated > actual {
-			return fmt.Errorf("capacity accounting underflow")
-		}
-		actual -= allocated
-	}
-	prospective, overflow := addCapacity(actual, reserved-oldBytes, bytes)
+	prospective, overflow := addCapacity(snapshot.committed, snapshot.reserved, bytes)
 	if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
 		return fmt.Errorf("global staging reservation exceeded")
 	}
-	additional, overflow := addCapacity(reserved-oldBytes, bytes)
+	additional, overflow := addCapacity(snapshot.remaining, bytes)
 	if overflow {
 		return fmt.Errorf("capacity reservation overflow")
 	}
 	if err = s.checkDiskHeadroomFor(additional); err != nil {
 		return err
 	}
-	additionalInodes, overflow := addCapacity(reservedInodes-oldInodes, inodes)
+	additionalInodes, overflow := addCapacity(snapshot.remainingInodes, inodes)
 	if overflow {
 		return fmt.Errorf("inode reservation overflow")
 	}
@@ -2351,32 +2303,7 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 		return err
 	}
 	if accountID != "" && s.cfg.MaxAccountStagingBytes > 0 {
-		var accountActual, accountReserved int64
-		paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
-		if pathErr != nil {
-			return fmt.Errorf("account transient usage unavailable: %w", pathErr)
-		}
-		for _, path := range paths {
-			for _, stagedPath := range []string{path, filepath.Join(s.cfg.DataDir, "work", filepath.Base(path)), filepath.Join(s.cfg.DataDir, "work", filepath.Base(path)+"-published")} {
-				allocated, sizeErr := fileTreeAllocatedSize(stagedPath)
-				if sizeErr != nil {
-					return fmt.Errorf("account transient usage unavailable: %w", sizeErr)
-				}
-				accountActual, overflow = addCapacity(accountActual, allocated)
-				if overflow {
-					return fmt.Errorf("account transient usage overflow")
-				}
-			}
-		}
-		for _, reservation := range s.reservations {
-			if reservation.AccountID == accountID {
-				accountReserved, overflow = addCapacity(accountReserved, reservation.Bytes)
-				if overflow {
-					return fmt.Errorf("account transient reservation overflow")
-				}
-			}
-		}
-		prospectiveAccount, accountOverflow := addCapacity(accountActual, accountReserved-oldBytes, bytes)
+		prospectiveAccount, accountOverflow := addCapacity(snapshot.accountCommitted, snapshot.accountReserved, bytes)
 		if accountOverflow || prospectiveAccount > s.cfg.MaxAccountStagingBytes {
 			return fmt.Errorf("account staging reservation exceeded")
 		}
@@ -2408,13 +2335,18 @@ func (s *server) resizeCapacity(jobID string, bytes int64) error {
 		return fmt.Errorf("negative capacity reservation")
 	}
 	if bytes > r.Bytes {
-		if err := s.checkDiskHeadroomFor(bytes - r.Bytes); err != nil {
-			return err
-		}
+		return s.reserveCapacityWithLogicalResources(context.Background(), r.AccountID, r.RepositoryID, jobID, r.Kind, bytes-r.Bytes, 0, 0)
+	}
+	snapshot, err := s.physicalCapacity(context.Background(), r.AccountID)
+	if err != nil {
+		return err
 	}
 	if bytes == 0 {
 		delete(s.reservations, jobID)
 		return nil
+	}
+	if bytes < snapshot.used[jobID].bytes {
+		return fmt.Errorf("physical reservation below materialized allocation")
 	}
 	r.Bytes = bytes
 	s.reservations[jobID] = r
@@ -2432,8 +2364,8 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 	if additional < 0 {
 		return fmt.Errorf("invalid disk reservation")
 	}
-	if s.cfg.MinDiskFreeBytes <= 0 {
-		return nil
+	if s.cfg.MinDiskFreeBytes < 0 {
+		return fmt.Errorf("invalid disk headroom floor")
 	}
 	var free int64
 	if s.diskFree != nil {
@@ -2446,6 +2378,9 @@ func (s *server) checkDiskHeadroomFor(additional int64) error {
 		var stat unix.Statfs_t
 		if err := unix.Statfs(s.cfg.DataDir, &stat); err != nil {
 			return fmt.Errorf("disk headroom unavailable: %w", err)
+		}
+		if stat.Bsize <= 0 || stat.Bavail > uint64(math.MaxInt64)/uint64(stat.Bsize) {
+			return fmt.Errorf("disk headroom unavailable: allocation overflow")
 		}
 		free = int64(stat.Bavail) * int64(stat.Bsize)
 	}
@@ -2486,27 +2421,12 @@ func (s *server) checkInodeHeadroomFor(additional int64) error {
 }
 
 func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64, alreadyWritten bool) error {
-	var staged, reservedGlobal int64
-	for _, reservation := range s.reservations {
-		var overflow bool
-		reservedGlobal, overflow = addCapacity(reservedGlobal, reservation.Bytes)
-		if overflow {
-			return fmt.Errorf("global staging reservation overflow")
-		}
-	}
-	for _, root := range []string{filepath.Join(s.cfg.DataDir, "incoming"), filepath.Join(s.cfg.DataDir, "work")} {
-		treeSize, sizeErr := fileTreeAllocatedSize(root)
-		if sizeErr != nil {
-			return fmt.Errorf("global staging usage unavailable: %w", sizeErr)
-		}
-		var overflow bool
-		staged, overflow = addCapacity(staged, treeSize)
-		if overflow {
-			return fmt.Errorf("global staging usage overflow")
-		}
-	}
 	if !alreadyWritten {
-		prospective, overflow := addCapacity(staged, reservedGlobal, incoming)
+		snapshot, err := s.physicalCapacity(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		prospective, overflow := addCapacity(snapshot.committed, snapshot.reserved, incoming)
 		if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
 			return fmt.Errorf("global staging storage limit exceeded")
 		}
@@ -2667,13 +2587,9 @@ func fileTreeAllocatedSize(root string) (int64, error) {
 		if err != nil {
 			return err
 		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fmt.Errorf("filesystem allocation metadata unavailable: %s", path)
-		}
-		allocated := stat.Blocks * 512
-		if entry.IsDir() && allocated < block {
-			allocated = block
+		allocated, err := allocatedFileBytes(info, block)
+		if err != nil {
+			return err
 		}
 		if allocated > math.MaxInt64-total {
 			return fmt.Errorf("filesystem allocation overflow")

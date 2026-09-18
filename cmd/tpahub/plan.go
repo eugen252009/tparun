@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/commerce"
-	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
@@ -81,28 +80,6 @@ func (s *server) grantService() commerce.GrantService {
 		return s.grants
 	}
 	return s.db
-}
-
-func effectiveEntitlementPeriod(entitlement store.AccountEntitlement, now time.Time) (EntitlementPeriod, error) {
-	active, err := entitlement.ActiveAt(now)
-	if err != nil {
-		return EntitlementPeriod{}, err
-	}
-	if !active {
-		return EntitlementPeriod{}, fmt.Errorf("entitlement inactive")
-	}
-	if entitlement.Source != "purchase" {
-		return entitlementPeriod(entitlement.ValidFrom, now)
-	}
-	start, err := time.Parse(time.RFC3339Nano, entitlement.ValidFrom)
-	if err != nil {
-		return EntitlementPeriod{}, err
-	}
-	end, err := time.Parse(time.RFC3339Nano, entitlement.ValidUntil)
-	if err != nil {
-		return EntitlementPeriod{}, err
-	}
-	return EntitlementPeriod{Start: start.UTC(), End: end.UTC()}, nil
 }
 
 func entitlementPeriod(startedAt string, now time.Time) (EntitlementPeriod, error) {

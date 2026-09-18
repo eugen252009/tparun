@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -82,16 +81,6 @@ func TestConflictingPreexistingPurchaseInstanceAbortsActivation(t *testing.T) {
 	saved, err := s.Purchase(ctx, purchase.ID)
 	if err != nil || saved.Status != "pending" {
 		t.Fatalf("conflicting activation changed purchase: %+v, %v", saved, err)
-	}
-}
-
-func TestUnknownHistoricalOfferFailsClosed(t *testing.T) {
-	dir := historicalFixture(t, func(db *sql.DB) error {
-		_, err := db.Exec(`UPDATE product_grants SET offer_id='unknown-historical-offer',source='legacy',purchase_id=''`)
-		return err
-	})
-	if _, err := Open(dir); err == nil {
-		t.Fatal("unknown historical offer was accepted")
 	}
 }
 

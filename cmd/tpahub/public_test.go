@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +19,15 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	}
 	b, _ := io.ReadAll(r.Body)
 	r.Body.Close()
-	if r.StatusCode != 200 || !strings.Contains(string(b), "748316a73ce0eff46f8888f956c5eeb0") {
+	source, err := os.ReadFile("../../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := regexp.MustCompile(`(?m)^DEFAULT_REPOSITORY_ID="([a-f0-9]{32})"$`).FindSubmatch(source)
+	if len(canonical) != 2 {
+		t.Fatal("installer must define one canonical repository identity")
+	}
+	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), string(canonical[1])) {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")

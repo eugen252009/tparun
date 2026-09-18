@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -27,7 +25,7 @@ func structuralFixture(t *testing.T, dirs ...string) *Store {
 	if err = s.CreateRepository(ctx, Repository{ID: "r", AccountID: "a", Name: "r", Visibility: "public", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "a", ProductID: "product", CapabilityID: "cap", OfferID: "offer", Enabled: true, ValidFrom: time.Now().UTC(), Period: commerce.PeriodMonthly, Source: "future-source", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "a", ProductID: "product", CapabilityID: "cap", OfferID: "offer", Enabled: true, ValidFrom: time.Now().UTC(), Period: commerce.PeriodMonthly, Source: "local", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -48,7 +46,7 @@ func structuralFixture(t *testing.T, dirs ...string) *Store {
 	return s
 }
 
-func TestSchemaV3StructuralConstraints(t *testing.T) {
+func TestSchemaV5StructuralConstraints(t *testing.T) {
 	s := structuralFixture(t)
 	defer s.Close()
 	cases := []struct{ name, table, column, value string }{
@@ -90,44 +88,7 @@ func TestSchemaV3StructuralConstraints(t *testing.T) {
 	}
 }
 
-func TestSchemaV2ToV3MigrationIsAtomicOnInjectedFailure(t *testing.T) {
-	dir := t.TempDir()
-	s := structuralFixture(t, dir)
-	if _, err := s.db.Exec(`UPDATE tpahub_schema SET version=2`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	migrationFault = func(stage string) error {
-		if stage == "before-structural-constraints" {
-			return context.Canceled
-		}
-		return nil
-	}
-	defer func() { migrationFault = nil }()
-	if err := Migrate(dir); err == nil {
-		t.Fatal("injected migration failure accepted")
-	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var version int
-	if err = db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != 2 {
-		t.Fatalf("schema changed after failed migration: %d", version)
-	}
-	var integrity string
-	if err = db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
-		t.Fatalf("integrity=%q err=%v", integrity, err)
-	}
-}
-
-func TestSchemaV3AllowsExtensibleProviderEnvironment(t *testing.T) {
+func TestSchemaV5AllowsExtensibleProviderEnvironment(t *testing.T) {
 	s := structuralFixture(t)
 	defer s.Close()
 	var provider, environment string

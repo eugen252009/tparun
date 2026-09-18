@@ -95,53 +95,6 @@ func (s *Store) DeleteOperatorCredential(ctx context.Context, id []byte) error {
 	return nil
 }
 
-func migrateOperatorRecoveryTimes(db migrationExecutor) error {
-	if err := ensureColumn(db, "operator_recovery", "expires_at_unix_nanos", "expires_at_unix_nanos INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	rows, err := db.Query(`SELECT id,expires_at,expires_at_unix_nanos FROM operator_recovery`)
-	if err != nil {
-		return err
-	}
-	type row struct {
-		id    int
-		text  string
-		nanos int64
-	}
-	var pending []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.text, &r.nanos); err != nil {
-			return err
-		}
-		if r.nanos == 0 {
-			t, e := time.Parse(time.RFC3339Nano, r.text)
-			if e != nil {
-				pending = append(pending, row{id: r.id, nanos: -1})
-			} else {
-				pending = append(pending, row{id: r.id, nanos: t.UnixNano()})
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, r := range pending {
-		if r.nanos < 0 {
-			if _, err := db.Exec(`DELETE FROM operator_recovery WHERE id=?`, r.id); err != nil {
-				return err
-			}
-		} else if _, err := db.Exec(`UPDATE operator_recovery SET expires_at_unix_nanos=? WHERE id=?`, r.nanos, r.id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Store) IssueOperatorRecovery(ctx context.Context, hash []byte, createdAt, expiresAt string) error {
 	if len(hash) == 0 || createdAt == "" || expiresAt == "" {
 		return fmt.Errorf("invalid operator recovery")

@@ -109,9 +109,7 @@ func TestAccountEgressStatusMatchesEnforcementThreshold(t *testing.T) {
 			s, h := testServer(t)
 			now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 			s.now = func() time.Time { return now }
-			if err := s.db.SetLegacyTPAEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "2026-01-01T00:00:00Z", ValidFrom: "2026-01-01T00:00:00Z", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z", Source: "local"}); err != nil {
-				t.Fatal(err)
-			}
+
 			repositoryID := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 			if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repositoryID, AccountID: "a", Name: "egress-ui", Visibility: "public", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
 				t.Fatal(err)
@@ -133,13 +131,11 @@ func TestAccountEgressStatusMatchesEnforcementThreshold(t *testing.T) {
 		})
 	}
 
-	t.Run("unavailable", func(t *testing.T) {
-		s, h := testServer(t)
+	t.Run("available", func(t *testing.T) {
+		_, h := testServer(t)
 		// Invalid compatibility history cannot make current quota resolution
 		// unavailable; product_grants remain authoritative.
-		if err := s.db.SetLegacyTPAEntitlement(context.Background(), store.AccountEntitlement{AccountID: "a", PlanCode: "nano", StartedAt: "invalid", ValidFrom: "invalid", CreatedAt: "now", UpdatedAt: "now", Source: "local"}); err != nil {
-			t.Fatal(err)
-		}
+
 		request, _ := http.NewRequest(http.MethodGet, h.URL+"/account", nil)
 		request.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
 		response, err := http.DefaultClient.Do(request)

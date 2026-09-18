@@ -1,0 +1,336 @@
+package store
+
+import (
+	"database/sql"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+)
+
+// schemaSQL is the sole definition of the first supported persistent schema.
+// There is deliberately no migration from disposable pre-release schemas.
+//
+//go:embed schema.sql
+var schemaSQL string
+
+func normalizedDDL(s string) string {
+	// Preserve token boundaries: removing whitespace must not confuse a column
+	// named idTEXT with the declaration id TEXT. SQL literals remain exact.
+	r := []rune(s)
+	var tokens []string
+	for i := 0; i < len(r); {
+		if unicode.IsSpace(r[i]) {
+			i++
+			continue
+		}
+		if i+1 < len(r) && r[i] == '-' && r[i+1] == '-' {
+			for i < len(r) && r[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if i+1 < len(r) && r[i] == '/' && r[i+1] == '*' {
+			i += 2
+			for i+1 < len(r) && !(r[i] == '*' && r[i+1] == '/') {
+				i++
+			}
+			i += 2
+			continue
+		}
+		if r[i] == '\'' || r[i] == '"' || r[i] == '`' || r[i] == '[' {
+			quote := r[i]
+			end := quote
+			if quote == '[' {
+				end = ']'
+			}
+			start := i
+			i++
+			var value strings.Builder
+			for i < len(r) {
+				if r[i] == end {
+					if i+1 < len(r) && r[i+1] == end && quote != '[' {
+						value.WriteRune(end)
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				value.WriteRune(r[i])
+				i++
+			}
+			if quote == '\'' {
+				tokens = append(tokens, string(r[start:i]))
+			} else {
+				tokens = append(tokens, strings.ToLower(value.String()))
+			}
+			continue
+		}
+		start := i
+		i++
+		if unicode.IsLetter(r[start]) || unicode.IsDigit(r[start]) || r[start] == '_' {
+			for i < len(r) && (unicode.IsLetter(r[i]) || unicode.IsDigit(r[i]) || r[i] == '_' || r[i] == '$') {
+				i++
+			}
+		}
+		tokens = append(tokens, strings.ToLower(string(r[start:i])))
+	}
+	return strings.Join(tokens, "\x00")
+}
+
+func schemaDefinitions(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type,name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]string{}
+	var tables []string
+	for rows.Next() {
+		var kind, name, ddl string
+		if err := rows.Scan(&kind, &name, &ddl); err != nil {
+			return nil, err
+		}
+		result[kind+":"+name] = normalizedDDL(ddl)
+		if kind == "table" {
+			tables = append(tables, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Introspection independently checks actual parsed structure, including
+	// implicit indexes. Normalized SQL alone is not a substitute for this.
+	// Batch introspection across tables, rather than preparing three queries
+	// per table on every open. No instance result is cached or check omitted.
+	for kind, query := range map[string]string{
+		"columns":      `SELECT m.name,p.cid,p.name,upper(p.type),p."notnull",p.dflt_value,p.pk,p.hidden FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name,p.cid`,
+		"foreign-keys": `SELECT m.name,p."table",p."from",p."to",p.on_update,p.on_delete,p.match FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name,p.id,p.seq`,
+		"indexes":      `SELECT m.name,p.name,p."unique",p.origin,p.partial FROM sqlite_master m JOIN pragma_index_list(m.name) p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name,p.name`,
+	} {
+		values, err := schemaQueryShape(db, query)
+		if err != nil {
+			return nil, err
+		}
+		for _, table := range tables {
+			value, ok := values[table]
+			if !ok {
+				value = "null"
+			}
+			result[kind+":"+table] = value
+		}
+	}
+	return result, nil
+}
+
+func schemaQueryShape(db *sql.DB, query string) (map[string]string, error) {
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	values := map[string][][]any{}
+	for rows.Next() {
+		var table string
+		row := make([]any, len(columns)-1)
+		dest := make([]any, len(columns))
+		dest[0] = &table
+		for i := range row {
+			dest[i+1] = &row[i]
+		}
+		if err = rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		values[table] = append(values[table], row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	result := map[string]string{}
+	for table, value := range values {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		result[table] = string(data)
+	}
+	return result, nil
+}
+
+// Cache only the immutable built-in reference, never an instance's shape.
+// The embedded DDL remains the sole authority; this is process-local derivation.
+var canonicalSchemaDefinitions = sync.OnceValues(func() (map[string]string, error) {
+	reference, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, err
+	}
+	defer reference.Close()
+	reference.SetMaxOpenConns(1)
+	if _, err = reference.Exec(schemaSQL); err != nil {
+		return nil, fmt.Errorf("invalid built-in schema: %w", err)
+	}
+	return schemaDefinitions(reference)
+})
+
+// Validate every declared table, column, CHECK, FK, index and trigger against
+// the canonical executable DDL. Every instance is freshly inspected read-only.
+func validateCurrentSchema(db *sql.DB) error {
+	want, err := canonicalSchemaDefinitions()
+	if err != nil {
+		return err
+	}
+	got, err := schemaDefinitions(db)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for name := range want {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if got[name] != want[name] {
+			return fmt.Errorf("missing or invalid Schema 5 structure %s; restore a valid backup", name)
+		}
+	}
+	names = names[:0]
+	for name := range got {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := want[name]; !ok {
+			return fmt.Errorf("unexpected Schema 5 structure %s", name)
+		}
+	}
+	var singleton int
+	if err := db.QueryRow(`SELECT singleton FROM tpahub_schema WHERE typeof(singleton)='integer'`).Scan(&singleton); err != nil || singleton != 1 {
+		return fmt.Errorf("invalid schema authority singleton")
+	}
+	return nil
+}
+
+func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, err error) {
+	path := filepath.Join(dir, "tpahub.db")
+	info, statErr := os.Stat(path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, statErr
+	}
+	fresh := os.IsNotExist(statErr) || (statErr == nil && info.Size() == 0)
+	if fresh {
+		if explicitMigration {
+			return nil, fmt.Errorf("migration requires an initialized Schema 5 database")
+		}
+		if err = os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
+	}
+	readOnly := !fresh
+	dsn := path
+	if readOnly {
+		absolute, e := filepath.Abs(path)
+		if e != nil {
+			return nil, e
+		}
+		uri := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=ro"}
+		dsn = uri.String()
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	defer func() {
+		if err != nil && db != nil {
+			db.Close()
+		}
+	}()
+	if !fresh {
+		var objects int
+		if err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+			return nil, fmt.Errorf("invalid database: %w", err)
+		}
+		fresh = objects == 0 && !explicitMigration
+	}
+	if !fresh {
+		var version int
+		if err = db.QueryRow(`SELECT version FROM tpahub_schema WHERE typeof(version)='integer' AND version>0 AND (SELECT COUNT(*) FROM tpahub_schema)=1`).Scan(&version); err != nil {
+			return nil, fmt.Errorf("invalid or missing schema metadata; restore a backup or explicitly reinitialize disposable state: %w", err)
+		}
+		if version < 5 {
+			return nil, fmt.Errorf("unsupported pre-release database schema %d: Schemas 1–4 are development-only; stop Hub, back up anything wanted, and explicitly reinitialize state", version)
+		}
+		if version > currentSchemaVersion {
+			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
+		}
+		if version != currentSchemaVersion {
+			return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
+		}
+		if err = validateCurrentSchema(db); err != nil {
+			return nil, err
+		}
+	}
+	// A current migrate call keeps the read-only connection: even SQLite
+	// recovery cannot turn this validation operation into an accidental write.
+	if explicitMigration {
+		return &Store{db}, nil
+	}
+	if readOnly {
+		if err = db.Close(); err != nil {
+			return nil, err
+		}
+		db, err = sql.Open("sqlite", path)
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
+	}
+	if _, err = db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		return nil, err
+	}
+	if fresh {
+		tx, e := db.Begin()
+		if e != nil {
+			return nil, e
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(schemaSQL); err != nil {
+			return nil, fmt.Errorf("initialize Schema 5: %w", err)
+		}
+		if _, err = tx.Exec(`INSERT INTO tpahub_schema(singleton,version) VALUES(1,?)`, currentSchemaVersion); err != nil {
+			return nil, err
+		}
+		if err = migrationCheckpoint("before-schema-commit"); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+	}
+	if reconcileRunning {
+		_, err = db.Exec(`UPDATE publish_jobs SET state='failed',error='interrupted by service restart',finished_at=?,cleanup_state='pending' WHERE state='running'`, time.Now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return nil, err
+		}
+		_, err = db.Exec(`UPDATE egress_accounting_uncertain SET state='uncertain',version=version+1 WHERE state='streaming'`)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &Store{db}, nil
+}

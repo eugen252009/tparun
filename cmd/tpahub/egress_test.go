@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,8 +15,14 @@ import (
 )
 
 func TestRepositoryEgressHTTPSemantics(t *testing.T) {
-	s, h := testServer(t)
+	s, _ := testServer(t)
 	s.now = func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) }
+	// Client EOF/Close is not a server settlement barrier. Observe completion
+	// of the real handler, including its deferred strict-accounting settlement.
+	finished := make(chan struct{}, 1)
+	handler := s.routes()
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r); finished <- struct{}{} }))
+	defer h.Close()
 	id := "22222222222222222222222222222222"
 	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: id, AccountID: "a", Name: "egress", Visibility: "public", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
@@ -35,6 +43,16 @@ func TestRepositoryEgressHTTPSemantics(t *testing.T) {
 		response, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if _, err = io.Copy(io.Discard, response.Body); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("handler did not finish settlement")
 		}
 		return response
 	}

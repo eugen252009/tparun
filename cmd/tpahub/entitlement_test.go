@@ -55,28 +55,28 @@ func TestMonthlyEntitlementPeriodUsesCalendarCadence(t *testing.T) {
 func TestEffectivePaidEntitlementUsesExplicitHalfOpenValidity(t *testing.T) {
 	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2027, 9, 15, 0, 0, 0, 0, time.UTC)
-	entitlement := store.AccountEntitlement{Source: "purchase", ValidFrom: from.Format(time.RFC3339Nano), ValidUntil: until.Format(time.RFC3339Nano)}
-	if _, err := effectiveEntitlementPeriod(entitlement, from.Add(-time.Nanosecond)); err == nil {
+	grant := commerce.Grant{Source: "purchase", Enabled: true, Period: commerce.PeriodAnnual, ValidFrom: from, ValidUntil: &until}
+	if _, _, err := grant.PeriodAt(from.Add(-time.Nanosecond)); err == nil {
 		t.Fatal("paid entitlement active before valid_from")
 	}
-	period, err := effectiveEntitlementPeriod(entitlement, from)
-	if err != nil || !period.Start.Equal(from) || !period.End.Equal(until) {
-		t.Fatalf("at valid_from period=%+v err=%v", period, err)
+	start, end, err := grant.PeriodAt(from)
+	if err != nil || !start.Equal(from) || !end.Equal(until) {
+		t.Fatalf("at valid_from period=%v/%v err=%v", start, end, err)
 	}
-	if _, err = effectiveEntitlementPeriod(entitlement, until.Add(-time.Nanosecond)); err != nil {
+	if _, _, err = grant.PeriodAt(until.Add(-time.Nanosecond)); err != nil {
 		t.Fatalf("inactive just before valid_until: %v", err)
 	}
-	if _, err = effectiveEntitlementPeriod(entitlement, until); err == nil {
+	if _, _, err = grant.PeriodAt(until); err == nil {
 		t.Fatal("paid entitlement regenerated at valid_until")
 	}
 }
 
 func TestDefaultEntitlementStartsAtValidFromAndRemainsRecurring(t *testing.T) {
-	entitlement := store.AccountEntitlement{Source: "legacy", ValidFrom: "2026-01-01T00:00:00Z"}
-	if _, err := effectiveEntitlementPeriod(entitlement, time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC)); err == nil {
+	grant := commerce.Grant{Source: "local", Enabled: true, Period: commerce.PeriodAnnual, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if _, _, err := grant.PeriodAt(time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC)); err == nil {
 		t.Fatal("default entitlement active before valid_from")
 	}
-	if _, err := effectiveEntitlementPeriod(entitlement, time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+	if _, _, err := grant.PeriodAt(time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("default entitlement did not remain recurring: %v", err)
 	}
 }

@@ -121,7 +121,7 @@ func TestRecoveryUsesPersistedSnapshotAfterLiveOfferMutation(t *testing.T) {
 	s, p, from, until := recoveryPurchaseFixture(t, t.TempDir(), "offer-mutation")
 	defer s.Close()
 	now := from.Add(time.Hour)
-	if err := s.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(p.AccountID), ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "offer-y", Enabled: true, ValidFrom: from, ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 999999}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(p.AccountID), ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "offer-y", Enabled: true, ValidFrom: from, ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 999999}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	recoverAndPay(t, s, p, "offer-mutation-event", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))

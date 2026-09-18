@@ -700,7 +700,7 @@ func TestEgressBeginFailureServesNoBody(t *testing.T) {
 func TestUnownedRepositoryUncertaintyFailsClosedAfterRestart(t *testing.T) {
 	s, h := testServer(t)
 	repo := "89898989898989898989898989898989"
-	if err := s.db.CreateRepository(context.Background(), store.Repository{ID: repo, Name: "unowned", CreatedAt: "now"}); err != nil {
+	if err := insertCorruptUnownedRepository(s, store.Repository{ID: repo, Name: "unowned", CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(s.cfg.DataDir, "repos", repo)

@@ -3,18 +3,9 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
-	"path/filepath"
 	"sync"
 	"testing"
 )
-
-func TestOperatorRecoveryLegacyTimestampMigration(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db")); if err != nil { t.Fatal(err) }; defer db.Close()
-	if _, err = db.Exec(`CREATE TABLE operator_recovery(id INTEGER PRIMARY KEY,token_hash BLOB,created_at TEXT,expires_at TEXT); INSERT INTO operator_recovery VALUES(1,X'01','2026-01-01T00:00:00Z','2026-01-01T00:00:00.000000001Z')`); err != nil { t.Fatal(err) }
-	if err = migrateOperatorRecoveryTimes(db); err != nil { t.Fatal(err) }
-	var nanos int64; if err = db.QueryRow(`SELECT expires_at_unix_nanos FROM operator_recovery`).Scan(&nanos); err != nil { t.Fatal(err) }; if nanos == 0 { t.Fatal("legacy timestamp not migrated") }
-}
 
 func TestOperatorRecoveryReplacementAndSingleConsumption(t *testing.T) {
 	s, err := Open(t.TempDir())

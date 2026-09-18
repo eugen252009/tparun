@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -41,7 +40,7 @@ func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 	if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), commerce.ProductID(TPAHubProductID), CapabilityRepositoryPublish, s.currentTime()); err == nil {
 		t.Fatal("hosted registration received an implicit permanent TPA grant")
 	}
-	if _, err = s.db.Entitlement(context.Background(), out.AccountID); err != sql.ErrNoRows {
+	if _, err = s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), tpahubproduct.ProductID, tpahubproduct.CapabilityRepositoryPublish, s.currentTime()); err != commerce.ErrGrantNotFound {
 		t.Fatalf("hosted registration received legacy entitlement projection: %v", err)
 	}
 	if _, err = s.grantService().GetGrant(context.Background(), commerce.CustomerID(out.AccountID), tpahubproduct.ProductID, CapabilityRepositoryCreate, s.currentTime()); !errors.Is(err, commerce.ErrGrantNotFound) {
@@ -89,7 +88,7 @@ func TestDefaultGrantServiceRequiresActivePersistedGrant(t *testing.T) {
 	until := now.Add(time.Hour)
 	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
 		grant.CustomerID = commerce.CustomerID(account.ID)
-		grant.Source = "purchase"
+		grant.Source = "local"
 		grant.ValidUntil = &until
 		if err := s.db.PutGrant(ctx, grant); err != nil {
 			t.Fatal(err)
@@ -104,7 +103,7 @@ func TestDefaultGrantServiceRequiresActivePersistedGrant(t *testing.T) {
 
 	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
 		grant.CustomerID = commerce.CustomerID(account.ID)
-		grant.Source = "purchase"
+		grant.Source = "local"
 		grant.ValidUntil = &now
 		if err := s.db.PutGrant(ctx, grant); err != nil {
 			t.Fatal(err)
@@ -114,7 +113,7 @@ func TestDefaultGrantServiceRequiresActivePersistedGrant(t *testing.T) {
 
 	for _, grant := range tpahubproduct.DefaultGrants(now.Add(-time.Hour)) {
 		grant.CustomerID = commerce.CustomerID(account.ID)
-		grant.Source = "purchase"
+		grant.Source = "local"
 		grant.Enabled = false
 		grant.ValidUntil = &until
 		if err := s.db.PutGrant(ctx, grant); err != nil {

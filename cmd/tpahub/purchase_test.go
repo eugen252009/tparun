@@ -149,12 +149,11 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	if purchase.ProductID != string(offer.ProductID) || purchase.PlanCode != offer.ID || purchase.OfferVersion != offer.Version || purchase.AmountMinor != offer.AmountMinor || purchase.Currency != offer.Currency || purchase.EntitlementPeriodStart != "2026-09-15T00:00:00Z" || purchase.EntitlementPeriodEnd != "2027-09-15T00:00:00Z" {
 		t.Fatalf("purchase commercial snapshot=%+v", purchase)
 	}
-	// Simulate inherited Standard limits at webhook time. Activation must use
-	// the Nano purchase snapshot, not whatever product grants currently exist.
+	// Disabled local policy at webhook time cannot change the paid snapshot.
 	until := now.AddDate(1, 0, 0)
 	for _, grant := range []commerce.Grant{
-		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 500_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
-		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "standard", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{EgressBytes: 20_000_000_000}, Source: "legacy", CreatedAt: now, UpdatedAt: now},
+		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "standard", Enabled: false, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 500_000_000}, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "standard", Enabled: false, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodMonthly, Limits: commerce.Limits{EgressBytes: 20_000_000_000}, Source: "local", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := s.db.PutGrant(context.Background(), grant); err != nil {
 			t.Fatal(err)
@@ -177,10 +176,6 @@ func TestStripeTestNanoPurchaseAndWebhookActivatesOnce(t *testing.T) {
 	purchase, _ = s.db.Purchase(context.Background(), created.PurchaseID)
 	if purchase.Status != "paid" {
 		t.Fatalf("paid status=%s", purchase.Status)
-	}
-	ent, err := s.db.Entitlement(context.Background(), "a")
-	if err != nil || ent.Source == "purchase" || ent.PurchaseID == created.PurchaseID {
-		t.Fatalf("payment activation changed compatibility projection: entitlement=%+v err=%v", ent, err)
 	}
 	grant, grantErr := s.db.GetGrant(context.Background(), "a", tpahubproduct.ProductID, CapabilityRepositoryPublish, now)
 	if grantErr != nil || grant.Source != "purchase" || grant.PurchaseID != created.PurchaseID || grant.ValidUntil == nil || grant.OfferID != "nano" || grant.Period != offer.Cadence || grant.Limits.StorageBytes != NanoStorageBytes {

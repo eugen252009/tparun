@@ -23,8 +23,32 @@ type PurchaseProvider = payments.Provider
 type providerError = payments.Error
 
 func ValidateBillingConfiguration(c config.Config) error {
-	if c.RegistrationEnabled && !c.BillingPurchasesEnabled && !c.LocalProvisioningEnabled {
+	mode, err := config.ResolveBillingMode(c)
+	if err != nil {
+		return err
+	}
+	source, err := config.ResolveCapabilitySource(c)
+	if err != nil {
+		return err
+	}
+	if c.RegistrationEnabled && !c.BillingPurchasesEnabled && source == config.CapabilitiesHosted {
 		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("public registration requires billing purchases or explicit local provisioning")}
+	}
+	if mode == config.BillingNone {
+		if c.BillingPurchasesEnabled {
+			return fmt.Errorf("billing none cannot enable purchases")
+		}
+		return nil
+	}
+	if mode == config.BillingHosted {
+		if c.BillingProvider != "stripe" {
+			return fmt.Errorf("unsupported hosted payment adapter %q", c.BillingProvider)
+		}
+		if _, _, err := hostedCheckoutURLs(c); err != nil {
+			return err
+		}
+	} else if c.BillingProvider != "mock" && c.BillingProvider != "" {
+		return fmt.Errorf("simulator requires mock billing provider")
 	}
 	if c.BillingPurchasesEnabled && c.BillingProvider != "stripe" {
 		return providerError{Code: "provider-configuration-invalid", Cause: fmt.Errorf("purchase flow requires Stripe test provider")}

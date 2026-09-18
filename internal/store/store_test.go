@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +18,10 @@ func TestRestartMarksRunningJobsFailed(t *testing.T) {
 		t.Fatal(e)
 	}
 	ctx := context.Background()
-	if e = s.CreateRepository(ctx, Repository{ID: "r", Name: "r", CreatedAt: "now"}); e != nil {
+	if e = s.CreateAccount(ctx, Account{ID: "owner", Email: "owner@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.CreateRepository(ctx, Repository{ID: "r", AccountID: "owner", Name: "r", CreatedAt: "now"}); e != nil {
 		t.Fatal(e)
 	}
 	if e = s.CreateJob(ctx, Job{ID: "j", RepositoryID: "r", State: "running", IncomingPath: "x", CreatedAt: "now"}); e != nil {
@@ -37,215 +38,6 @@ func TestRestartMarksRunningJobsFailed(t *testing.T) {
 		t.Fatalf("%+v %v", j, e)
 	}
 }
-func TestEntitlementValidityBoundaries(t *testing.T) {
-	from := "2026-09-15T00:00:00Z"
-	until := "2027-09-15T00:00:00Z"
-	paid := AccountEntitlement{Source: "purchase", ValidFrom: from, ValidUntil: until}
-	for _, tc := range []struct {
-		at     time.Time
-		active bool
-	}{
-		{time.Date(2026, 9, 14, 23, 59, 59, 999999999, time.UTC), false},
-		{time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC), true},
-		{time.Date(2027, 9, 14, 23, 59, 59, 999999999, time.UTC), true},
-		{time.Date(2027, 9, 15, 0, 0, 0, 0, time.UTC), false},
-	} {
-		active, err := paid.ActiveAt(tc.at)
-		if err != nil || active != tc.active {
-			t.Fatalf("at %s active=%v err=%v", tc.at, active, err)
-		}
-	}
-	legacy := AccountEntitlement{Source: "legacy", ValidFrom: from}
-	active, err := legacy.ActiveAt(time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err != nil || !active {
-		t.Fatalf("legacy active=%v err=%v", active, err)
-	}
-	paid.ValidUntil = ""
-	if active, err = paid.ActiveAt(time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)); err != nil || active {
-		t.Fatalf("open-ended paid active=%v err=%v", active, err)
-	}
-}
-
-func TestUnknownLegacyPlanFailsClosedDuringMigration(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,created_at,updated_at,source) VALUES('unknown-plan','mystery','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','legacy')`); err != nil {
-		// The foreign key is intentionally exercised with a real account below.
-		_, _ = s.db.Exec(`INSERT INTO accounts VALUES('unknown-plan','unknown-plan@example.invalid','x','active','2026-01-01T00:00:00Z')`)
-		if _, err = s.db.Exec(`INSERT INTO account_entitlements(account_id,plan_code,started_at,valid_from,created_at,updated_at,source) VALUES('unknown-plan','mystery','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','legacy')`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	if err = Migrate(dir); err == nil {
-		t.Fatal("unknown legacy plan migrated successfully")
-	}
-	if _, err = os.Stat(filepath.Join(dir, "tpahub.db")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOrphanedPurchaseGrantFailsClosedDuringMigration(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`INSERT INTO accounts VALUES('orphan-grant','orphan@example.invalid','x','active','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`INSERT INTO product_grants(customer_id,product_id,capability_id,offer_id,enabled,valid_from,valid_until,period_cadence,source,purchase_id,created_at,updated_at) VALUES('orphan-grant','tpa-hub','repository.publish','offer',1,'2026-01-01T00:00:00Z','2027-01-01T00:00:00Z','annual','purchase','missing-purchase','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	if err = Migrate(dir); err == nil {
-		t.Fatal("orphaned purchase grant migrated successfully")
-	}
-}
-
-func TestEntitlementValidityMigrationAndRestart(t *testing.T) {
-	d := t.TempDir()
-	db, err := sql.Open("sqlite", filepath.Join(d, "tpahub.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`PRAGMA foreign_keys=ON;
-CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE account_entitlements(account_id TEXT PRIMARY KEY REFERENCES accounts(id),plan_code TEXT NOT NULL,started_at TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'legacy',purchase_id TEXT NOT NULL DEFAULT '');
-CREATE TABLE billing_purchases(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),plan_code TEXT NOT NULL,rate_card_id TEXT NOT NULL,rate_card_mode TEXT NOT NULL,tax_classification TEXT NOT NULL DEFAULT 'saas-personal',currency TEXT NOT NULL,amount_minor INTEGER NOT NULL,billing_environment TEXT NOT NULL,provider TEXT NOT NULL,status TEXT NOT NULL,entitlement_period_start TEXT NOT NULL,entitlement_period_end TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',checkout_url TEXT NOT NULL DEFAULT '',checkout_request_version TEXT NOT NULL DEFAULT 'v1',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,paid_at TEXT NOT NULL DEFAULT '',failed_at TEXT NOT NULL DEFAULT '',expired_at TEXT NOT NULL DEFAULT '');
-INSERT INTO accounts VALUES('legacy','legacy@example.invalid','x','active','2025-01-01T00:00:00Z'),('paid','paid@example.invalid','x','active','2026-01-01T00:00:00Z');
-INSERT INTO account_entitlements VALUES('legacy','nano','2025-01-01T00:00:00Z','2025-01-01T00:00:00Z','2025-01-01T00:00:00Z','legacy',''),('paid','nano','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','purchase','p1');
-INSERT INTO billing_purchases VALUES('p1','paid','nano','production-nano-v1','production','saas-personal','EUR',500,'test','stripe','paid','2026-09-15T00:00:00Z','2027-09-15T00:00:00Z','','','v2','2026-09-15T00:00:00Z','2026-09-15T00:00:00Z','2026-09-15T00:00:00Z','','');`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	migrationFault = func(stage string) error {
-		if stage == "before-commit" {
-			return errors.New("injected migration interruption")
-		}
-		return nil
-	}
-	if err = Migrate(d); err == nil {
-		t.Fatal("migration interruption was accepted")
-	}
-	migrationFault = nil
-	if err = Migrate(d); err != nil {
-		t.Fatal(err)
-	}
-	for restart := 0; restart < 2; restart++ {
-		s, err := Open(d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		legacy, err := s.Entitlement(context.Background(), "legacy")
-		legacyFrom, fromErr := time.Parse(time.RFC3339Nano, legacy.ValidFrom)
-		legacyUntil, untilErr := time.Parse(time.RFC3339Nano, legacy.ValidUntil)
-		if err != nil || fromErr != nil || untilErr != nil || legacy.Source != "migration" || legacy.PlanCode != "nano" || !legacyUntil.Equal(legacyFrom.AddDate(0, 6, 0)) {
-			t.Fatalf("restart %d migration=%+v err=%v", restart, legacy, err)
-		}
-		legacyGrant, err := s.GetGrant(context.Background(), "legacy", tpahubproduct.ProductID, "repository.publish", legacyFrom.Add(time.Hour))
-		if err != nil || legacyGrant.Source != "migration" || legacyGrant.PurchaseID != "" || legacyGrant.ValidUntil == nil || legacyGrant.Limits.StorageBytes != tpahubproduct.NanoStorageBytes {
-			t.Fatalf("restart %d migration grant=%+v err=%v", restart, legacyGrant, err)
-		}
-		paid, err := s.Entitlement(context.Background(), "paid")
-		if restart == 0 {
-			if err != nil || paid.ValidFrom != "2026-09-15T00:00:00Z" || paid.ValidUntil != "2027-09-15T00:00:00Z" {
-				t.Fatalf("restart %d paid=%+v err=%v", restart, paid, err)
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("restart %d compatibility projection was rebuilt: %+v err=%v", restart, paid, err)
-		}
-		purchase, err := s.Purchase(context.Background(), "p1")
-		if err != nil || purchase.ProductID != string(tpahubproduct.ProductID) {
-			t.Fatalf("restart %d purchase=%+v err=%v", restart, purchase, err)
-		}
-		if restart == 0 {
-			if _, err = s.db.Exec(`DELETE FROM account_entitlements WHERE account_id='paid'`); err != nil {
-				t.Fatal(err)
-			}
-		}
-		grant, err := s.GetGrant(context.Background(), "paid", tpahubproduct.ProductID, "repository.download", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
-		if err != nil || grant.Limits.EgressBytes != 12_000_000_000 || grant.Source != "purchase" || grant.PurchaseID != "p1" {
-			t.Fatalf("restart %d grant=%+v err=%v", restart, grant, err)
-		}
-		s.Close()
-	}
-}
-
-func TestProviderCommercialRowsMigrateToProductScope(t *testing.T) {
-	dir := t.TempDir()
-	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`PRAGMA foreign_keys=ON;
-CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE billing_provider_submissions(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,provider TEXT NOT NULL,environment TEXT NOT NULL,finalization_id TEXT NOT NULL,status TEXT NOT NULL,provider_reference TEXT NOT NULL DEFAULT '',attempted_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(account_id,period,provider,environment));
-CREATE TABLE mock_billing_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(account_id,period,event_type));
-INSERT INTO accounts VALUES('commercial','commercial@example.invalid','x','active','2025-01-01T00:00:00Z');
-INSERT INTO billing_provider_submissions VALUES('commercial','2026-01','stripe','test','legacy-final','submitted','ii_legacy','2026-01-01T00:00:00Z','','');
-INSERT INTO mock_billing_events VALUES('legacy-event','commercial','2026-01','period-finalized','{}','2026-01-01T00:00:00Z');`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	if err = Migrate(dir); err != nil {
-		t.Fatal(err)
-	}
-	for restart := 0; restart < 2; restart++ {
-		s, err := Open(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		submission, err := s.ProviderSubmission(context.Background(), "commercial", string(tpahubproduct.ProductID), "2026-01", "stripe", "test")
-		if err != nil || submission.ProductID != string(tpahubproduct.ProductID) {
-			t.Fatalf("restart %d submission=%+v err=%v", restart, submission, err)
-		}
-		payload, err := s.ProductMockBillingEventPayload(context.Background(), "commercial", string(tpahubproduct.ProductID), "2026-01", "period-finalized")
-		if err != nil || payload != "{}" {
-			t.Fatalf("restart %d payload=%q err=%v", restart, payload, err)
-		}
-		if restart == 0 {
-			if err = s.SaveProviderSubmission(context.Background(), BillingProviderSubmission{AccountID: "commercial", ProductID: "test-product", Period: "2026-01", Provider: "stripe", Environment: "test", FinalizationID: "test-final", Status: "submitted", AttemptedAt: "2026-01-01T00:00:00Z"}); err != nil {
-				t.Fatalf("cross-product submission collision: %v", err)
-			}
-			if err = s.RecordProductMockBillingEvent(context.Background(), "legacy-event", "commercial", "test-product", "2026-01", "period-finalized", `{"test":true}`, "2026-01-01T00:00:00Z"); err != nil {
-				t.Fatalf("cross-product event collision: %v", err)
-			}
-		}
-		s.Close()
-	}
-}
-
-func TestLegacyGrantMigrationDoesNotGrantFutureNonTPAAccounts(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.CreateAccount(context.Background(), Account{ID: "other-only", Email: "other-only@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if _, err = s.GetGrant(context.Background(), "other-only", tpahubproduct.ProductID, "repository.create", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(err, commerce.ErrGrantNotFound) {
-		t.Fatalf("restart granted TPA product to non-TPA account: %v", err)
-	}
-}
 
 func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	s, err := Open(t.TempDir())
@@ -259,7 +51,7 @@ func TestProductScopedGrantsAndPendingPurchasesAreIsolated(t *testing.T) {
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	testProduct := commerce.ProductID("test-product")
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "shared", ProductID: testProduct, CapabilityID: "test.execute", OfferID: "test-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodMonthly, Limits: commerce.Limits{OperationMetric: commerce.MetricID("test_operations"), OperationCount: 77}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "shared", ProductID: testProduct, CapabilityID: "test.execute", OfferID: "test-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodMonthly, Limits: commerce.Limits{OperationMetric: commerce.MetricID("test_operations"), OperationCount: 77}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	testGrant, err := s.GetGrant(ctx, "shared", testProduct, "test.execute", now)
@@ -296,11 +88,19 @@ func TestActivePurchaseGrantBlocksOnlyItsProduct(t *testing.T) {
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	until := now.AddDate(1, 0, 0)
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "paid-products", ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: now, ValidUntil: &until, Period: commerce.PeriodAnnual, Source: "purchase", PurchaseID: "paid-tpa", CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
 	purchase := func(id string, product commerce.ProductID) BillingPurchase {
 		return BillingPurchase{ID: id, AccountID: "paid-products", ProductID: string(product), PlanCode: "offer", RateCardID: "rate", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 1, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	}
+	paid := purchase("paid-tpa", tpahubproduct.ProductID)
+	paid.ProviderReference = "paid-reference"
+	if _, err = s.CreatePendingPurchase(ctx, paid, paid.CreatedAt, commerce.GrantTemplate{CapabilityID: tpahubproduct.CapabilityRepositoryPublish, Period: commerce.PeriodAnnual}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdatePurchaseCheckout(ctx, paid.ID, paid.ProviderReference, "https://checkout.invalid/paid", paid.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ApplyPaymentTransition(ctx, commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: "paid-event", OperationID: paid.ID, Type: commerce.PaymentSucceeded, ProviderReference: paid.ProviderReference, AmountMinor: paid.AmountMinor, Currency: paid.Currency, OccurredAt: now}, Provider: paid.Provider, Environment: paid.BillingEnvironment, Kind: "success", AmountMinor: paid.AmountMinor, Currency: paid.Currency}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = s.CreatePendingPurchase(ctx, purchase("blocked", tpahubproduct.ProductID), now.Format(time.RFC3339Nano), commerce.GrantTemplate{Period: commerce.PeriodMonthly, CapabilityID: "test.execute"}); err == nil || err.Error() != "purchase-already-active" {
 		t.Fatalf("active product purchase error=%v", err)
@@ -322,7 +122,7 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	until := now.AddDate(1, 0, 0)
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "old-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999, EgressBytes: 999, OperationMetric: "old_metric", OperationCount: 99}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "old-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999, EgressBytes: 999, OperationMetric: "old_metric", OperationCount: 99}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	purchase := BillingPurchase{ID: "snapshot-purchase", AccountID: "snapshot", ProductID: "test-product", PlanCode: "test-offer-v2", RateCardID: "test-rate-v2", RateCardMode: "production", TaxClassification: "saas-personal", Currency: "EUR", AmountMinor: 725, BillingEnvironment: "test", Provider: "stripe", Status: "pending", EntitlementPeriodStart: now.Format(time.RFC3339Nano), EntitlementPeriodEnd: until.Format(time.RFC3339Nano), ProviderReference: "cs_snapshot", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
@@ -348,11 +148,11 @@ func TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms(t *testing.T) {
 	}
 	// Webhook-time grants are deliberately changed; activation must use the
 	// immutable purchase snapshot instead of this mutable live state.
-	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "webhook-time-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1, EgressBytes: 2, OperationMetric: "wrong_metric", OperationCount: 3}, Source: "legacy", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err = s.PutGrant(ctx, commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "webhook-time-offer", Enabled: true, ValidFrom: now.Add(-time.Hour), ValidUntil: &until, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1, EgressBytes: 2, OperationMetric: "wrong_metric", OperationCount: 3}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	// A same-product unrelated capability must not be activated by this purchase.
-	unrelated := commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "unrelated", OfferID: "old", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999}, Source: "legacy", CreatedAt: now, UpdatedAt: now}
+	unrelated := commerce.Grant{CustomerID: "snapshot", ProductID: "test-product", CapabilityID: "unrelated", OfferID: "old", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 999}, Source: "local", CreatedAt: now, UpdatedAt: now}
 	if err = s.PutGrant(ctx, unrelated); err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +319,7 @@ func TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase(t *testing.T
 	}
 }
 
-func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
+func TestGrantValidityDisabledAndProvenance(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -532,12 +332,12 @@ func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	past := now.Add(-time.Hour)
 	future := now.Add(time.Hour)
-	grant := commerce.Grant{CustomerID: "grants", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "test", Enabled: true, ValidFrom: past, ValidUntil: &future, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 42}, Source: "purchase", PurchaseID: "purchase-link", CreatedAt: now, UpdatedAt: now}
+	grant := commerce.Grant{CustomerID: "grants", ProductID: "test-product", CapabilityID: "test.execute", OfferID: "test", Enabled: true, ValidFrom: past, ValidUntil: &future, Period: commerce.PeriodMonthly, Limits: commerce.Limits{StorageBytes: 42}, Source: "administrative", CreatedAt: now, UpdatedAt: now}
 	if err = s.PutGrant(ctx, grant); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetGrant(ctx, grant.CustomerID, grant.ProductID, grant.CapabilityID, now)
-	if err != nil || got.PurchaseID != "purchase-link" || got.Limits.StorageBytes != 42 {
+	if err != nil || got.Source != "administrative" || got.PurchaseID != "" || got.Limits.StorageBytes != 42 {
 		t.Fatalf("grant=%+v err=%v", got, err)
 	}
 	if _, err = s.GetGrant(ctx, grant.CustomerID, grant.ProductID, grant.CapabilityID, future); !errors.Is(err, commerce.ErrGrantInactive) {
@@ -553,7 +353,7 @@ func TestGrantValidityDisabledAndPurchaseLinkage(t *testing.T) {
 	}
 }
 
-func TestCreatePendingPurchasePropagatesEntitlementQueryError(t *testing.T) {
+func TestCreatePendingPurchasePropagatesGrantQueryError(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -563,7 +363,7 @@ func TestCreatePendingPurchasePropagatesEntitlementQueryError(t *testing.T) {
 	if err = s.CreateAccount(ctx, Account{ID: "guard", Email: "guard@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE product_grants`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE purchase_grant_instances`); err != nil {
 		t.Fatal(err)
 	}
 	now := "2026-09-15T00:00:00Z"
@@ -736,34 +536,13 @@ func TestCreateAccountEntitlementAndRequiredGrantsAreAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	required := commerce.Grant{ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "legacy", CreatedAt: created, UpdatedAt: created}
+	required := commerce.Grant{ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Source: "local", CreatedAt: created, UpdatedAt: created}
 	err = s.CreateAccount(ctx, Account{ID: "atomic", Email: "atomic@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}, required)
 	if err == nil {
 		t.Fatal("expected grant insert failure")
 	}
 	if _, lookupErr := s.AccountByID(ctx, "atomic"); lookupErr != sql.ErrNoRows {
 		t.Fatalf("half-created account remains: %v", lookupErr)
-	}
-}
-
-func TestFreshSchemaContainsEntitlementValidity(t *testing.T) {
-	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	grantInput := commerce.Grant{ProductID: tpahubproduct.ProductID, CapabilityID: "repository.publish", OfferID: "nano", Enabled: true, ValidFrom: created, Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 5_000_000}, Source: "local", CreatedAt: created, UpdatedAt: created}
-	if err = s.CreateAccount(context.Background(), Account{ID: "fresh", Email: "fresh@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2026-01-01T00:00:00Z"}, grantInput); err != nil {
-		t.Fatal(err)
-	}
-	entitlement, err := s.Entitlement(context.Background(), "fresh")
-	if err != nil || entitlement.ValidFrom != "2026-01-01T00:00:00Z" || entitlement.ValidUntil != "" || entitlement.Source != "local" {
-		t.Fatalf("entitlement=%+v err=%v", entitlement, err)
-	}
-	grant, err := s.GetGrant(context.Background(), "fresh", tpahubproduct.ProductID, "repository.publish", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err != nil || grant.Limits.StorageBytes != 5_000_000 || grant.OfferID != "nano" {
-		t.Fatalf("fresh grant=%+v err=%v", grant, err)
 	}
 }
 
@@ -774,7 +553,10 @@ func TestRepositoryAndJobPersistence(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	r := Repository{ID: "r", Name: "demo", CreatedAt: "now"}
+	if e = s.CreateAccount(ctx, Account{ID: "owner", Email: "owner@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "now"}); e != nil {
+		t.Fatal(e)
+	}
+	r := Repository{ID: "r", AccountID: "owner", Name: "demo", CreatedAt: "now"}
 	if e = s.CreateRepository(ctx, r); e != nil {
 		t.Fatal(e)
 	}

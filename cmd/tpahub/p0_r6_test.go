@@ -432,8 +432,8 @@ func TestInodeAdmissionBoundaryAndConcurrentUploads(t *testing.T) {
 		free int64
 		want int
 	}{
-		{name: "exact reserve", free: 75, want: http.StatusAccepted},
-		{name: "below reserve", free: 74, want: http.StatusInsufficientStorage},
+		{name: "exact reserve", free: 12, want: http.StatusAccepted},
+		{name: "below reserve", free: 11, want: http.StatusInsufficientStorage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, h := testServer(t)
@@ -466,7 +466,8 @@ func TestInodeAdmissionBoundaryAndConcurrentUploads(t *testing.T) {
 	s, h := testServer(t)
 	s.cfg.MinFreeInodes = 10
 	s.freeInodes = func() (int64, error) {
-		free := int64(75)
+		// Floor + incoming root + one raw upload directory and file.
+		free := int64(13)
 		root := filepath.Join(s.cfg.DataDir, "incoming")
 		_ = filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
 			if err == nil && entry != nil {

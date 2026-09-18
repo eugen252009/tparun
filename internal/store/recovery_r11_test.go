@@ -38,10 +38,28 @@ func r11PurchaseFixture(t *testing.T, dir, id, account, environment string) (*St
 	return s, p
 }
 
-func r11DropSnapshotMutationTriggers(t *testing.T, s *Store) {
+func r11DropSnapshotMutationTriggers(t *testing.T, s *Store) func() {
 	t.Helper()
-	if _, err := s.db.Exec(`DROP TRIGGER IF EXISTS purchase_grant_snapshots_immutable_update; DROP TRIGGER IF EXISTS purchase_grant_snapshots_immutable_delete; DROP TRIGGER IF EXISTS purchase_grant_snapshot_sets_immutable_update; DROP TRIGGER IF EXISTS purchase_grant_snapshot_sets_immutable_delete`); err != nil {
-		t.Fatal(err)
+	// Preserve the real production DDL while constructing corrupt-data fixtures.
+	// Restart tests must not depend on migrate repairing a corrupt current schema.
+	names := []string{"purchase_grant_snapshots_immutable_update", "purchase_grant_snapshots_immutable_delete", "purchase_grant_snapshot_sets_immutable_update", "purchase_grant_snapshot_sets_immutable_delete"}
+	var definitions []string
+	for _, name := range names {
+		var ddl string
+		if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?`, name).Scan(&ddl); err != nil {
+			t.Fatal(err)
+		}
+		definitions = append(definitions, ddl)
+		if _, err := s.db.Exec(`DROP TRIGGER ` + name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return func() {
+		for _, ddl := range definitions {
+			if _, err := s.db.Exec(ddl); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 
@@ -85,10 +103,7 @@ func r11AssertReconciledPayment(t *testing.T, s *Store, p BillingPurchase, refer
 			t.Fatalf("reconciliation capability %s access=%v", capability, grantErr)
 		}
 	}
-	var projection int
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM account_entitlements WHERE account_id=? AND source='purchase'`, p.AccountID).Scan(&projection); err != nil || projection != 0 {
-		t.Fatalf("compatibility projection=%d err=%v", projection, err)
-	}
+
 	for i := 0; i < 2; i++ {
 		fresh := p
 		fresh.ID = p.ID + "-blocked-" + string(rune('a'+i))
@@ -207,10 +222,11 @@ func r11RefreshSnapshotDigest(t *testing.T, s *Store, purchaseID string) {
 func TestReconciliationEvidencePrecedenceReplayAndRestart(t *testing.T) {
 	dir := t.TempDir()
 	s, p := r11PurchaseFixture(t, dir, "reconcile-restart", "reconcile-restart-account", "test")
-	r11DropSnapshotMutationTriggers(t, s)
+	restore := r11DropSnapshotMutationTriggers(t, s)
 	if _, err := s.db.Exec(`DELETE FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, p.ID); err != nil {
 		t.Fatal(err)
 	}
+	restore()
 	r11AssertReconciledPayment(t, s, p, "ref-reconcile-restart", "evt-success")
 	transition := func(id, kind string, typ commerce.PaymentEventType) commerce.PaymentTransition {
 		return commerce.PaymentTransition{Event: commerce.PaymentEvent{ProviderEventID: id, OperationID: p.ID, Type: typ, ProviderReference: "ref-reconcile-restart", AmountMinor: p.AmountMinor, Currency: p.Currency, OccurredAt: time.Date(2045, 1, 1, 0, 0, 0, 0, time.UTC)}, Provider: p.Provider, Environment: p.BillingEnvironment, Kind: kind, AmountMinor: p.AmountMinor, Currency: p.Currency}
@@ -313,23 +329,7 @@ func r11PurchaseFixtureOnStore(t *testing.T, s *Store, id, account, environment 
 	return s, p
 }
 
-func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
-	t.Run("nullable-historical-references", func(t *testing.T) {
-		db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "nullable.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer db.Close()
-		if _, err = db.Exec(`CREATE TABLE billing_purchases(provider TEXT NOT NULL,billing_environment TEXT NOT NULL,provider_reference TEXT); INSERT INTO billing_purchases VALUES('stripe','test',NULL),('stripe','test',NULL),('stripe','test',''),('stripe','test','')`); err != nil {
-			t.Fatal(err)
-		}
-		if err = enforceUniquePurchaseProviderReferences(db); err != nil {
-			t.Fatalf("nullable/empty references failed migration: %v", err)
-		}
-		if _, err = db.Exec(`INSERT INTO billing_purchases VALUES('stripe','test',NULL),('stripe','test','')`); err != nil {
-			t.Fatalf("nullable/empty reference rejected after migration: %v", err)
-		}
-	})
+func TestProviderReferenceUniqueIndexCurrentMatrix(t *testing.T) {
 	t.Run("empty-references-and-restart", func(t *testing.T) {
 		dir := t.TempDir()
 		s, p := r11PurchaseFixture(t, dir, "empty-a", "empty-account-a", "test")
@@ -369,21 +369,18 @@ func TestProviderReferenceUniqueIndexUpgradeMatrix(t *testing.T) {
 		}
 		defer s.Close()
 	})
-	t.Run("historical-duplicate-non-empty", func(t *testing.T) {
+	t.Run("corrupt-index-with-duplicates", func(t *testing.T) {
 		dir := t.TempDir()
 		s, a := r11PurchaseFixture(t, dir, "duplicate-a", "duplicate-account-a", "test")
 		_, b := r11PurchaseFixtureOnStore(t, s, "duplicate-b", "duplicate-account-b", "test")
 		if _, err := s.db.Exec(`DROP INDEX billing_purchases_provider_reference; UPDATE billing_purchases SET provider_reference='duplicate-reference' WHERE id IN (?,?)`, a.ID, b.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE name='purchase-intentstate-elimination-v1'`); err != nil {
-			t.Fatal(err)
-		}
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
 		err := Migrate(dir)
-		if err == nil || !strings.Contains(err.Error(), "duplicate billing purchase provider reference") {
+		if err == nil || !strings.Contains(err.Error(), "billing_purchases_provider_reference") {
 			t.Fatalf("duplicate upgrade error=%v", err)
 		}
 		db, openErr := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
@@ -420,10 +417,11 @@ func TestFinalizedCommercialAuthorityRemainsImmutableR11(t *testing.T) {
 func TestIncompleteAuthorityProviderEventIsAtomicAtFormerRecoveryBoundary(t *testing.T) {
 	dir := t.TempDir()
 	s, p := r11PurchaseFixture(t, dir, "atomic-boundary", "atomic-boundary-account", "test")
-	r11DropSnapshotMutationTriggers(t, s)
+	restore := r11DropSnapshotMutationTriggers(t, s)
 	if _, err := s.db.Exec(`DELETE FROM purchase_grant_snapshot_sets WHERE purchase_id=?`, p.ID); err != nil {
 		t.Fatal(err)
 	}
+	restore()
 	providerEventFault = func(stage string) error {
 		if stage == "after-reconciliation" {
 			return errors.New("injected former-boundary failure")

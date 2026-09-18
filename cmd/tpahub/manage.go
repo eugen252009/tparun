@@ -57,7 +57,11 @@ func repoCLI(c cliConfig, a []string) error {
 		if len(a) < 2 {
 			return fmt.Errorf("repository required")
 		}
-		return getPrint(c.Server+"/v1/repositories/"+a[1], c.Token)
+		repository, err := resolveRepository(c, a[1])
+		if err != nil {
+			return err
+		}
+		return getPrint(c.Server+"/v1/repositories/"+repository, c.Token)
 	case "add":
 		if len(a) < 2 {
 			return fmt.Errorf("repository required")
@@ -90,8 +94,10 @@ func postAuth(c cliConfig, path string, v any, out any) error {
 	b, _ := json.Marshal(v)
 	r, _ := http.NewRequest("POST", c.Server+path, bytes.NewReader(b))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+c.Token)
-	res, e := http.DefaultClient.Do(r)
+	if c.Token != "" {
+		r.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	res, e := doCLIRequest(r)
 	if e != nil {
 		return e
 	}
@@ -127,8 +133,10 @@ func tokenCLI(c cliConfig, a []string) error {
 			return fmt.Errorf("token id required")
 		}
 		req, _ := http.NewRequest("DELETE", c.Server+"/v1/repositories/"+repo+"/reader-credentials/"+a[2], nil)
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-		res, e := http.DefaultClient.Do(req)
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+		res, e := doCLIRequest(req)
 		if e != nil {
 			return e
 		}
@@ -137,7 +145,7 @@ func tokenCLI(c cliConfig, a []string) error {
 		return fmt.Errorf("unknown token action")
 	}
 }
-func resolveRepository(c cliConfig, value string) (string, error) {
+func repositoryID(value string) bool {
 	if len(value) == 32 {
 		valid := true
 		for _, character := range value {
@@ -146,37 +154,62 @@ func resolveRepository(c cliConfig, value string) (string, error) {
 				break
 			}
 		}
-		if valid {
-			return value, nil
+		return valid
+	}
+	return false
+}
+func resolveRepository(c cliConfig, value string) (string, error) {
+	return resolveRepositoryInScope(c, value, false)
+}
+
+// Mutation names are account scoped. Read/discovery names are drawn from the
+// union of the authenticated account's repositories and public repositories.
+// Every subsequent operation uses the resolved immutable ID, not the name.
+func resolveRepositoryInScope(c cliConfig, value string, ownerOnly bool) (string, error) {
+	if repositoryID(value) {
+		return value, nil
+	}
+	type repository struct{ ID, Name, Visibility string }
+	var repositories []repository
+	if ownerOnly || c.Token != "" {
+		if c.Token == "" {
+			return "", fmt.Errorf("login required to resolve an owned repository name")
+		}
+		if err := getJSON(c.Server+"/v1/repositories", c.Token, &repositories); err != nil {
+			return "", fmt.Errorf("discover owned repositories: %w", err)
 		}
 	}
-	var repositories []struct {
-		ID, Name, Visibility string
-	}
-	if err := getJSON(c.Server+"/v1/public/repositories", "", &repositories); err != nil {
-		return "", fmt.Errorf("discover public repositories: %w", err)
+	if !ownerOnly {
+		var public []repository
+		if err := getJSON(c.Server+"/v1/public/repositories", "", &public); err != nil {
+			return "", fmt.Errorf("discover public repositories: %w", err)
+		}
+		repositories = append(repositories, public...)
 	}
 	match := ""
 	for _, repository := range repositories {
 		if repository.Name != value {
 			continue
 		}
-		if match != "" {
+		if !repositoryID(repository.ID) {
+			return "", fmt.Errorf("server returned an invalid repository ID")
+		}
+		if match != "" && match != repository.ID {
 			return "", fmt.Errorf("repository name %q is ambiguous; use its repository ID", value)
 		}
 		match = repository.ID
 	}
 	if match == "" {
-		return "", fmt.Errorf("public repository %q not found", value)
+		return "", fmt.Errorf("repository %q not found in the accessible scope; private names require owner login, otherwise use the repository ID", value)
 	}
 	return match, nil
 }
 
 func addRepo(c cliConfig, v, reader string) error {
-	repo, e := owned(c, v)
-	if e != nil {
-		repo = v
-	}
+	// repoCLI resolved a public name or explicit ID already. Reader-based APT
+	// registration needs no publisher credential or authenticated discovery.
+	repo := v
+	var e error
 	var meta struct{ ID, Visibility string }
 	if reader != "" {
 		meta.ID = repo
@@ -184,40 +217,86 @@ func addRepo(c cliConfig, v, reader string) error {
 	} else if e = getJSON(c.Server+"/v1/repositories/"+repo, c.Token, &meta); e != nil {
 		return e
 	}
-	key, e := http.Get(c.Server + "/v1/repositories/" + repo + "/signing-key")
+	if meta.Visibility == "private" && reader == "" {
+		return fmt.Errorf("private repository requires --token")
+	}
+	if strings.ContainsAny(reader, " \t\r\n\"\\\x00") {
+		return fmt.Errorf("invalid reader credential")
+	}
+	req, e := http.NewRequest("GET", c.Server+"/v1/repositories/"+repo+"/signing-key", nil)
+	if e != nil {
+		return e
+	}
+	key, e := doCLIRequest(req)
 	if e != nil {
 		return e
 	}
 	defer key.Body.Close()
-	kb, _ := io.ReadAll(key.Body)
+	if key.StatusCode != http.StatusOK {
+		return fmt.Errorf("signing key download failed: %s", key.Status)
+	}
+	kb, e := io.ReadAll(key.Body)
+	if e != nil {
+		return e
+	}
 	name := "tpahub-" + repo
 	keyPath := "/etc/apt/keyrings/" + name + ".gpg"
 	src := "/etc/apt/sources.list.d/" + name + ".list"
 	if e = os.MkdirAll("/etc/apt/keyrings", 0755); e != nil {
 		return e
 	}
-	if e = os.WriteFile(keyPath, kb, 0644); e != nil {
+	if e = writeAPTFile(keyPath, kb, 0644); e != nil {
 		return e
 	}
 	if meta.Visibility == "private" {
 		if reader == "" {
 			return fmt.Errorf("private repository requires --token")
 		}
-		auth := "machine " + strings.TrimRight(c.Server, "/") + " login reader password " + reader + "\n"
+		if strings.ContainsAny(reader, " \t\r\n") {
+			return fmt.Errorf("invalid reader credential")
+		}
+		auth := "machine " + strings.TrimRight(c.Server, "/") + "/r/" + repo + "/ login reader password " + reader + "\n"
 		if e = os.MkdirAll("/etc/apt/auth.conf.d", 0755); e != nil {
 			return e
 		}
-		if e = os.WriteFile("/etc/apt/auth.conf.d/"+name, []byte(auth), 0600); e != nil {
+		if e = writeAPTFile("/etc/apt/auth.conf.d/"+name, []byte(auth), 0600); e != nil {
 			return e
 		}
 	}
 	line := fmt.Sprintf("deb [signed-by=%s] %s/r/%s/ stable main\n", keyPath, c.Server, repo)
-	return os.WriteFile(src, []byte(line), 0644)
+	if e = os.MkdirAll(filepath.Dir(src), 0755); e != nil {
+		return e
+	}
+	return writeAPTFile(src, []byte(line), 0644)
 }
+
+// Replace credential files atomically, even when an old file has unsafe modes.
+func writeAPTFile(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tpahub-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err = f.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
 func removeRepo(c cliConfig, v string) error {
-	repo, e := owned(c, v)
+	repo, e := resolveRepository(c, v)
 	if e != nil {
-		repo = v
+		return e
 	}
 	name := "tpahub-" + repo
 	for _, p := range []string{"/etc/apt/sources.list.d/" + name + ".list", "/etc/apt/keyrings/" + name + ".gpg", "/etc/apt/auth.conf.d/" + name} {

@@ -69,7 +69,7 @@ func TestRealFirefoxNanoOpsMatrix(t *testing.T) {
 	put := func(id string, storage, egress int64) {
 		t.Helper()
 		for capability := range map[commerce.CapabilityID]bool{CapabilityRepositoryPublish: true, CapabilityRepositoryDownload: true} {
-			if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(id), ProductID: tpahubproduct.ProductID, CapabilityID: capability, OfferID: "fixture", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: storage, EgressBytes: egress}, Source: "test", CreatedAt: now, UpdatedAt: now}); err != nil {
+			if err := s.db.PutGrant(context.Background(), commerce.Grant{CustomerID: commerce.CustomerID(id), ProductID: tpahubproduct.ProductID, CapabilityID: capability, OfferID: "fixture", Enabled: true, ValidFrom: now.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: storage, EgressBytes: egress}, Source: "local", CreatedAt: now, UpdatedAt: now}); err != nil {
 				t.Fatal(err)
 			}
 		}
