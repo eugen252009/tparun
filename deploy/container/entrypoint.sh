@@ -24,8 +24,12 @@ ensure_signing_key() {
     export TPAHUB_GPG_FINGERPRINT="$fingerprint"
 }
 
+run_hub() {
+    /usr/local/bin/tpahub "$@"
+}
+
 if [ "${1:-serve}" = "init" ]; then
-    /usr/local/bin/tpahub init
+    run_hub init
     ensure_signing_key
     printf 'Initialized self-hosted state; signing fingerprint: %s\n' "$TPAHUB_GPG_FINGERPRINT"
     exit 0
@@ -33,9 +37,16 @@ fi
 
 if [ "${1:-serve}" = "serve" ]; then
     if [ ! -f "$TPAHUB_DATA_DIR/server-profile.json" ]; then
-        /usr/local/bin/tpahub init
+        run_hub init
     fi
     ensure_signing_key
+    shift
+    exec /usr/local/bin/tpahub serve "$@"
+fi
+
+if [ "${1:-}" = "tpahub" ]; then
+    shift
+    exec /usr/local/bin/tpahub "$@"
 fi
 
 exec "$@"
