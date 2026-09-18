@@ -36,6 +36,11 @@ if [ "${1:-serve}" = "init" ]; then
 fi
 
 if [ "${1:-serve}" = "serve" ]; then
+    case "${TPAHUB_OPERATOR_ORIGIN:-}" in
+        https://*) ;;
+        http://localhost*|http://127.0.0.1*|http://[::1]*) ;;
+        *) echo 'TPAHUB_OPERATOR_ORIGIN must be HTTPS outside loopback' >&2; exit 1 ;;
+    esac
     if [ ! -f "$TPAHUB_DATA_DIR/server-profile.json" ]; then
         run_hub init
     fi
