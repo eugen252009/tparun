@@ -98,9 +98,13 @@ func TestOpsMissingLimitsRenderWithoutFailing(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("dashboard status=%d", w.Code)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, `data-limit-state="finite" data-limit-bytes="5000000"`) || !strings.Contains(body, `data-limit-state="finite" data-limit-bytes="12000000000"`) {
-		t.Fatalf("Nano floor state not represented: %s", body)
+	normalized := strings.Join(strings.Fields(w.Body.String()), " ")
+	if !strings.Contains(normalized, `data-limit-state="finite" data-limit-bytes="5000000"`) ||
+		!strings.Contains(normalized, `data-limit-state="finite" data-limit-bytes="12000000000"`) ||
+		!strings.Contains(normalized, `data-limit-state="none" data-limit-bytes="0"`) ||
+		strings.Contains(normalized, `data-limit-state="finite" data-limit-bytes="0"`) ||
+		!strings.Contains(normalized, "no applicable limit") {
+		t.Fatalf("limit states not represented semantically: %s", w.Body.String())
 	}
 }
 

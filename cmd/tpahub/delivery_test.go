@@ -558,7 +558,15 @@ func TestLocalUsageOperatorDashboardReadsMetrics(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	body := w.Body.String()
-	if w.Code != 200 || !strings.Contains(body, "resets on restart") || !strings.Contains(body, "Billing is disabled.") || strings.Contains(body, `data-used-bytes="999"`) || strings.Contains(body, "Egress (30d)") {
+	normalized := strings.Join(strings.Fields(body), " ")
+	if w.Code != 200 ||
+		!strings.Contains(normalized, `data-used-bytes="10"`) ||
+		!strings.Contains(normalized, `data-limit-state="finite" data-limit-bytes="5000000"`) ||
+		!strings.Contains(normalized, `data-limit-state="none" data-limit-bytes="0"`) ||
+		!strings.Contains(body, "resets on restart") ||
+		!strings.Contains(body, "Billing is disabled.") ||
+		strings.Contains(body, `data-used-bytes="999"`) ||
+		strings.Contains(body, "Egress (30d)") {
 		t.Fatalf("operator dashboard=%d %s", w.Code, body)
 	}
 	if version() != before || payment.calls.Load() != 0 {

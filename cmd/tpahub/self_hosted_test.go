@@ -169,7 +169,14 @@ func TestFreshSelfHostedInitializationStartupPublicationAndUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != 200 || !bytes.Contains(body, []byte(formatBytes(int64(len(release)))+" observed locally")) || !bytes.Contains(body, []byte("1 admitted file requests")) || bytes.Contains(body, []byte("Billing preview")) {
+	if response.StatusCode != 200 ||
+		!bytes.Contains(body, []byte(formatBytes(int64(len(release))))) ||
+		!bytes.Contains(body, []byte("observed locally")) ||
+		!bytes.Contains(body, []byte("1 admitted file requests")) ||
+		!bytes.Contains(body, []byte("Volatile local metrics; reset on restart. No egress quota enforcement.")) ||
+		bytes.Contains(body, []byte("used this entitlement year")) ||
+		bytes.Contains(body, []byte("Egress capacity: 0 B")) ||
+		bytes.Contains(body, []byte("Billing preview")) {
 		t.Fatalf("usage dashboard=%d %s", response.StatusCode, body)
 	}
 	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))

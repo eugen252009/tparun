@@ -176,7 +176,7 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			} else if path == "/pricing" {
 				wants = append(wants, "Standard", "Pro", "Same core capabilities", "5 MB", "12 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "Current plan", "Coming soon", "not an active live purchase offer")
 			} else {
-				wants = append(wants, "id=\"consume\"", "id=\"publish\"", "signed-by", "anniversary-based entitlement year", "Actual delivered", "not available purchase options")
+				wants = append(wants, "id=\"consume\"", "id=\"publish\"", "signed-by", "anniversary-based entitlement year", "Actual delivered", "live usage-based charging", "future spend controls", "test-only")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {
@@ -204,8 +204,15 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 	}
 	accountBody, _ := io.ReadAll(accountResponse.Body)
 	accountResponse.Body.Close()
-	if accountResponse.StatusCode != 200 || !strings.Contains(string(accountBody), "Storage") || !strings.Contains(string(accountBody), "Storage capacity") || strings.Contains(string(accountBody), "quota enforcement is not yet active") || !strings.Contains(string(accountBody), "Egress") || !strings.Contains(string(accountBody), "used this entitlement year") || !strings.Contains(string(accountBody), "Billing preview") || strings.Contains(string(accountBody), "€") {
-		t.Fatalf("account storage display invalid: status=%d", accountResponse.StatusCode)
+	accountText := string(accountBody)
+	if accountResponse.StatusCode != 200 ||
+		!strings.Contains(accountText, "Storage") ||
+		!strings.Contains(accountText, "Storage capacity") ||
+		strings.Contains(accountText, "quota enforcement is not yet active") ||
+		!strings.Contains(accountText, "Egress") ||
+		(!strings.Contains(accountText, "used this entitlement year") && !strings.Contains(accountText, "observed locally")) ||
+		strings.Contains(accountText, "€") {
+		t.Fatalf("account usage display invalid: status=%d", accountResponse.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/r/invalid/InRelease")
 	if e != nil {

@@ -72,10 +72,20 @@
         <pre><code>sudo tpahub repo add mema-public --server https://tpa.lupricht.net
             sudo tpahub repo add bloom-public --server https://tpa.lupricht.net
             sudo apt update
-            sudo apt install mema tpahub</code></pre>
+            sudo apt install mema bloom</code></pre>
         <p>For older clients, add each repository by its directory ID as described above, then run the same APT
           commands.</p>
         <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
+      </section>
+      <section id="bloom">
+        <h2>Try Bloom</h2>
+        <p>Find the minimum of <code>[31, 12, 91, 4, 28]</code>. The input below encodes unsigned 32-bit little-endian integers:</p>
+        <pre><code>mema list
+bloom search "math min u32"
+bloom describe math.min.u32
+printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' |
+  bloom run math.min.u32 --input-format u32le --output-format text</code></pre>
+        <p>Expected output: <strong><code>4</code></strong>. Bloom is an independent tool; it does not require Mema.</p>
       </section>
       <section id="publish">
         <h2>Publish your package</h2>

@@ -40,14 +40,18 @@
         <p><strong><span class="resource-usage" data-used-bytes="{{.EgressBytes}}"
               data-limit-state="{{.EgressLimit.State}}" data-limit-bytes="{{.EgressLimit.Bytes}}">{{.EgressBytes}} B /
               {{if eq .EgressLimit.State "finite"}}{{.EgressLimit.Bytes}} B{{else}}no applicable
-              limit{{end}}</span></strong> egress in the current entitlement period</p>
+              limit{{end}}</span></strong> egress {{.EgressSummary}}</p>
         <p class="fine">Physical capacity: {{.PhysicalCapacity}}</p>
       </article>
       <article class="account-card">
         <h2>Billing lifecycle</h2>
+        {{if .HasBilling}}
         <p>Pending {{.Pending}} · paid {{.Paid}} · failed {{.Failed}} · expired {{.Expired}} · reconciliation required
           {{.Reconciliation}}</p>
         <p class="fine">Provider environment: {{.BillingEnvironment}}</p>
+        {{else}}
+        <p>Billing is disabled.</p>
+        {{end}}
       </article>
     </div>
     <section class="section" aria-labelledby="accounts">
@@ -97,7 +101,7 @@
               <th scope="col">Account</th>
               <th scope="col">Class</th>
               <th scope="col">Storage</th>
-              <th scope="col">Egress (30d)</th>
+              <th scope="col">Egress ({{.RepositoryEgressPeriod}})</th>
             </tr>
           </thead>
           <tbody>

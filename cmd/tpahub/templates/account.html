@@ -30,9 +30,14 @@
         <article class="account-card">
           <h3>Repository egress</h3>
           {{if .HasEgressUsage}}
-          <p class="lead"><strong>{{.EgressUsed}}</strong> used this entitlement year</p>
+          <p class="lead"><strong>{{.EgressUsed}}</strong> {{if .EgressEnforced}}used this entitlement year{{else}}observed locally{{end}}</p>
+          {{if .EgressEnforced}}
           <p>Egress capacity: {{.EgressCapacity}}</p>
-          <p class="fine">Current entitlement period: {{.BillingPeriod}}</p>
+          <p class="fine">Current entitlement period: {{.EgressPeriod}}</p>
+          {{else}}
+          <p class="fine">{{.EgressRequests}} admitted file requests</p>
+          <p class="fine">Usage period: {{.EgressPeriod}}</p>
+          {{end}}
           <p class="fine">{{.EgressStatus}}</p>
           {{else}}
           <p>Egress usage unavailable</p>
@@ -50,6 +55,9 @@
         <p class="fine">This is a virtual usage preview, not an invoice or a live charge.</p>
       </div>
     </section>
+    {{end}}
+    {{if .ShowBillingPreviewLink}}
+    <p class="fine"><a href="/account?billing=preview">View billing preview</a></p>
     {{end}}
     {{if .ShowSandboxPurchase}}
     <section class="section" aria-labelledby="sandbox">

@@ -54,10 +54,9 @@ go vet ./...
 node --test tests/ops-resource-test.js
 ```
 
-The full `go test ./...` run currently fails at the existing
-`TestPublicBootstrapAndVersionEndpoints`: it expects the old installer repository
-ID. The same failure was reproduced from a clean archive of `94c226d`. The
-installer and that assertion are deliberately unchanged by this UI work.
+The full `go test ./...` suite is expected to pass. UI assertions belong in
+semantic website/layout tests; they should not require the previous page copy or
+HTML nesting.
 
 For browser checks, build and run the ordinary server with a disposable local
 data directory (never point the preview at production data):
