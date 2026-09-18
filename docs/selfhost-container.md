@@ -32,7 +32,9 @@ No forwarded header is trusted to invent an origin.
 ## Build
 
 Build on an amd64 Linux machine with Docker and with the unchanged TPA checkout
-next to this checkout:
+next to this checkout. The resulting image is published separately to the
+internal registry; NAS deployment should use the digest-pinned reference above,
+not a local build tag:
 
 ```sh
 cd tpahub-p1
@@ -44,6 +46,25 @@ on a dirty Hub worktree, embeds the full Hub Git SHA in `BuildRevision`, and
 produces `tpahub:<short-sha>` and `tpahub:selfhost-<version>`. Record the image
 ID/digest and emitted binary checksum; use the short-SHA tag or digest in the
 NAS `.env`, never `latest`.
+
+## Internal registry image
+
+The qualified image is published as:
+
+```text
+192.168.188.2:9006/tpahub-server:3d1d19359c38
+192.168.188.2:9006/tpahub-server:selfhost-0.1.1
+```
+
+Both tags resolve to this immutable digest:
+
+```text
+192.168.188.2:9006/tpahub-server@sha256:e0490566039f65f3779db24277bf98c4ba995bce7fea1acfb025b89c0f3a5dfc
+```
+
+The example environment file uses the digest-pinned reference. The registry is
+HTTPS and requires the existing Lupricht CA trust on the NAS Docker daemon. The
+CA fingerprint is `04:49:9A:41:11:9D:D1:3C:E7:6E:90:04:9D:CA:2B:47:D1:17:B0:30:6D:F3:E0:84:2A:85:A7:C4:4D:50:33:6D`; install the approved CA through the NAS trust mechanism rather than disabling TLS verification. No registry signature/referrer was present, so image signature verification is **NOT QUALIFIED**; the digest and embedded build revision remain the provenance checks.
 
 ## First start / initialization
 
