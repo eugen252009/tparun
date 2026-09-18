@@ -22,7 +22,7 @@ Inspect the complete installer first:
 curl -fsSL https://tpa.lupricht.net/install.sh
 ```
 
-The script embeds the public signing key, installs it under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly and does not use curl or wget after it starts. The public zero-bootstrap path is qualified with `./tests/bootstrap-qualification.sh` in clean Debian. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Mema support is not currently provided.
+The script embeds the public signing key, installs it under `/etc/apt/keyrings`, registers the official signed APT source, runs `apt-get update`, and installs `tpahub`. It is safe to run repeatedly and does not use curl or wget after it starts. The public zero-bootstrap path is qualified with `./tests/bootstrap-qualification.sh` in clean Debian. The official server and repository are built into the installer; `TPAHUB_SERVER` and `TPAHUB_REPOSITORY_ID` are available only for deliberate development/testing overrides. Release qualification can bind the same installer to a local candidate package with `TPAHUB_PACKAGE_PATH` and its required `TPAHUB_PACKAGE_SHA256`; both must be supplied together. Mema support is not currently provided.
 
 ## Build and run
 

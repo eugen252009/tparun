@@ -6,7 +6,9 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   exit 1
 fi
 SERVER=${TPAHUB_SERVER:-https://tpa.lupricht.net}
-DEFAULT_REPOSITORY_ID="a0d8fd0f82235ee431c41581aa253ec8"
+PACKAGE_PATH=${TPAHUB_PACKAGE_PATH:-}
+PACKAGE_SHA256=${TPAHUB_PACKAGE_SHA256:-}
+DEFAULT_REPOSITORY_ID="a0d8fd0f82235ee431c415ec8"
 REPOSITORY_ID=${TPAHUB_REPOSITORY_ID:-$DEFAULT_REPOSITORY_ID}
 SERVER=${SERVER%/}
 case "$SERVER" in
@@ -18,6 +20,14 @@ command -v apt-get >/dev/null || { echo 'apt-get is required' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates gnupg
+if [[ -n "$PACKAGE_PATH" || -n "$PACKAGE_SHA256" ]]; then
+  [[ -n "$PACKAGE_PATH" && -n "$PACKAGE_SHA256" ]] || { echo 'TPAHUB_PACKAGE_PATH and TPAHUB_PACKAGE_SHA256 must be supplied together' >&2; exit 1; }
+  [[ -f "$PACKAGE_PATH" ]] || { echo "TPAHUB_PACKAGE_PATH does not exist: $PACKAGE_PATH" >&2; exit 1; }
+  actual=$(sha256sum "$PACKAGE_PATH" | awk '{print $1}')
+  [[ "$actual" == "$PACKAGE_SHA256" ]] || { echo "TPAHUB package checksum mismatch: expected $PACKAGE_SHA256 got $actual" >&2; exit 1; }
+  apt-get install -y "$PACKAGE_PATH"
+  exit 0
+fi
 name="tpahub-$REPOSITORY_ID"
 key="/etc/apt/keyrings/$name.gpg"
 source="/etc/apt/sources.list.d/$name.list"
