@@ -49,6 +49,11 @@ def main():
                     "return [...document.querySelectorAll('a[href^=\"#\"]')]"
                     ".every(a => document.getElementById(a.hash.slice(1)))"
                 ), f"Broken in-page link: {path}"
+                if path == "/docs":
+                    assert browser.execute_script(
+                        "return [...document.querySelectorAll('pre code')].every(code => "
+                        "code.textContent.split('\\n').every(line => !/^\\s{4,}(sudo|tpahub|curl|gpg|mema|bloom)/.test(line)))"
+                    ), "Command block has unintended template indentation"
                 browser.find_element(By.TAG_NAME, "body").send_keys(Keys.TAB)
                 assert browser.switch_to.active_element.get_attribute("class") == "skip-link", path
                 browser.switch_to.active_element.send_keys(Keys.ENTER)

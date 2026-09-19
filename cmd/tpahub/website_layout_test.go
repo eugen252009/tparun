@@ -70,6 +70,34 @@ func TestWebsiteSharedShellAndAccessBoundaries(t *testing.T) {
 	}
 }
 
+func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
+	s, _ := testServer(t)
+	for _, path := range []string{"/docs", "/account"} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if path == "/account" {
+			r.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_test"})
+		}
+		s.routes().ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		body := w.Body.String()
+		blocks := []string{"tpahub login --server https://tpa.lupricht.net\ntpahub repo create"}
+		if path == "/docs" {
+			blocks = append(blocks, "sudo apt-get update\nsudo apt-get install", "tpahub register --server https://tpa.lupricht.net\ntpahub login")
+		}
+		for _, block := range blocks {
+			if !strings.Contains(body, block) {
+				t.Errorf("%s missing unindented command block %q", path, block)
+			}
+		}
+		if strings.Contains(body, "\n            sudo ") || strings.Contains(body, "\n          tpahub ") {
+			t.Errorf("%s contains template indentation in a command block", path)
+		}
+	}
+}
+
 func TestWebsiteFormsKeepProductionContracts(t *testing.T) {
 	s, _ := testServer(t)
 	for _, tc := range []struct {

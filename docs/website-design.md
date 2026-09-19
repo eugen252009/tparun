@@ -2,10 +2,9 @@
 
 ## Scope
 
-The website normalization starts from `94c226d` in the isolated
-`website-normalization` worktree. It is a presentation change, not a release
-baseline repair. Do not deploy this branch until the separate production release
-and Schema 4 compatibility concerns have been resolved.
+The website is a presentation layer over the existing TPA Hub routes and
+contracts. Template and stylesheet changes should remain separate from product
+behavior, storage, authentication, and deployment changes.
 
 Public pages answer distinct questions:
 
@@ -80,6 +79,7 @@ The script only accepts a localhost preview. It does not submit forms. Firefox
 BiDi sets and verifies actual 360, 768 and 1440 CSS-pixel viewports (ordinary
 window resizing can silently clamp Firefox to a larger minimum). It checks nine
 public/operator-entry/error pages for overflow, heading/landmark counts, labels,
-fragment targets, and keyboard skip navigation, and captures full-page screenshots.
-Authenticated layouts are covered by router tests, not claimed as browser-tested.
-This is a smoke test, not a complete accessibility audit.
+fragment targets, keyboard skip navigation, and unindented command examples, and
+captures full-page screenshots. Authenticated layouts are covered by router tests,
+not claimed as browser-tested. This is a smoke test, not a complete accessibility
+audit.

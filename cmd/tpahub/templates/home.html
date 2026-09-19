@@ -33,11 +33,11 @@
   <section class="section project-stat"><strong>{{.PackageCount}}</strong><span>packages currently published through TPA Hub</span></section>
   {{end}}
   <section class="section" aria-labelledby="trust">
-    <p class="eyebrow">Inspect before you trust</p>
-    <h2 id="trust">Signed repositories. Visible trust material.</h2>
-    <p>APT sources use a repository-scoped <code>signed-by</code> keyring, not a global trusted key.</p>
-    <div class="actions"><a href="/install.sh">Read the installer</a><a href="/tpahub.asc">Inspect the signing key</a><a href="/docs#trust">Verify the fingerprint</a></div>
-    <p class="fingerprint">42313D9F5F1F319AB5A18F6122380CEE20D731C6</p>
+    <p class="eyebrow">Repository trust</p>
+    <h2 id="trust">Signed repositories, scoped trust.</h2>
+    <p>APT sources use a repository-scoped <code>signed-by</code> keyring, so each repository carries its own trust material.</p>
+    <div class="actions"><a href="/install.sh">Read the installer</a><a href="/docs#trust">Verify repository trust</a></div>
+    <p class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</p>
   </section>
 </main>
 {{template "footer"}}

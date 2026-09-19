@@ -32,7 +32,7 @@
   <nav aria-label="Footer navigation">
     <a href="/docs">Documentation</a>
     <a href="/install.sh">Installer</a>
-    <a href="/tpahub.asc">Signing key</a>
+    <a href="/docs#trust">Repository trust</a>
     <a href="https://lupricht.net/legal/">Legal</a>
     <a href="https://lupricht.net/privacy/">Privacy</a>
   </nav>
@@ -44,5 +44,5 @@
 {{end}}
 
 {{define "release-note"}}
-<p class="notice">Public onboarding is being qualified. Some published CLI versions require an explicit server and repository ID. See <a href="/docs#compatibility">client compatibility</a> before getting started.</p>
+<p class="notice">Newer CLI releases can discover public repositories by name. Older releases need an explicit server and repository ID; see <a href="/docs#compatibility">client compatibility</a> to get started.</p>
 {{end}}
