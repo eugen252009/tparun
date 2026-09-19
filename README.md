@@ -29,7 +29,7 @@ checksum with `TPAHUB_RELEASE_PACKAGE_PATH` and
 `TPAHUB_RELEASE_PACKAGE_SHA256`; both are required together. See
 [Debian bootstrap packaging](docs/debian-bootstrap.md). The public bootstrap
 repository also carries the qualified `mema` and `bloom` packages used by the
-clean Debian qualification.
+[clean Debian qualification](docs/debian-bootstrap-qualification.md).
 
 ## Build and run
 
@@ -208,7 +208,8 @@ Schema 5 supersedes the pre-release lineage conflict through an explicit compati
 cut, not a historical upgrade. See the [schema contract](docs/schema-upgrades.md).
 No deployment or production upgrade is authorized by local qualification. Offline
 recovery state and the destructive restore gate are documented in
-[backup and restore](docs/backup-restore.md); qualification is still outstanding.
+[backup and restore](docs/backup-restore.md). The public clean Debian consumer
+path is recorded in the [final bootstrap qualification](docs/debian-bootstrap-qualification.md).
 
 ## API and storage
 
