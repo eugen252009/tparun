@@ -12,7 +12,7 @@
     <p>Egress usage: {{.EgressUsed}}<br>Egress limit: {{.EgressLimit}}</p>
   </div>
   <section class="section">
-    <h2>Change capacity</h2><p class="fine">Enter positive finite limits in bytes.</p>
+    <h2>Change account capacity policy</h2><p class="fine">This changes the bootstrap account entitlement only; it does not grant operator authority or repository ownership. Enter positive finite limits in bytes.</p>
     <form method="post" class="stack-form">
       <input type="hidden" name="action" value="capacity">
       <label for="storage-limit">Storage limit</label><input id="storage-limit" name="storage_limit" type="number" min="1" required>

@@ -3,16 +3,23 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 func TestRepositoryPolicySeparatesOwnershipFromEntitlement(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()
 	if err := s.db.CreateAccount(ctx, store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.PutGrant(ctx, commerce.Grant{CustomerID: "b", ProductID: tpahubproduct.ProductID, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "administrative", Enabled: true, ValidFrom: time.Now().Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1 << 40}, Source: "administrative", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.db.CreateRepository(ctx, store.Repository{ID: "owned", AccountID: "a", Name: "owned", CreatedAt: "now"}); err != nil {
@@ -23,6 +30,24 @@ func TestRepositoryPolicySeparatesOwnershipFromEntitlement(t *testing.T) {
 	}
 	if _, _, err := s.repositoryPolicy().AuthorizePublication(ctx, "a", "owned"); err != nil {
 		t.Fatalf("owner with effective Nano entitlement was denied: %v", err)
+	}
+}
+
+func TestNormalAccountSessionCannotUseOperatorBootstrapRoute(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	if err := s.db.CreateAccount(ctx, store.Account{ID: "normal", Email: "normal@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateSession(ctx, store.Session{ID: "normal-session", AccountID: "normal", TokenPrefix: "tph_s_normal"}, store.HashToken("tph_s_normal")); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, h.URL+"/ops/bootstrap", nil)
+	r.AddCookie(&http.Cookie{Name: "tpahub_session", Value: "tph_s_normal"})
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/ops/login" {
+		t.Fatalf("normal account reached operator route: status=%d location=%q", w.Code, w.Header().Get("Location"))
 	}
 }
 

@@ -56,7 +56,7 @@ Local finite defaults preserve the historical bounds: 5,000,000 storage bytes,
 `TPAHUB_LOCAL_STORAGE_BYTES`, `TPAHUB_LOCAL_EGRESS_BYTES` and
 `TPAHUB_LOCAL_PRIVATE_READ_ENABLED=true|false`. Changes affect new accounts only;
 existing grants are never silently replaced. Zero is not unlimited. See
-[local capability provisioning](docs/local-capability-provisioning.md).
+[local capability provisioning](docs/local-capability-provisioning.md) and [authorization separation](docs/authorization-separation.md).
 
 **Upgrade compatibility:** without an initialized profile, `serve` retains legacy
 strict-accounted/mock defaults. `init` refuses existing state and never migrates a
