@@ -298,15 +298,12 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		bad(w, 405, "method not allowed")
 		return
 	}
-	data, e := os.ReadFile("install.sh")
+	data, e := websiteFiles.ReadFile("install.sh")
 	if e != nil {
-		data, e = os.ReadFile("../../install.sh")
-	}
-	if e != nil {
-		bad(w, 404, "installer not found")
+		bad(w, 500, "installer unavailable")
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Write(data)
 }
 func (s *server) publicKey(w http.ResponseWriter, r *http.Request) {

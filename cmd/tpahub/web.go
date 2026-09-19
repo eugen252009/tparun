@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed templates/*.html static/site.css static/ops-auth.js static/ops.js
+//go:embed install.sh templates/*.html static/site.css static/ops-auth.js static/ops.js
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
 
