@@ -76,8 +76,8 @@ func Load() Config {
 		StripeTestSecret:         os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
 		StripeWebhookSecret:      os.Getenv("TPAHUB_STRIPE_WEBHOOK_SECRET"),
 		BillingPurchasesEnabled:  os.Getenv("TPAHUB_BILLING_PURCHASES_ENABLED") == "true",
-		OperatorRelyingPartyID:   env("TPAHUB_OPERATOR_RP_ID", "tpa.lupricht.net"),
-		OperatorOrigin:           env("TPAHUB_OPERATOR_ORIGIN", "https://tpa.lupricht.net"),
+		OperatorRelyingPartyID:   env("TPAHUB_OPERATOR_RP_ID", "tpa.run"),
+		OperatorOrigin:           env("TPAHUB_OPERATOR_ORIGIN", "https://tpa.run"),
 	}
 }
 

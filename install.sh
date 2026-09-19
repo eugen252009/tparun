@@ -5,7 +5,7 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   echo 'install.sh must run as root' >&2
   exit 1
 fi
-SERVER=${TPAHUB_SERVER:-https://tpa.lupricht.net}
+SERVER=${TPAHUB_SERVER:-https://tpa.run}
 RELEASE_PACKAGE_URL=${TPAHUB_RELEASE_PACKAGE_URL:-$SERVER/tpahub-release_0.1.2_all.deb}
 RELEASE_PACKAGE_PATH=${TPAHUB_RELEASE_PACKAGE_PATH:-}
 RELEASE_PACKAGE_SHA256=${TPAHUB_RELEASE_PACKAGE_SHA256:-fa8d8121a0b7f71c8c0af021ed4fe1ef954d2804af068744c475aa36a6dab89b}

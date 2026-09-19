@@ -83,9 +83,9 @@ func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
 		body := w.Body.String()
-		blocks := []string{"tpahub login --server https://tpa.lupricht.net\ntpahub repo create"}
+		blocks := []string{"tpahub login --server https://tpa.run\ntpahub repo create"}
 		if path == "/docs" {
-			blocks = append(blocks, "sudo apt-get update\nsudo apt-get install", "tpahub register --server https://tpa.lupricht.net\ntpahub login")
+			blocks = append(blocks, "sudo apt-get update\nsudo apt-get install", "tpahub register --server https://tpa.run\ntpahub login")
 		}
 		for _, block := range blocks {
 			if !strings.Contains(body, block) {

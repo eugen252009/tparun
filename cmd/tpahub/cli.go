@@ -30,7 +30,7 @@ type cliConfig struct {
 	err                  error
 }
 
-const defaultServer = "https://tpa.lupricht.net"
+const defaultServer = "https://tpa.run"
 
 func configPath() string {
 	d := os.Getenv("XDG_CONFIG_HOME")

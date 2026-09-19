@@ -117,8 +117,8 @@ TPAHUB_STRIPE_WEBHOOK_SECRET=<configured securely>
 These are documented examples, not production configuration changes.
 
 `TPAHUB_CHECKOUT_SUCCESS_URL` and `TPAHUB_CHECKOUT_CANCEL_URL` configure the hosted
-adapter's return addresses. Only that adapter supplies the historic official
-`https://tpa.lupricht.net/` fallback. Generic purchase orchestration and self-hosted
+adapter's return addresses. Only that adapter supplies the hosted public
+`https://tpa.run/` fallback. Generic purchase orchestration and self-hosted
 startup do not contain/use those defaults. Selected hosted configuration rejects
 invalid schemes, missing hosts, userinfo and fragments. HTTP/HTTPS are supported
 for the current test integration.

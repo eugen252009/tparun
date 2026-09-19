@@ -150,7 +150,7 @@ func TestOperatorSessionDoesNotSurviveStateReconstruction(t *testing.T) {
 
 func TestRecoveryRejectsQuerySecrets(t *testing.T) {
 	s, _ := testServer(t)
-	s.cfg.OperatorOrigin = "https://tpa.lupricht.net"
+	s.cfg.OperatorOrigin = "https://tpa.run"
 	r := httptest.NewRequest(http.MethodPost, "/ops/recover?recovery_code=TPA-RCV-invalid", nil)
 	r.Header.Set("Origin", s.cfg.OperatorOrigin)
 	w := httptest.NewRecorder()

@@ -47,7 +47,7 @@ Download and install the bootstrap package, then let APT discover the
 application:
 
 ```sh
-curl -LO https://tpa.lupricht.net/tpahub-release_0.1.2_all.deb
+curl -LO https://tpa.run/tpahub-release_0.1.2_all.deb
 sudo apt install ./tpahub-release_0.1.2_all.deb
 sudo apt update
 apt policy tpahub

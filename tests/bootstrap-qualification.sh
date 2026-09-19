@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-RELEASE_URL=${TPAHUB_RELEASE_PACKAGE_URL:-https://tpa.lupricht.net/tpahub-release_0.1.2_all.deb}
+RELEASE_URL=${TPAHUB_RELEASE_PACKAGE_URL:-https://tpa.run/tpahub-release_0.1.2_all.deb}
 RELEASE_SHA256=${TPAHUB_RELEASE_PACKAGE_SHA256:-fa8d8121a0b7f71c8c0af021ed4fe1ef954d2804af068744c475aa36a6dab89b}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -11,7 +11,7 @@ ARG RELEASE_URL
 ARG RELEASE_SHA256
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
 RUN curl -fsSL "$RELEASE_URL" -o /tmp/tpahub-release.deb && echo "$RELEASE_SHA256  /tmp/tpahub-release.deb" | sha256sum -c -
-RUN curl -fsSL https://tpa.lupricht.net/install.sh -o /tmp/install.sh && \
+RUN curl -fsSL https://tpa.run/install.sh -o /tmp/install.sh && \
     TPAHUB_RELEASE_PACKAGE_PATH=/tmp/tpahub-release.deb TPAHUB_RELEASE_PACKAGE_SHA256="$RELEASE_SHA256" bash /tmp/install.sh
 RUN test -s /usr/share/keyrings/tpahub-archive-keyring.gpg && \
     test -s /etc/apt/sources.list.d/tpahub.sources && \

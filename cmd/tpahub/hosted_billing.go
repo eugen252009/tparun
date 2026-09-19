@@ -15,7 +15,7 @@ import (
 )
 
 // These are defaults of the hosted adapter, not repository/client endpoints.
-const hostedCheckoutReturnURL = "https://tpa.lupricht.net/"
+const hostedCheckoutReturnURL = "https://tpa.run/"
 
 func hostedCheckoutURLs(c config.Config) (string, string, error) {
 	success, cancel := c.CheckoutSuccessURL, c.CheckoutCancelURL

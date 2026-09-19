@@ -4,16 +4,16 @@
 
 TPA Hub is a CLI-first service for publishing and serving public or private APT repositories. **TPA Hub uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
-TPA Hub now has a small public website at `https://tpa.lupricht.net`. It explains the CLI-first workflow and Nano availability; repository and package management remain in `tpahub` plus normal `apt` commands.
+TPA Hub now has a small public website at `https://tpa.run`. It explains the CLI-first workflow and Nano availability; repository and package management remain in `tpahub` plus normal `apt` commands.
 
 ## Install TPA Hub
 
-The official bootstrap trust material is also available for inspection at `https://tpa.lupricht.net/tpahub.asc`. The public deployment marker is available at `https://tpa.lupricht.net/version` and returns the service version, startup time, and revision marker.
+The public deployment marker is available at `https://tpa.run/version` and returns the service version, startup time, and revision marker. Repository trust is configured per repository by the client.
 
 The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -LO https://tpa.lupricht.net/tpahub-release_0.1.2_all.deb
+curl -LO https://tpa.run/tpahub-release_0.1.2_all.deb
 sudo apt install ./tpahub-release_0.1.2_all.deb
 sudo apt update
 sudo apt install tpahub
@@ -92,7 +92,7 @@ TPAHUB_LOCAL_PROVISIONING_ENABLED false (set true only for an intentional local 
 
 ## Website and onboarding
 
-Start at `https://tpa.lupricht.net/`, read the practical guide at `/docs`, or inspect the public installer and signing key at `/install.sh` and `/tpahub.asc`. Nano is available now; Standard and Pro are displayed as coming soon and have no activation or billing flow.
+Start at `https://tpa.run/` and read the practical guide at `/docs`. The installer is available at `/install.sh`. Nano is available now; Standard and Pro are displayed as coming soon and have no activation or billing flow.
 
 The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPAHUB_REGISTRATION_ENABLED`; public registration requires enabled purchases or a local capability source (including the legacy `TPAHUB_LOCAL_PROVISIONING_ENABLED` compatibility selection).
 
@@ -121,7 +121,7 @@ Create a public repository with `tpahub repo create name --public`. Repositories
 Public repository:
 
 ```sh
-sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
+sudo tpahub repo add https://tpa.run/REPOSITORY_ID
 apt update
 apt install package-name
 ```
@@ -129,7 +129,7 @@ apt install package-name
 Private repository registration uses a repository reader credential, not the publisher session token:
 
 ```sh
-sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
+sudo tpahub repo add https://tpa.run/REPOSITORY_ID
 apt update
 apt install package-name
 ```
@@ -142,7 +142,7 @@ register, publish, or inspect repositories. Unprivileged users can preview the
 exact network-fetched key and files without changing the machine:
 
 ```sh
-tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID --dry-run
+tpahub repo add https://tpa.run/REPOSITORY_ID --dry-run
 ```
 
 The CLI writes:

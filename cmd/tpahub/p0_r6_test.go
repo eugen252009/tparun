@@ -546,7 +546,7 @@ func TestProviderCheckoutProcessDeathRecoversExactPurchase(t *testing.T) {
 	}
 	provider.BaseURL = providerServer.URL
 	offer := tpaNanoOffer()
-	_, err = provider.CreateCheckout(context.Background(), payments.Operation{OperationID: "process-purchase", IdempotencyKey: "tpahub:purchase:process-purchase:stripe:test:checkout:v2", CustomerID: commerce.CustomerID("process-account"), ProductID: commerce.ProductID(offer.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account process-account", CustomerMetadata: map[string]string{"tpahub_account_id": "process-account"}, Currency: "EUR", AmountMinor: 500, TaxClass: payments.TaxClass(TaxSaaSPersonal), Metadata: map[string]string{"tpahub_purchase_id": "process-purchase"}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: payments.EnvironmentTest})
+	_, err = provider.CreateCheckout(context.Background(), payments.Operation{OperationID: "process-purchase", IdempotencyKey: "tpahub:purchase:process-purchase:stripe:test:checkout:v2", CustomerID: commerce.CustomerID("process-account"), ProductID: commerce.ProductID(offer.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account process-account", CustomerMetadata: map[string]string{"tpahub_account_id": "process-account"}, Currency: "EUR", AmountMinor: 500, TaxClass: payments.TaxClass(TaxSaaSPersonal), Metadata: map[string]string{"tpahub_purchase_id": "process-purchase"}, SuccessURL: "https://tpa.run/", CancelURL: "https://tpa.run/", Environment: payments.EnvironmentTest})
 	if err != nil {
 		t.Fatalf("provider idempotent retry=%v", err)
 	}
@@ -613,7 +613,7 @@ func TestProviderCheckoutProcessDeathHelper(t *testing.T) {
 		os.Exit(44)
 	}
 	provider.BaseURL = providerURL
-	_, err = provider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2", CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.lupricht.net/", CancelURL: "https://tpa.lupricht.net/", Environment: payments.EnvironmentTest})
+	_, err = provider.CreateCheckout(ctx, payments.Operation{OperationID: purchase.ID, IdempotencyKey: "tpahub:purchase:" + purchase.ID + ":stripe:test:checkout:v2", CustomerID: commerce.CustomerID(purchase.AccountID), ProductID: commerce.ProductID(purchase.ProductID), Description: offer.Description, CustomerDescription: "TPA Hub account " + purchase.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": purchase.AccountID}, Currency: purchase.Currency, AmountMinor: purchase.AmountMinor, TaxClass: payments.TaxClass(purchase.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": purchase.ID}, SuccessURL: "https://tpa.run/", CancelURL: "https://tpa.run/", Environment: payments.EnvironmentTest})
 	if err != nil {
 		os.Exit(45)
 	}
