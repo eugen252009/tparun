@@ -541,6 +541,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		s.key(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "publication-plan" && r.Method == http.MethodPost {
+		s.handlePublicationPlan(w, r, id)
+		return
+	}
 	if len(parts) >= 2 && parts[1] == "reader-credentials" {
 		s.credentials(w, r, id, parts[2:])
 		return
