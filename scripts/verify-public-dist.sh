@@ -44,12 +44,15 @@ curl -fsSL "$BASE/$filename" -o "$TMP/tpahub.deb"
 [[ -z "$EXPECTED_VERSION" || "$version" == "$EXPECTED_VERSION" ]] || { echo "version mismatch: $version" >&2; exit 1; }
 [[ -z "$EXPECTED_SHA256" || "$package_sha" == "$EXPECTED_SHA256" ]] || { echo "SHA-256 mismatch: $package_sha" >&2; exit 1; }
 
-release_block=$(awk 'BEGIN{RS=""} $1 == "Package:" && $2 == "tpahub-release" {print; exit}' "$TMP/Packages")
-[[ -n "$release_block" ]] || { echo 'public repository does not contain Package: tpahub-release' >&2; exit 1; }
-release_filename=$(printf '%s\n' "$release_block" | sed -n 's/^Filename: //p')
-release_sha=$(printf '%s\n' "$release_block" | sed -n 's/^SHA256: //p')
-curl -fsSL "$BASE/$release_filename" -o "$TMP/tpahub-release.deb"
-[[ "$(sha256sum "$TMP/tpahub-release.deb" | awk '{print $1}')" == "$release_sha" ]] || { echo 'published release package hash mismatch' >&2; exit 1; }
+server=${BASE%%/r/*}
+installer=$(curl -fsSL "$server/install.sh")
+release_url=$(printf '%s\n' "$installer" | sed -n 's/^RELEASE_PACKAGE_URL=\${[^}]*:-\(.*\)}$/\1/p' | head -1)
+release_sha=$(printf '%s\n' "$installer" | sed -n 's/^RELEASE_PACKAGE_SHA256=\${[^}]*:-\([0-9a-f]*\)}$/\1/p' | head -1)
+[[ -n "$release_url" && -n "$release_sha" ]] || { echo 'public installer release pin is incomplete' >&2; exit 1; }
+release_url=${release_url//\$SERVER/$server}
+curl -fsSL "$release_url" -o "$TMP/tpahub-release.deb"
+[[ "$(sha256sum "$TMP/tpahub-release.deb" | awk '{print $1}')" == "$release_sha" ]] || { echo 'public root release package hash mismatch' >&2; exit 1; }
+[[ "$(dpkg-deb -f "$TMP/tpahub-release.deb" Package)" == tpahub-release ]] || { echo 'public root release package identity mismatch' >&2; exit 1; }
 dpkg-deb --extract "$TMP/tpahub-release.deb" "$TMP/release-root"
 grep -Fq 'URIs: https://tpa.run/r/tpahub-bootstrap/tpahub-bootstrap' "$TMP/release-root/etc/apt/sources.list.d/tpahub.sources" || { echo 'public release package uses non-canonical repository URL' >&2; exit 1; }
 
