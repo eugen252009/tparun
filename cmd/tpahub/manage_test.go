@@ -54,7 +54,7 @@ func TestRepoAddPublicDoesNotPrompt(t *testing.T) {
 	oldPrompt := repositoryPasswordReader
 	repositoryPasswordReader = func() (string, error) { called = true; return "unexpected", nil }
 	t.Cleanup(func() { repositoryPasswordReader = oldPrompt })
-	if err := repoCLI(cliConfig{Server: server.URL}, []string{"add", server.URL + "/" + repo, "--dry-run"}); err != nil {
+	if err := repositoryCommand(cliConfig{Server: server.URL}, []string{"add", server.URL + "/" + repo, "--dry-run"}); err != nil {
 		t.Fatal(err)
 	}
 	if called {

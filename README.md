@@ -107,24 +107,28 @@ Legacy single-server credentials bind to their stored server before overrides. A
 tpahub register
 tpahub login
 tpahub create private-tools
-tpahub list
+tpahub show https://tpa.run/r/eugen/private-tools
+tpahub add https://tpa.run/r/eugen/private-tools
+tpahub installed
 tpahub stage ./tool_1.0.0_amd64.deb
 tpahub status
-tpahub publish https://tpa.run/REPOSITORY_ID
-tpahub status JOB_ID
-tpahub repo token create private-tools workstation
+tpahub publish https://tpa.run/r/eugen/private-tools
 ```
 
 For automated use, `TPAHUB_EMAIL` and `TPAHUB_PASSWORD` avoid interactive prompts. Passwords are bcrypt-hashed server-side and never logged or stored locally as passwords.
 
-Create a repository with `tpahub create name`; repositories default to hidden/private. Use `tpahub show https://tpa.run/REPOSITORY_ID` to inspect one repository. Repository IDs are opaque and filesystem paths never use names. The legacy `repo` namespace remains a compatibility alias.
+Create a repository with `tpahub create name`; repositories default to hidden/private. Names use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. The command returns a canonical URL such as `https://tpa.run/r/eugen/name`. Use that same URL with `show`, `edit`, `delete`, `add`, `remove`, and `publish`. Usernames use the same lowercase ASCII style with a 31-character limit; canonical URL components never require escaping.
+
+## Account
+
+`tpahub account` reports the authenticated account and selected server. Account credentials remain origin-scoped; changing the server requires fresh authentication.
 
 ## APT registration
 
 Public repository:
 
 ```sh
-sudo tpahub add https://tpa.run/REPOSITORY_ID
+sudo tpahub add https://tpa.run/r/eugen/private-tools
 apt update
 apt install package-name
 ```
@@ -132,7 +136,7 @@ apt install package-name
 Private repository registration uses a repository reader credential, not the publisher session token:
 
 ```sh
-sudo tpahub add https://tpa.run/REPOSITORY_ID
+sudo tpahub add https://tpa.run/r/eugen/private-tools
 apt update
 apt install package-name
 ```
@@ -145,10 +149,10 @@ register, publish, or inspect repositories. Unprivileged users can preview the
 exact network-fetched key and files without changing the machine:
 
 ```sh
-tpahub add https://tpa.run/REPOSITORY_ID --dry-run
+tpahub add https://tpa.run/r/eugen/private-tools --dry-run
 ```
 
-`tpahub list` lists repositories owned by the selected remote account/server; it is not a local APT-subscription inventory.
+`tpahub installed` lists repositories configured on this machine. It is distinct from remote repository management.
 
 The CLI writes:
 
@@ -157,16 +161,11 @@ The CLI writes:
 /etc/apt/sources.list.d/tpahub-<id>.list          0644, signed-by source
 /etc/apt/auth.conf.d/tpahub-<id>                  0600, private repos only
 ```
+Each managed source also carries a `# managed-by: tpahub` marker.
 
-The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/REPOSITORY_ID` removes only these local APT files; it never uninstalls packages or deletes the remote repository. Remote deletion is explicit and destructive: `tpahub delete https://tpa.run/REPOSITORY_ID`.
+The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/r/eugen/private-tools` removes only these local APT files; it never uninstalls packages or deletes the remote repository. Remote deletion is explicit and destructive: `tpahub delete https://tpa.run/r/eugen/private-tools`.
 
-Reader credentials are scoped to one repository, stored server-side only as hashes, and displayed only at creation:
-
-```sh
-tpahub repo token create REPOSITORY_ID workstation
-tpahub repo token list REPOSITORY_ID
-tpahub repo token revoke REPOSITORY_ID TOKEN_ID
-```
+Reader credentials are scoped to one repository, stored server-side only as hashes, and displayed only at creation. Manage reader credentials through the account interface.
 
 ## Local delivery and usage
 

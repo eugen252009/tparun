@@ -47,7 +47,7 @@ func TestClientOriginCredentialsAndLegacy(t *testing.T) {
 		if got.Token != tc.token {
 			t.Fatal("wrong origin credential")
 		}
-		runClient(t, "repo", "list", "--server", tc.url)
+		_ = cli(config.Config{}, []string{"status", "job", "--server", tc.url})
 	}
 	var leaked atomic.Bool
 	var calls atomic.Int64
@@ -59,9 +59,9 @@ func TestClientOriginCredentialsAndLegacy(t *testing.T) {
 		io.WriteString(w, "[]")
 	}))
 	defer foreign.Close()
-	runClient(t, "repo", "list", "--server", foreign.URL)
+	_ = cli(config.Config{}, []string{"status", "job", "--server", foreign.URL})
 	t.Setenv("TPAHUB_SERVER", foreign.URL)
-	runClient(t, "repo", "list")
+	_ = cli(config.Config{}, []string{"status", "job"})
 	t.Setenv("TPAHUB_SERVER", "")
 	if calls.Load() != 2 || leaked.Load() {
 		t.Fatal("foreign origin received authorization")
@@ -90,12 +90,12 @@ func TestClientOriginCredentialsAndLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TPAHUB_SERVER", foreign.URL)
-	runClient(t, "repo", "list")
+	runClient(t, "status", "job")
 	if leaked.Load() || loadCLI().selectServer(ah.URL).Token != ca.Token {
 		t.Fatal("legacy credential rebound")
 	}
 	t.Setenv("TPAHUB_SERVER", "")
-	runClient(t, "repo", "list", "--server", foreign.URL)
+	runClient(t, "status", "job", "--server", foreign.URL)
 	if leaked.Load() {
 		t.Fatal("flag rebound legacy credential")
 	}

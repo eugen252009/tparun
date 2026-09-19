@@ -16,19 +16,19 @@ func TestClientConfigValidationAndOverridePrecedence(t *testing.T) {
 		if r.Header.Get("Authorization") != "" {
 			t.Error("unexpected authorization")
 		}
-		w.Write([]byte("[]"))
+		w.Write([]byte(`{"id":"0123456789abcdef0123456789abcdef","name":"demo","username":"user","visibility":"public"}`))
 	}))
 	defer h.Close()
 	t.Setenv("TPAHUB_SERVER", "not-an-origin")
-	runClient(t, "repo", "list", "--server", h.URL)
-	for _, args := range [][]string{{"repo", "list", "--server"}, {"repo", "list", "--server="}, {"--server", h.URL}} {
+	runClient(t, "show", h.URL+"/0123456789abcdef0123456789abcdef", "--server", h.URL)
+	for _, args := range [][]string{{"show", h.URL + "/0123456789abcdef0123456789abcdef", "--server"}, {"show", h.URL + "/0123456789abcdef0123456789abcdef", "--server="}, {"--server", h.URL}} {
 		if cli(config.Config{}, args) == nil {
 			t.Fatal("incomplete arguments accepted")
 		}
 	}
 	os.MkdirAll(filepath.Dir(configPath()), 0700)
 	os.WriteFile(configPath(), []byte("invalid JSON"), 0600)
-	if cli(config.Config{}, []string{"repo", "list", "--server", h.URL}) == nil {
+	if cli(config.Config{}, []string{"show", h.URL + "/0123456789abcdef0123456789abcdef", "--server", h.URL}) == nil {
 		t.Fatal("malformed configuration ignored")
 	}
 	runClient(t, "version")

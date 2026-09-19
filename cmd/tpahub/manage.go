@@ -33,7 +33,7 @@ func (w *multipartWriter) AddFile(field, path string) error {
 
 var repositoryPrompt = func(prompt string) string { return input(prompt, false) }
 
-func repoCLI(c cliConfig, a []string) error {
+func repositoryCommand(c cliConfig, a []string) error {
 	if len(a) < 1 {
 		return fmt.Errorf("repo command required")
 	}
@@ -49,17 +49,11 @@ func repoCLI(c cliConfig, a []string) error {
 		var out map[string]any
 		e := postAuth(c, "/v1/repositories", v, &out)
 		if e == nil {
-			if id, ok := out["id"].(string); ok && repositoryID(id) {
-				out["url"] = strings.TrimRight(c.Server, "/") + "/" + id
-			}
-			_ = json.NewEncoder(os.Stdout).Encode(out)
+			name, _ := out["name"].(string)
+			username, _ := out["username"].(string)
+			fmt.Println(canonicalRepositoryURL(c.Server, username, name))
 		}
 		return e
-	case "list":
-		if has(a, "--public") {
-			return getPrint(c.Server+"/v1/public/repositories", "")
-		}
-		return getPrint(c.Server+"/v1/repositories", c.Token)
 	case "show":
 		if len(a) < 2 {
 			return fmt.Errorf("repository URL required")
@@ -68,7 +62,12 @@ func repoCLI(c cliConfig, a []string) error {
 		if err != nil {
 			return err
 		}
-		return getPrint(target.Server+"/v1/repositories/"+repository, target.Token)
+		var metadata repositoryView
+		if _, err := getRepositoryMetadata(target, repository, &metadata); err != nil {
+			return err
+		}
+		fmt.Printf("Repository: %s\nVisibility: %s\n", canonicalRepositoryURL(target.Server, metadata.Username, metadata.Name), metadata.Visibility)
+		return nil
 	case "add":
 		if len(a) > 1 && (a[1] == "--help" || a[1] == "-h") {
 			fmt.Println("Usage: tpahub add <repo-url> [--dry-run]")
@@ -97,8 +96,6 @@ func repoCLI(c cliConfig, a []string) error {
 		return editRepository(c, a[1:])
 	case "delete":
 		return deleteRepository(c, a[1:])
-	case "token":
-		return tokenCLI(c, a[1:])
 	default:
 		return fmt.Errorf("unknown repo command %q", a[0])
 	}
@@ -112,7 +109,7 @@ func editRepository(c cliConfig, args []string) error {
 		return err
 	}
 	var metadata struct {
-		ID, Name, Visibility string
+		ID, Name, Username, Visibility string
 	}
 	if _, err = getRepositoryMetadata(target, repository, &metadata); err != nil {
 		return err
@@ -120,7 +117,7 @@ func editRepository(c cliConfig, args []string) error {
 	if metadata.Visibility != "private" && metadata.Visibility != "public" {
 		return fmt.Errorf("invalid current repository visibility")
 	}
-	fmt.Printf("Repository: %s/%s\\nCurrent visibility: %s\\n", strings.TrimRight(target.Server, "/"), repository, metadata.Visibility)
+	fmt.Printf("Repository: %s\\nCurrent visibility: %s\\n", canonicalRepositoryURL(target.Server, metadata.Username, metadata.Name), metadata.Visibility)
 	next := strings.ToLower(strings.TrimSpace(repositoryPrompt("New visibility (private/public): ")))
 	if next != "private" && next != "public" {
 		return fmt.Errorf("visibility must be private or public")
@@ -158,12 +155,12 @@ func deleteRepository(c cliConfig, args []string) error {
 		return err
 	}
 	var metadata struct {
-		ID, Name, Visibility string
+		ID, Name, Username, Visibility string
 	}
 	if _, err = getRepositoryMetadata(target, repository, &metadata); err != nil {
 		return err
 	}
-	fmt.Printf("Repository:\\n  Name: %s\\n  URL: %s/%s\\n  Visibility: %s\\n", metadata.Name, strings.TrimRight(target.Server, "/"), repository, metadata.Visibility)
+	fmt.Printf("Repository:\\n  Name: %s\\n  URL: %s\\n  Visibility: %s\\n", metadata.Name, canonicalRepositoryURL(target.Server, metadata.Username, metadata.Name), metadata.Visibility)
 	if strings.ToLower(strings.TrimSpace(repositoryPrompt("Delete this repository permanently? [y/N] "))) != "y" {
 		fmt.Println("Deletion cancelled.")
 		return nil
@@ -210,66 +207,38 @@ func postAuth(c cliConfig, path string, v any, out any) error {
 	}
 	return json.NewDecoder(res.Body).Decode(out)
 }
-func tokenCLI(c cliConfig, a []string) error {
-	if len(a) < 2 {
-		return fmt.Errorf("token create|list|revoke <repo> ...")
-	}
-	repo, e := owned(c, a[1])
-	if e != nil {
-		return e
-	}
-	switch a[0] {
-	case "create":
-		if len(a) < 3 {
-			return fmt.Errorf("token name required")
-		}
-		var out map[string]any
-		e = postAuth(c, "/v1/repositories/"+repo+"/reader-credentials", map[string]string{"name": a[2]}, &out)
-		if e == nil {
-			fmt.Printf("Token: %v\n", out["token"])
-		}
-		return e
-	case "list":
-		return getPrint(c.Server+"/v1/repositories/"+repo+"/reader-credentials", c.Token)
-	case "revoke":
-		if len(a) < 3 {
-			return fmt.Errorf("token id required")
-		}
-		req, _ := http.NewRequest("DELETE", c.Server+"/v1/repositories/"+repo+"/reader-credentials/"+a[2], nil)
-		if c.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.Token)
-		}
-		res, e := doCLIRequest(req)
-		if e != nil {
-			return e
-		}
-		return printResponse(res)
-	default:
-		return fmt.Errorf("unknown token action")
-	}
-}
 
 type RepoRef struct {
-	Server string
-	ID     string
+	Server   string
+	ID       string
+	Username string
+	Name     string
 }
 
-// ParseRepoURL is the single URL-first repository identity parser. The
-// current wire protocol exposes opaque repository IDs at /<id>; owner/name
-// paths are rejected rather than guessed because the server does not expose
-// an owner identity in repository URLs.
+// ParseRepoURL is the single URL-first repository identity parser. Canonical
+// references use /r/<username>/<repository-name>. A one-segment UUID remains
+// accepted internally for API/storage paths, but is not a user-facing form.
 func ParseRepoURL(value string) (RepoRef, error) {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" {
 		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/REPOSITORY_ID", value)
 	}
-	path := strings.TrimSuffix(u.Path, "/")
+	path := strings.Trim(strings.TrimSuffix(u.Path, "/"), "/")
 	if path == "" || strings.Contains(path, "//") {
-		return RepoRef{}, fmt.Errorf("invalid repository URL %q; repository ID is required", value)
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/r/USERNAME/REPOSITORY", value)
 	}
-	id := strings.TrimPrefix(path, "/")
-	if strings.Contains(id, "/") || !repositoryID(id) {
-		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/REPOSITORY_ID", value)
+	parts := strings.Split(path, "/")
+	var id, username, name string
+	switch {
+	case len(parts) == 3 && parts[0] == "r":
+		username, name = parts[1], parts[2]
+		if !validUsername(username) || !validRepositoryName(name) {
+			return RepoRef{}, fmt.Errorf("invalid repository URL %q; use safe lowercase repository components", value)
+		}
+	case len(parts) == 1 && repositoryID(parts[0]):
+		id = parts[0]
+	default:
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/r/USERNAME/REPOSITORY", value)
 	}
 	originURL := *u
 	originURL.Path = ""
@@ -278,7 +247,7 @@ func ParseRepoURL(value string) (RepoRef, error) {
 	if err != nil {
 		return RepoRef{}, fmt.Errorf("invalid repository URL %q: %w", value, err)
 	}
-	return RepoRef{Server: origin, ID: id}, nil
+	return RepoRef{Server: origin, ID: id, Username: username, Name: name}, nil
 }
 
 func parseRepositoryReference(value string) (string, string, error) {
@@ -295,10 +264,48 @@ func repositoryTarget(c cliConfig, value string) (cliConfig, string, error) {
 		if err != nil {
 			return c, "", err
 		}
-		return c.selectServer(ref.Server), ref.ID, nil
+		target := c.selectServer(ref.Server)
+		if ref.ID != "" {
+			return target, ref.ID, nil
+		}
+		id, err := resolveCanonicalRepository(target, ref.Username, ref.Name)
+		return target, id, err
 	}
 	id, err := resolveRepository(c, value)
 	return c, id, err
+}
+
+func resolveCanonicalRepository(c cliConfig, username, name string) (string, error) {
+	type repository struct {
+		ID, Name, Username string
+	}
+	var repositories []repository
+	if c.Token != "" {
+		if err := getJSON(c.Server+"/v1/repositories", c.Token, &repositories); err != nil {
+			return "", err
+		}
+	}
+	var public []repository
+	if err := getJSON(c.Server+"/v1/public/repositories", "", &public); err != nil {
+		return "", err
+	}
+	repositories = append(repositories, public...)
+	match := ""
+	for _, repository := range repositories {
+		if repository.Username == username && repository.Name == name {
+			if !repositoryID(repository.ID) {
+				return "", fmt.Errorf("server returned an invalid repository ID")
+			}
+			if match != "" && match != repository.ID {
+				return "", fmt.Errorf("repository %q is ambiguous", username+"/"+name)
+			}
+			match = repository.ID
+		}
+	}
+	if match == "" {
+		return "", fmt.Errorf("repository %q not found", username+"/"+name)
+	}
+	return match, nil
 }
 
 func repositoryID(value string) bool {
@@ -407,11 +414,11 @@ func getRepositoryMetadata(c cliConfig, repo string, out any) (int, error) {
 var repositoryPasswordReader = readRepositoryPassword
 
 func addRepo(c cliConfig, v, reader string, dryRun bool) error {
-	// repoCLI resolved a public name or explicit ID already. Reader-based APT
+	// The repository command resolved a canonical reference or internal ID. Reader-based APT
 	// registration needs no publisher credential or authenticated discovery.
 	// Publishing itself never needs local APT files; only installation does.
 	if !dryRun && os.Geteuid() != 0 {
-		return fmt.Errorf("repo add installs system APT configuration and requires root; rerun with sudo, or use --dry-run to inspect the files. Publishing does not require repo add")
+		return fmt.Errorf("add installs system APT configuration and requires root; rerun with sudo, or use --dry-run to inspect the files. Publishing does not require repo add")
 	}
 	repo := v
 	var e error
@@ -465,7 +472,7 @@ func addRepo(c cliConfig, v, reader string, dryRun bool) error {
 	name := "tpahub-" + repo
 	keyPath := "/etc/apt/keyrings/" + name + ".gpg"
 	src := "/etc/apt/sources.list.d/" + name + ".list"
-	line := fmt.Sprintf("deb [signed-by=%s] %s/r/%s/ stable main\n", keyPath, c.Server, repo)
+	line := fmt.Sprintf("# managed-by: tpahub\n# repository-id: %s\ndeb [signed-by=%s] %s/r/%s/ stable main\n", repo, keyPath, c.Server, repo)
 	auth := ""
 	if meta.Visibility == "private" {
 		if reader == "" {
@@ -537,14 +544,25 @@ func writeAPTFile(path string, data []byte, mode os.FileMode) error {
 
 func removeRepo(c cliConfig, v string) error {
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("repo remove changes system APT configuration and requires root; rerun with sudo")
+		return fmt.Errorf("remove changes system APT configuration and requires root; rerun with sudo")
 	}
 	repo, e := resolveRepository(c, v)
 	if e != nil {
 		return e
 	}
+	entries, err := discoverInstalledRepositories(aptRoot)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Managed && entry.RepositoryID == repo {
+			if err := os.Remove(entry.SourceFile); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
 	name := "tpahub-" + repo
-	for _, p := range []string{"/etc/apt/sources.list.d/" + name + ".list", "/etc/apt/keyrings/" + name + ".gpg", "/etc/apt/auth.conf.d/" + name} {
+	for _, p := range []string{filepath.Join(aptRoot, "keyrings", name+".gpg"), filepath.Join(aptRoot, "auth.conf.d", name)} {
 		_ = os.Remove(p)
 	}
 	return nil

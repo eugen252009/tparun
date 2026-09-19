@@ -13,7 +13,6 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -76,24 +75,12 @@ func readRepositoryPassword() (string, error) {
 	}
 	return strings.TrimSpace(string(value)), nil
 }
-func normalizeCLICommand(args []string) []string {
-	if len(args) < 2 || args[0] != "repo" {
-		return args
-	}
-	switch args[1] {
-	case "add", "remove", "show", "list", "create":
-		return append([]string(nil), args[1:]...)
-	default:
-		return args
-	}
-}
-
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("Repositories: add <repo-url> | remove <repo-url> | show <repo-url> | list | create <name> | edit <repo-url> visibility | delete <repo-url>")
-		fmt.Println("Publication: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
-		fmt.Println("Authentication: register | login | logout | whoami    System: version | doctor    Other: status <job-id>")
-		fmt.Println("Compatibility: tpahub repo add|remove|show|list|create ...; credentials: tpahub repo token ...")
+		fmt.Println("Machine repositories: add <repo-url> | remove <repo-url> | installed")
+		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
+		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
+		fmt.Println("Identity: account    Authentication: register | login | logout    System: version | doctor")
 		return nil
 	}
 	if args[0] == "publish" && has(args[1:], "--help") {
@@ -103,6 +90,9 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("  -y, --yes      Skip confirmation")
 		fmt.Println("      --verbose  Show the detailed publication plan")
 		return nil
+	}
+	if args[0] == "installed" {
+		return installedCLI(args[1:])
 	}
 	if args[0] == "stage" {
 		return stageCLI(args[1:])
@@ -178,7 +168,6 @@ func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("client command required")
 	}
-	args = normalizeCLICommand(args)
 	switch args[0] {
 	case "register", "login":
 		email := os.Getenv("TPAHUB_EMAIL")
@@ -197,15 +186,6 @@ func cli(cfg config.Config, args []string) error {
 		c.Email = out.Email
 		c.Token = out.Token
 		return saveCLI(c)
-	case "whoami":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: tpahub whoami")
-		}
-		if c.Token == "" {
-			return fmt.Errorf("authentication required; run tpahub login")
-		}
-		fmt.Printf("%s (%s)\n", c.Email, c.Server)
-		return nil
 	case "logout":
 		if c.Token != "" {
 			req, _ := http.NewRequest("POST", c.Server+"/v1/logout", nil)
@@ -221,10 +201,17 @@ func cli(cfg config.Config, args []string) error {
 		}
 		c.Token = ""
 		return saveCLI(c)
-	case "repo":
-		return repoCLI(c, args[1:])
-	case "add", "remove", "show", "list", "create", "edit", "delete":
-		return repoCLI(c, args)
+	case "add", "remove", "show", "create", "edit", "delete":
+		return repositoryCommand(c, args)
+	case "account":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: tpahub account")
+		}
+		if c.Token == "" {
+			return fmt.Errorf("authentication required; run tpahub login")
+		}
+		fmt.Printf("Account: %s\nServer: %s\n", c.Email, c.Server)
+		return nil
 	case "publish":
 		yes := has(args, "-y") || has(args, "--yes")
 		verbose := has(args, "--verbose")
@@ -469,20 +456,6 @@ func printResponse(r *http.Response) error {
 	}
 	fmt.Print(string(b))
 	return nil
-}
-func owned(c cliConfig, v string) (string, error) {
-	id, err := resolveRepositoryInScope(c, v, true)
-	if err != nil {
-		return "", err
-	}
-	var r struct {
-		ID string `json:"id"`
-	}
-	e := getJSON(c.Server+"/v1/repositories/"+url.PathEscape(id), c.Token, &r)
-	if e == nil && r.ID != id {
-		return "", fmt.Errorf("repository identity changed during lookup")
-	}
-	return r.ID, e
 }
 func getJSON(u, t string, out any) error {
 	r, _ := http.NewRequest("GET", u, nil)

@@ -136,18 +136,17 @@ Use the client binary against the exact HTTPS origin:
 ```sh
 TPAHUB_SERVER=https://packages.home.example tpahub register
 TPAHUB_SERVER=https://packages.home.example tpahub login
-tpahub --server https://packages.home.example repo list
-tpahub --server https://packages.home.example repo create client-test
+tpahub --server https://packages.home.example create client-test
 tpahub --server https://packages.home.example stage ./test.deb
 tpahub --server https://packages.home.example status
-tpahub --server https://packages.home.example publish https://packages.home.example/REPOSITORY_ID
-tpahub add https://packages.home.example/REPOSITORY_ID --dry-run
-sudo tpahub add https://packages.home.example/REPOSITORY_ID
+tpahub --server https://packages.home.example publish https://packages.home.example/r/user/client-test
+tpahub add https://packages.home.example/r/user/client-test --dry-run
+sudo tpahub add https://packages.home.example/r/user/client-test
 sudo apt update
 sudo apt install PACKAGE_NAME
 ```
 
-`repo add` is the only command in this flow that writes system APT files and
+`add` is the only command in this flow that writes system APT files and
 therefore needs root. Publishing and all account/repository API operations do
 not need root. Private repositories additionally require their scoped reader
 token.

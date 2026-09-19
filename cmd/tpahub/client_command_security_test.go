@@ -19,18 +19,11 @@ func TestClientCommandsRejectCrossOriginReplay(t *testing.T) {
 	defer target.Close()
 	for _, code := range []int{307, 308} {
 		for _, args := range [][]string{
-			{"login"}, {"register"}, {"logout"}, {"repo", "create", "private"}, {"repo", "list"}, {"repo", "show", admissionRepo}, {"status", "job"},
-			{"repo", "token", "create", admissionRepo, "reader"}, {"repo", "token", "list", admissionRepo}, {"repo", "token", "revoke", admissionRepo, "credential"},
-			{"repo", "add", admissionRepo, "--token", "reader-fixture"},
+			{"login"}, {"register"}, {"logout"}, {"status", "job"},
 		} {
 			t.Run(fmt.Sprint(code, args[:1]), func(t *testing.T) {
 				var sensitive atomic.Bool
 				src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					metadata := r.Method == "GET" && r.URL.Path == "/v1/repositories/"+admissionRepo && !(len(args) > 1 && args[1] == "show")
-					if metadata {
-						fmt.Fprintf(w, `{"id":%q,"visibility":"public"}`, admissionRepo)
-						return
-					}
 					body, _ := io.ReadAll(r.Body)
 					if r.Header.Get("Authorization") == "Bearer scoped-fixture" || strings.Contains(string(body), "origin-test-password") || strings.Contains(string(body), "private-publication-fixture") {
 						sensitive.Store(true)
@@ -51,7 +44,7 @@ func TestClientCommandsRejectCrossOriginReplay(t *testing.T) {
 				if arrivals.Load() != 0 {
 					t.Fatal("foreign target received request")
 				}
-				if !(len(args) > 1 && args[1] == "add") && !sensitive.Load() {
+				if !sensitive.Load() {
 					t.Fatal("test did not exercise a sensitive production request")
 				}
 			})

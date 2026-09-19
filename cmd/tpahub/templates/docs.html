@@ -11,7 +11,7 @@
       <nav aria-label="On this page">
         <a href="#install">Install the client</a>
         <a href="#trust">Verify repository trust</a>
-        <a href="#compatibility">Find a public repository</a>
+        <a href="#compatibility">Repositories on this machine</a>
         <a href="#consume">Install public packages</a>
         <a href="#bloom">Use the ecosystem</a>
         <a href="#qualification">Developer qualification</a>
@@ -38,8 +38,8 @@ sudo bash /tmp/tpahub-install.sh</code></pre>
       </section>
       <section id="trust">
         <h2>Verify repository trust</h2>
-        <p>Each repository provides a public signing key. The client installs it in a repository-scoped keyring when you run <code>repo add</code>.</p>
-        <pre><code>sudo tpahub add https://tpa.run/REPOSITORY_ID
+        <p>Each repository provides a public signing key. The client installs it in a repository-scoped keyring when you run <code>add</code>.</p>
+        <pre><code>sudo tpahub add https://tpa.run/r/eugen/dev-tools
 sudo apt update</code></pre>
         <p>APT uses <code>signed-by=</code> with the repository keyring under <code>/etc/apt/keyrings</code>. The current production signing fingerprint is:</p>
         <p class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</p>
@@ -48,20 +48,21 @@ sudo apt update</code></pre>
         <pre><code>sudo bash install-tpahub.sh</code></pre>
       </section>
       <section id="compatibility">
-        <h2>Find a public repository</h2>
-        <p>List public repositories from the CLI, then add the repository you want to use:</p>
-        <pre><code>tpahub list --public --server https://tpa.run
-sudo tpahub add https://tpa.run/REPOSITORY_ID</code></pre>
-        <p>The public <a href="/v1/public/repositories">repository directory</a> also shows each repository name and ID. Use the ID for an unambiguous repository configuration; private repositories are not listed.</p>
+        <h2>Repositories on this machine</h2>
+        <p>Use the canonical repository URL with the same CLI commands everywhere:</p>
+        <pre><code>tpahub installed
+sudo tpahub add https://tpa.run/r/eugen/dev-tools
+sudo tpahub remove https://tpa.run/r/eugen/dev-tools</code></pre>
+        <p>Use <code>tpahub installed --verbose</code> to inspect managed source files and legacy origins. Internal repository IDs are not required for normal workflows.</p>
       </section>
       <section id="consume">
         <h2>Install public packages</h2>
-        <p>No publisher login is required. Add the public repository IDs shown above:</p>
-        <pre><code>sudo tpahub add https://tpa.run/MEMA_REPOSITORY_ID
-sudo tpahub add https://tpa.run/BLOOM_REPOSITORY_ID
+        <p>No publisher login is required. Add the public repositories by canonical URL:</p>
+        <pre><code>sudo tpahub add https://tpa.run/r/eugen/mema
+sudo tpahub add https://tpa.run/r/eugen/bloom
 sudo apt update
 sudo apt install mema bloom</code></pre>
-        <p>If you use the repository directory, add each repository by its ID as described above, then run the same APT commands.</p>
+        <p>Use <code>tpahub installed</code> to inspect repositories configured on this machine.</p>
         <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
         <pre><code>sudo apt install -y mema bloom mema-go mema-bun
 sudo mema install go 1.26.5
@@ -107,32 +108,32 @@ bloom describe math.min.u32</code></pre>
 tpahub login --server https://tpa.run
 tpahub create tools</code></pre>
         <p>The create command returns the repository identity. Make it public separately when that is appropriate:</p>
-        <pre><code>tpahub edit https://tpa.run/REPOSITORY_ID visibility</code></pre>
+        <pre><code>tpahub edit https://tpa.run/r/eugen/dev-tools visibility</code></pre>
         <h3>Daily publishing</h3>
         <pre><code>tpahub stage ./my-package_1.0.0_amd64.deb
 tpahub status
-tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
+tpahub publish https://tpa.run/r/eugen/dev-tools</code></pre>
         <p>TPA Hub snapshots the package bytes locally. Before upload, it shows the projected repository statistics and asks for confirmation. Use <code>--verbose</code> for the full publication plan.</p>
         <p>For multiple packages, stage the complete set and inspect it with <code>tpahub status</code> before publishing:</p>
         <pre><code>tpahub stage ./app_1.0.0_amd64.deb ./cli_1.0.0_amd64.deb
 tpahub unstage ./cli_1.0.0_amd64.deb
-tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
+tpahub publish https://tpa.run/r/eugen/dev-tools</code></pre>
         <p><code>-y</code> or <code>--yes</code> only accepts the confirmation; authentication, authorization, package validation, and capacity checks still apply. Successful publication clears local staging. Failed or cancelled publication preserves it for retry. Staging lives under <code>/tmp</code> and may be removed by reboot or system cleanup.</p>
         <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
         <p>Use <code>--verbose</code> when you want the detailed publication plan. The normal publish output shows only the projected repository statistics and confirmation.</p>
-        <p>On the consuming machine, add the repository's ID, then install:</p>
-        <pre><code>sudo tpahub add https://tpa.run/REPOSITORY_ID
+        <p>On the consuming machine, add the repository's canonical URL, then install:</p>
+        <pre><code>sudo tpahub add https://tpa.run/r/eugen/my-package
 sudo apt update
 sudo apt install my-package</code></pre>
       </section>
       <section id="private">
         <h2>Private repositories</h2>
-        <p>Repositories are private when created. To change visibility, use <code>tpahub edit https://tpa.run/REPOSITORY_ID visibility</code>. As the publisher, create a reader token:
+        <p>Repositories are private when created. To change visibility, use <code>tpahub edit https://tpa.run/r/eugen/dev-tools visibility</code>. As the publisher, create a reader token:
         </p>
         <pre><code>tpahub create private-tools
-tpahub repo token create private-tools workstation</code></pre>
+tpahub account</code></pre>
         <p>On the consuming machine:</p>
-        <pre><code>sudo tpahub add https://tpa.run/REPOSITORY_ID</code></pre>
+        <pre><code>sudo tpahub add https://tpa.run/r/eugen/private-tools</code></pre>
         <p>The CLI prompts for <strong>Repository password:</strong> without echoing the input. Reader credentials authorize downloads from one repository, not administration or publishing. Treat them as secrets; avoid shared shell histories. APT credentials are written to a restricted file under <code>/etc/apt/auth.conf.d</code>.</p>
       </section>
       <section id="limits">

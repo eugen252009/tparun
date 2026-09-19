@@ -20,6 +20,7 @@ install -d -m 0755 "$work/DEBIAN" "$work/usr/share/keyrings" "$work/etc/apt/sour
 gpg --batch --yes --dearmor --output "$work/usr/share/keyrings/tpahub-archive-keyring.gpg" "$KEY"
 chmod 0644 "$work/usr/share/keyrings/tpahub-archive-keyring.gpg"
 cat >"$work/etc/apt/sources.list.d/tpahub.sources" <<EOF
+# managed-by: tpahub
 Types: deb
 URIs: ${REPOSITORY_URL%/}
 Suites: $SUITE

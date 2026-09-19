@@ -380,14 +380,14 @@ func (s *server) publicRepositories(w http.ResponseWriter, r *http.Request) {
 	}
 	// Do not expose account ownership or administrative fields through the
 	// anonymous discovery surface.
-	type publicRepository struct {
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		Visibility string `json:"visibility"`
-	}
-	out := make([]publicRepository, 0, len(repositories))
+	out := make([]repositoryView, 0, len(repositories))
 	for _, repository := range repositories {
-		out = append(out, publicRepository{ID: repository.ID, Name: repository.Name, Visibility: repository.Visibility})
+		view, err := s.repositoryView(r.Context(), repository)
+		if err != nil {
+			bad(w, http.StatusInternalServerError, "repository owner lookup failed")
+			return
+		}
+		out = append(out, view)
 	}
 	jsonOut(w, out)
 }
@@ -399,7 +399,16 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 			bad(w, 500, "repository lookup failed")
 			return
 		}
-		jsonOut(w, repos)
+		out := make([]repositoryView, 0, len(repos))
+		for _, repository := range repos {
+			view, err := s.repositoryView(r.Context(), repository)
+			if err != nil {
+				bad(w, http.StatusInternalServerError, "repository owner lookup failed")
+				return
+			}
+			out = append(out, view)
+		}
+		jsonOut(w, out)
 		return
 	}
 	if r.Method != "POST" || r.URL.Path != "/v1/repositories" {
@@ -412,6 +421,11 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
 		bad(w, 400, "name is required")
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if err := validateRepositoryName(in.Name); err != nil {
+		bad(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.repositoryPolicy().AuthorizeCreation(r.Context(), accountID(r)); err != nil {
@@ -462,7 +476,12 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("repository created id=%s", id)
-	jsonOut(w, map[string]any{"id": id, "name": strings.TrimSpace(in.Name), "visibility": visibility, "created_at": now})
+	view, viewErr := s.repositoryView(r.Context(), store.Repository{ID: id, AccountID: accountID(r), Name: in.Name, Visibility: visibility, CreatedAt: now})
+	if viewErr != nil {
+		bad(w, http.StatusInternalServerError, "repository owner lookup failed")
+		return
+	}
+	jsonOut(w, view)
 }
 func (s *server) repositoryRoute(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/signing-key") {
@@ -492,7 +511,12 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 			bad(w, 404, "repository not found")
 			return
 		}
-		jsonOut(w, repo)
+		view, viewErr := s.repositoryView(r.Context(), repo)
+		if viewErr != nil {
+			bad(w, http.StatusInternalServerError, "repository owner lookup failed")
+			return
+		}
+		jsonOut(w, view)
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodPatch {
@@ -520,7 +544,12 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 			bad(w, http.StatusInternalServerError, "repository lookup failed")
 			return
 		}
-		jsonOut(w, repo)
+		view, viewErr := s.repositoryView(r.Context(), repo)
+		if viewErr != nil {
+			bad(w, http.StatusInternalServerError, "repository owner lookup failed")
+			return
+		}
+		jsonOut(w, view)
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodDelete {
@@ -827,19 +856,34 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/r/")
-	parts := strings.SplitN(rest, "/", 2)
-	if len(parts) != 2 || !idRE.MatchString(parts[0]) {
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 {
 		bad(w, 404, "not found")
 		return
 	}
-	rel := filepath.Clean("/" + parts[1])
+	repositoryID := parts[0]
+	relParts := parts[1:]
+	var repo store.Repository
+	var e error
+	if idRE.MatchString(repositoryID) {
+		repo, e = s.db.Repository(r.Context(), repositoryID)
+	} else if len(parts) >= 3 {
+		repo, e = s.resolveRepositoryPath(r.Context(), parts[0], parts[1])
+		relParts = parts[2:]
+	} else {
+		e = store.ErrNotFound
+	}
+	if e != nil {
+		bad(w, 404, "not found")
+		return
+	}
+	rel := filepath.Clean("/" + strings.Join(relParts, "/"))
 	rel = strings.TrimPrefix(rel, "/")
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
 		bad(w, 404, "not found")
 		return
 	}
-	repo, e := s.db.Repository(r.Context(), parts[0])
-	if e != nil {
+	if repo.ID == "" {
 		bad(w, 404, "not found")
 		return
 	}
@@ -856,7 +900,7 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	root, rootErr := s.publishedRepositoryRoot(r.Context(), parts[0])
+	root, rootErr := s.publishedRepositoryRoot(r.Context(), repo.ID)
 	if rootErr != nil {
 		if errors.Is(rootErr, store.ErrNotFound) {
 			bad(w, http.StatusNotFound, "not found")
