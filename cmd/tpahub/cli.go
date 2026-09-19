@@ -40,6 +40,12 @@ func configPath() string {
 	}
 	return filepath.Join(d, "tpahub", "config.json")
 }
+
+var (
+	lineInputFile   *os.File
+	lineInputReader *bufio.Reader
+)
+
 func input(prompt string, secret bool) string {
 	fmt.Print(prompt)
 	if secret {
@@ -48,7 +54,11 @@ func input(prompt string, secret bool) string {
 			return string(b)
 		}
 	}
-	v, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if lineInputFile != os.Stdin {
+		lineInputFile = os.Stdin
+		lineInputReader = bufio.NewReader(os.Stdin)
+	}
+	v, _ := lineInputReader.ReadString('\n')
 	return strings.TrimSpace(v)
 }
 
