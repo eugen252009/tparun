@@ -244,8 +244,8 @@ func cli(cfg config.Config, args []string) error {
 }
 
 func adminCLI(cfg config.Config, args []string) error {
-	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator") {
-		return fmt.Errorf("usage: tpahub admin egress list-uncertain | inspect <delivery-id> | recover <delivery-id> --version <version> --usage-at <RFC3339> --bytes <bytes> | account classify <account-id> --class <production|test|internal|unclassified>")
+	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator" && args[0] != "bootstrap") {
+		return fmt.Errorf("usage: tpahub admin bootstrap enable <repository-id> | capacity <storage-bytes> <egress-bytes> | egress ... | account classify <account-id> --class <production|test|internal|unclassified>")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	if args[0] == "operator" && args[1] == "recovery" {
@@ -291,6 +291,53 @@ func adminCLI(cfg config.Config, args []string) error {
 		default:
 			return fmt.Errorf("usage: tpahub admin operator recovery issue|revoke")
 		}
+	case "enable":
+		if args[0] != "bootstrap" || len(args) < 3 {
+			return fmt.Errorf("usage: tpahub admin bootstrap enable <repository-id>")
+		}
+		op := os.Getenv("TPAHUB_OPERATOR")
+		if op == "" {
+			op = os.Getenv("USER")
+		}
+		if op == "" {
+			op = "cli"
+		}
+		if err := db.EnableGlobalBootstrap(ctx, args[2], op, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "global bootstrap repository enabled")
+		return nil
+	case "capacity":
+		if args[0] != "bootstrap" || len(args) < 4 {
+			return fmt.Errorf("usage: tpahub admin bootstrap capacity <storage-bytes> <egress-bytes>")
+		}
+		storage, err := parseFiniteCapacity(args[2])
+		if err != nil {
+			return fmt.Errorf("storage capacity: %w", err)
+		}
+		egress, err := parseFiniteCapacity(args[3])
+		if err != nil {
+			return fmt.Errorf("egress capacity: %w", err)
+		}
+		b, found, err := db.GlobalBootstrapRepository(ctx)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("no global bootstrap repository")
+		}
+		op := os.Getenv("TPAHUB_OPERATOR")
+		if op == "" {
+			op = os.Getenv("USER")
+		}
+		if op == "" {
+			op = "cli"
+		}
+		if err := db.SetBootstrapCapacity(ctx, b.AccountID, b.RepositoryID, op, storage, egress, "operator-selected bootstrap capacity", time.Now().UTC()); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "global bootstrap capacity updated")
+		return nil
 	case "classify":
 		if args[0] != "account" || len(args) < 3 {
 			return fmt.Errorf("usage: tpahub admin account classify <account-id> --class <production|test|internal|unclassified>")
