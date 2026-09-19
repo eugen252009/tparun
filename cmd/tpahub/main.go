@@ -111,6 +111,8 @@ type server struct {
 	paymentWebhook          payments.WebhookParser
 	grants                  commerce.GrantService
 	customerAuthRate        *authLimiter
+	sshChallengeMu          sync.Mutex
+	sshChallenges           map[string]sshLoginChallenge
 	purchaseMu              sync.Mutex
 	stagingMu               sync.Mutex
 	egressLookup            func(string, time.Time) (int64, int64, error)
@@ -289,8 +291,12 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/ready", s.ready)
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
+	m.HandleFunc("/v1/login/ssh/challenge", s.sshChallenge)
+	m.HandleFunc("/v1/login/ssh", s.sshLogin)
 	m.HandleFunc("/v1/logout", s.logout)
 	m.HandleFunc("/v1/account", s.authHandler(s.accountSummary))
+	m.HandleFunc("/v1/account/ssh-credentials", s.authHandler(s.sshCredentials))
+	m.HandleFunc("/v1/account/ssh-credentials/", s.authHandler(s.sshCredentialRoute))
 	m.HandleFunc("/v1/billing/purchases/nano", s.authHandler(s.createNanoPurchase))
 	s.registerHostedRoutes(m)
 	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))

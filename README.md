@@ -1,6 +1,6 @@
 # TPA Hub
 
-**Persistent release baseline: Schema 5.** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+**Persistent release baseline: Schema 6 (upgradable from Schema 5).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
 
 TPA Hub is a CLI-first service for publishing and serving public or private APT repositories. **TPA Hub uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
@@ -56,7 +56,7 @@ Local finite defaults preserve the historical bounds: 5,000,000 storage bytes,
 `TPAHUB_LOCAL_STORAGE_BYTES`, `TPAHUB_LOCAL_EGRESS_BYTES` and
 `TPAHUB_LOCAL_PRIVATE_READ_ENABLED=true|false`. Changes affect new accounts only;
 existing grants are never silently replaced. Zero is not unlimited. See
-[local capability provisioning](docs/local-capability-provisioning.md) and [authorization separation](docs/authorization-separation.md).
+[local capability provisioning](docs/local-capability-provisioning.md), [authorization separation](docs/authorization-separation.md), and [SSH account login](docs/ssh-login.md).
 
 **Upgrade compatibility:** without an initialized profile, `serve` retains legacy
 strict-accounted/mock defaults. `init` refuses existing state and never migrates a

@@ -190,7 +190,19 @@ var canonicalSchemaDefinitions = sync.OnceValues(func() (map[string]string, erro
 // Validate every declared table, column, CHECK, FK, index and trigger against
 // the canonical executable DDL. Every instance is freshly inspected read-only.
 func validateCurrentSchema(db *sql.DB) error {
-	want, err := canonicalSchemaDefinitions()
+	return validateSchema(db, schemaSQL, "Schema 6")
+}
+
+func validateSchema(db *sql.DB, ddl, label string) error {
+	reference, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return err
+	}
+	defer reference.Close()
+	if _, err = reference.Exec(ddl); err != nil {
+		return fmt.Errorf("invalid %s reference: %w", label, err)
+	}
+	want, err := schemaDefinitions(reference)
 	if err != nil {
 		return err
 	}
@@ -205,7 +217,7 @@ func validateCurrentSchema(db *sql.DB) error {
 	sort.Strings(names)
 	for _, name := range names {
 		if got[name] != want[name] {
-			return fmt.Errorf("missing or invalid Schema 5 structure %s; restore a valid backup", name)
+			return fmt.Errorf("missing or invalid %s structure %s; restore a valid backup", label, name)
 		}
 	}
 	names = names[:0]
@@ -215,7 +227,7 @@ func validateCurrentSchema(db *sql.DB) error {
 	sort.Strings(names)
 	for _, name := range names {
 		if _, ok := want[name]; !ok {
-			return fmt.Errorf("unexpected Schema 5 structure %s", name)
+			return fmt.Errorf("unexpected %s structure %s", label, name)
 		}
 	}
 	var singleton int
@@ -223,6 +235,28 @@ func validateCurrentSchema(db *sql.DB) error {
 		return fmt.Errorf("invalid schema authority singleton")
 	}
 	return nil
+}
+
+func migrateSchema5To6(db *sql.DB) error {
+	legacyDDL := strings.Replace(schemaSQL, "CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');\n\n", "", 1)
+	if err := validateSchema(db, legacyDDL, "Schema 5"); err != nil {
+		return fmt.Errorf("Schema 5 validation failed: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin Schema 5 to 6 migration: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '')`); err != nil {
+		return fmt.Errorf("create SSH credential table: %w", err)
+	}
+	if err = migrationCheckpoint("before-schema-6-version"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=6 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 6 version: %w", err)
+	}
+	return tx.Commit()
 }
 
 func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, err error) {
@@ -234,13 +268,13 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 	fresh := os.IsNotExist(statErr) || (statErr == nil && info.Size() == 0)
 	if fresh {
 		if explicitMigration {
-			return nil, fmt.Errorf("migration requires an initialized Schema 5 database")
+			return nil, fmt.Errorf("migration requires an initialized supported database")
 		}
 		if err = os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
 	}
-	readOnly := !fresh
+	readOnly := !fresh && !explicitMigration
 	dsn := path
 	if readOnly {
 		absolute, e := filepath.Abs(path)
@@ -279,7 +313,12 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
+			if !explicitMigration || version != 5 || currentSchemaVersion != 6 {
+				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
+			}
+			if err = migrateSchema5To6(db); err != nil {
+				return nil, err
+			}
 		}
 		if err = validateCurrentSchema(db); err != nil {
 			return nil, err
@@ -310,7 +349,7 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 		}
 		defer tx.Rollback()
 		if _, err = tx.Exec(schemaSQL); err != nil {
-			return nil, fmt.Errorf("initialize Schema 5: %w", err)
+			return nil, fmt.Errorf("initialize Schema 6: %w", err)
 		}
 		if _, err = tx.Exec(`INSERT INTO tpahub_schema(singleton,version) VALUES(1,?)`, currentSchemaVersion); err != nil {
 			return nil, err

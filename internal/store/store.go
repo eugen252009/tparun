@@ -58,17 +58,17 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 5 directly or opens the current supported schema.
+// Open initializes Schema 6 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate validates the current release baseline without writing it.
-// Schemas 1–4 are unsupported. Future supported upgrades start at Schema 5.
+// Migrate performs the explicit Schema 5 → 6 upgrade or validates Schema 6.
+// Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
 	info, err := os.Stat(path)

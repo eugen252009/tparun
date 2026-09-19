@@ -170,6 +170,20 @@ func cli(cfg config.Config, args []string) error {
 	}
 	switch args[0] {
 	case "register", "login":
+		if args[0] == "login" && len(args) >= 2 && args[1] == "--ssh" {
+			if len(args) > 3 {
+				return fmt.Errorf("usage: tpahub login --ssh [identity-file]")
+			}
+			identity := ""
+			if len(args) == 3 {
+				identity = args[2]
+			}
+			updated, err := sshLoginCLI(c, identity)
+			if err != nil {
+				return err
+			}
+			return saveCLI(updated)
+		}
 		email := os.Getenv("TPAHUB_EMAIL")
 		if email == "" {
 			email = input("Email: ", false)
@@ -446,6 +460,11 @@ func postJSON(u string, v any, out any) error {
 	}
 	defer r.Body.Close()
 	if r.StatusCode >= 300 {
+		body, _ := io.ReadAll(r.Body)
+		message := strings.TrimSpace(string(body))
+		if message != "" {
+			return fmt.Errorf("request failed: %s: %s", r.Status, message)
+		}
 		return fmt.Errorf("request failed: %s", r.Status)
 	}
 	return json.NewDecoder(r.Body).Decode(out)
