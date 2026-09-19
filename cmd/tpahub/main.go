@@ -277,7 +277,13 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/datenschutz", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://lupricht.net/privacy/", http.StatusPermanentRedirect)
 	})
-	m.HandleFunc("/", s.web)
+	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/tpahub-release_") && strings.HasSuffix(r.URL.Path, "_all.deb") {
+			s.releasePackage(w, r)
+			return
+		}
+		s.web(w, r)
+	})
 	m.HandleFunc("/tpahub.asc", s.publicKey)
 	m.HandleFunc("/version", s.version)
 	m.HandleFunc("/ready", s.ready)
@@ -292,6 +298,31 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))
 	m.HandleFunc("/r/", s.files)
 	return s.browserSession(m)
+}
+func (s *server) releasePackage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		bad(w, 405, "method not allowed")
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if filepath.Base(name) != name || !regexp.MustCompile(`^tpahub-release_[0-9]+\.[0-9]+\.[0-9]+_all\.deb$`).MatchString(name) {
+		bad(w, 404, "release package not found")
+		return
+	}
+	dir := os.Getenv("TPAHUB_RELEASE_DIR")
+	if dir == "" {
+		bad(w, 404, "release package not configured")
+		return
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		bad(w, 404, "release package not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, path)
 }
 func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {

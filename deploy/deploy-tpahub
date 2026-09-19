@@ -56,6 +56,7 @@ unit=$(systemctl --user cat "$SERVICE")
 grep -Fq "ExecStart=$BINARY serve" <<<"$unit" || fail "service ExecStart is not the live production binary"
 grep -Fq "WorkingDirectory=$PROD_ROOT" <<<"$unit" || fail "service WorkingDirectory is not the live production root"
 grep -Fq "TPAHUB_DATA_DIR=$DATA_DIR" <<<"$unit" || fail "service data directory is not the live production data directory"
+grep -Fq "TPAHUB_RELEASE_DIR=$RELEASE_ROOT" <<<"$unit" || fail "service release directory is not the live production release directory"
 grep -Fq "TPAHUB_OPERATOR_RP_ID=tpa.run" <<<"$unit" || fail 'operator RP ID is not tpa.run'
 grep -Fq "TPAHUB_OPERATOR_ORIGIN=https://tpa.run" <<<"$unit" || fail 'operator origin is not https://tpa.run'
 

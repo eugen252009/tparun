@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -33,6 +34,29 @@ func TestInstallEndpointIsIndependentOfWorkingDirectory(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK || len(body) == 0 || !bytes.Contains(body, []byte("#!/usr/bin/env bash")) || !bytes.Contains(body, []byte("https://tpa.run")) || bytes.Contains(body, []byte("tpa.lupricht.net")) {
 		t.Fatalf("cwd-independent installer response: status=%d bytes=%d", response.StatusCode, len(body))
+	}
+}
+
+func TestReleasePackageEndpointServesConfiguredArtifact(t *testing.T) {
+	dir := t.TempDir()
+	name := "tpahub-release_0.1.2_all.deb"
+	want := []byte("qualified release package")
+	if err := os.WriteFile(filepath.Join(dir, name), want, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TPAHUB_RELEASE_DIR", dir)
+	_, h := testServer(t)
+	response, err := http.Get(h.URL + "/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != string(want) || response.Header.Get("Content-Type") != "application/vnd.debian.binary-package" {
+		t.Fatalf("release package response: status=%d content-type=%q body=%q", response.StatusCode, response.Header.Get("Content-Type"), body)
 	}
 }
 
