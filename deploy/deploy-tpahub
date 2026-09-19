@@ -60,8 +60,8 @@ grep -Fq "TPAHUB_RELEASE_DIR=$RELEASE_ROOT" <<<"$unit" || fail "service release 
 grep -Fq "TPAHUB_OPERATOR_RP_ID=tpa.run" <<<"$unit" || fail 'operator RP ID is not tpa.run'
 grep -Fq "TPAHUB_OPERATOR_ORIGIN=https://tpa.run" <<<"$unit" || fail 'operator origin is not https://tpa.run'
 
-package_file=$(git show "$commit:install.sh" | grep -oE 'tpahub-release_[0-9][^/" ]*_all\.deb' | head -1)
-package_sha=$(git show "$commit:install.sh" | sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' | head -1)
+package_file=$(git --git-dir="$REPO" show "$commit:install.sh" | grep -oE 'tpahub-release_[0-9][^/" ]*_all\.deb' | head -1)
+package_sha=$(git --git-dir="$REPO" show "$commit:install.sh" | sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' | head -1)
 dest_package="$RELEASE_ROOT/$package_file"
 current_body=$(mktemp)
 if $CURL -fsS --max-time 3 "$HEALTH_URL" >"$current_body" 2>/dev/null && "$PYTHON" - "$current_body" "$commit" <<'PY'
