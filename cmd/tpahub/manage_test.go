@@ -14,6 +14,7 @@ func TestParseRepositoryReference(t *testing.T) {
 		name, value, origin, id string
 	}{
 		{"canonical", "https://TPA.RUN/e64140bae68efd2489afd72a7330a4ad", "https://tpa.run", "e64140bae68efd2489afd72a7330a4ad"},
+		{"trailing slash", "https://tpa.run/e64140bae68efd2489afd72a7330a4ad/", "https://tpa.run", "e64140bae68efd2489afd72a7330a4ad"},
 		{"explicit port", "https://example.test:8443/0123456789abcdef0123456789abcdef", "https://example.test:8443", "0123456789abcdef0123456789abcdef"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

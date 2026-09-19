@@ -66,9 +66,22 @@ func readRepositoryPassword() (string, error) {
 	}
 	return strings.TrimSpace(string(value)), nil
 }
+func normalizeCLICommand(args []string) []string {
+	if len(args) < 2 || args[0] != "repo" {
+		return args
+	}
+	switch args[1] {
+	case "add", "remove", "show", "list", "create":
+		return append([]string(nil), args[1:]...)
+	default:
+		return args
+	}
+}
+
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub init | serve | schema | migrate | register | login | logout | repo create/list/show/add <repository-reference> [--dry-run]/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
+		fmt.Println("tpahub add <repo-url> | remove <repo-url> | show <repo-url> | list | create <name> | login | logout | whoami | publish | status | version | doctor")
+		fmt.Println("Compatibility: tpahub repo add|remove|show|list|create ...")
 		return nil
 	}
 	if args[0] == "init" {
@@ -91,7 +104,7 @@ func cli(cfg config.Config, args []string) error {
 	}
 	// Local state/version commands must not depend on client credentials.
 	switch args[0] {
-	case "diagnostics":
+	case "diagnostics", "doctor":
 		return diagnostics()
 	case "schema":
 		fmt.Println(store.CurrentSchemaVersion())
@@ -136,6 +149,7 @@ func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("client command required")
 	}
+	args = normalizeCLICommand(args)
 	switch args[0] {
 	case "register", "login":
 		email := os.Getenv("TPAHUB_EMAIL")
@@ -154,6 +168,15 @@ func cli(cfg config.Config, args []string) error {
 		c.Email = out.Email
 		c.Token = out.Token
 		return saveCLI(c)
+	case "whoami":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: tpahub whoami")
+		}
+		if c.Token == "" {
+			return fmt.Errorf("authentication required; run tpahub login")
+		}
+		fmt.Printf("%s (%s)\n", c.Email, c.Server)
+		return nil
 	case "logout":
 		if c.Token != "" {
 			req, _ := http.NewRequest("POST", c.Server+"/v1/logout", nil)
@@ -171,6 +194,8 @@ func cli(cfg config.Config, args []string) error {
 		return saveCLI(c)
 	case "repo":
 		return repoCLI(c, args[1:])
+	case "add", "remove", "show", "list", "create":
+		return repoCLI(c, args)
 	case "publish":
 		if len(args) < 3 {
 			return fmt.Errorf("usage: tpahub publish <repo> <files...>")

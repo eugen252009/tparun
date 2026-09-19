@@ -105,8 +105,8 @@ Legacy single-server credentials bind to their stored server before overrides. A
 ```sh
 tpahub register
 tpahub login
-tpahub repo create private-tools
-tpahub repo list
+tpahub create private-tools
+tpahub list
 tpahub publish private-tools ./tool_1.0.0_amd64.deb
 tpahub status JOB_ID
 tpahub repo token create private-tools workstation
@@ -114,14 +114,14 @@ tpahub repo token create private-tools workstation
 
 For automated use, `TPAHUB_EMAIL` and `TPAHUB_PASSWORD` avoid interactive prompts. Passwords are bcrypt-hashed server-side and never logged or stored locally as passwords.
 
-Create a public repository with `tpahub repo create name --public`. Repositories default to private. Repository IDs are opaque and filesystem paths never use names.
+Create a repository with `tpahub create name`; repositories default to hidden/private. Use `tpahub show https://tpa.run/REPOSITORY_ID` to inspect one repository. Repository IDs are opaque and filesystem paths never use names. The legacy `repo` namespace remains a compatibility alias.
 
 ## APT registration
 
 Public repository:
 
 ```sh
-sudo tpahub repo add https://tpa.run/REPOSITORY_ID
+sudo tpahub add https://tpa.run/REPOSITORY_ID
 apt update
 apt install package-name
 ```
@@ -129,20 +129,20 @@ apt install package-name
 Private repository registration uses a repository reader credential, not the publisher session token:
 
 ```sh
-sudo tpahub repo add https://tpa.run/REPOSITORY_ID
+sudo tpahub add https://tpa.run/REPOSITORY_ID
 apt update
 apt install package-name
 ```
 
 Private repositories prompt for `Repository password:` without echoing the input. For automation, retain an existing reader token with `--token`; do not place it in a command shared with other users.
 
-`repo add` is an installation-side operation: it writes system APT configuration
+`add` is an installation-side operation: it writes system APT configuration
 and therefore must be run as root (normally with `sudo`). It is not needed to
 register, publish, or inspect repositories. Unprivileged users can preview the
 exact network-fetched key and files without changing the machine:
 
 ```sh
-tpahub repo add https://tpa.run/REPOSITORY_ID --dry-run
+tpahub add https://tpa.run/REPOSITORY_ID --dry-run
 ```
 
 The CLI writes:
@@ -153,7 +153,7 @@ The CLI writes:
 /etc/apt/auth.conf.d/tpahub-<id>                  0600, private repos only
 ```
 
-The auth file uses standard APT `machine ... login reader password ...` syntax. `repo add` is repeatable without duplicate source entries. `tpahub repo remove` removes only these files; it never uninstalls packages.
+The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/REPOSITORY_ID` removes only these files; it never uninstalls packages.
 
 Reader credentials are scoped to one repository, stored server-side only as hashes, and displayed only at creation:
 

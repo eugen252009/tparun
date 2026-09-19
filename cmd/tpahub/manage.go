@@ -46,6 +46,9 @@ func repoCLI(c cliConfig, a []string) error {
 		var out map[string]any
 		e := postAuth(c, "/v1/repositories", v, &out)
 		if e == nil {
+			if id, ok := out["id"].(string); ok && repositoryID(id) {
+				out["url"] = strings.TrimRight(c.Server, "/") + "/" + id
+			}
 			_ = json.NewEncoder(os.Stdout).Encode(out)
 		}
 		return e
@@ -56,16 +59,16 @@ func repoCLI(c cliConfig, a []string) error {
 		return getPrint(c.Server+"/v1/repositories", c.Token)
 	case "show":
 		if len(a) < 2 {
-			return fmt.Errorf("repository required")
+			return fmt.Errorf("repository URL required")
 		}
-		repository, err := resolveRepository(c, a[1])
+		target, repository, err := repositoryTarget(c, a[1])
 		if err != nil {
 			return err
 		}
-		return getPrint(c.Server+"/v1/repositories/"+repository, c.Token)
+		return getPrint(target.Server+"/v1/repositories/"+repository, target.Token)
 	case "add":
 		if len(a) > 1 && (a[1] == "--help" || a[1] == "-h") {
-			fmt.Println("Usage: tpahub repo add <repository-reference> [--dry-run]")
+			fmt.Println("Usage: tpahub add <repo-url> [--dry-run]")
 			fmt.Println("Public repositories are added directly; private repositories prompt for a repository password.")
 			fmt.Println("For automation, --token supplies an existing reader credential without prompting.")
 			return nil
@@ -73,25 +76,20 @@ func repoCLI(c cliConfig, a []string) error {
 		if len(a) < 2 {
 			return fmt.Errorf("repository reference required")
 		}
-		repository := a[1]
-		if origin, id, parseErr := parseRepositoryReference(repository); parseErr == nil {
-			c = c.selectServer(origin)
-			repository = id
-		} else if strings.HasPrefix(repository, "http://") || strings.HasPrefix(repository, "https://") {
-			return parseErr
-		} else {
-			var err error
-			repository, err = resolveRepository(c, repository)
-			if err != nil {
-				return err
-			}
+		target, repository, err := repositoryTarget(c, a[1])
+		if err != nil {
+			return err
 		}
-		return addRepo(c, repository, flagValue(a, "--token", ""), has(a, "--dry-run"))
+		return addRepo(target, repository, flagValue(a, "--token", ""), has(a, "--dry-run"))
 	case "remove":
 		if len(a) < 2 {
-			return fmt.Errorf("repository required")
+			return fmt.Errorf("repository URL required")
 		}
-		return removeRepo(c, a[1])
+		target, repository, err := repositoryTarget(c, a[1])
+		if err != nil {
+			return err
+		}
+		return removeRepo(target, repository)
 	case "token":
 		return tokenCLI(c, a[1:])
 	default:
@@ -161,23 +159,57 @@ func tokenCLI(c cliConfig, a []string) error {
 		return fmt.Errorf("unknown token action")
 	}
 }
-func parseRepositoryReference(value string) (string, string, error) {
+
+type RepoRef struct {
+	Server string
+	ID     string
+}
+
+// ParseRepoURL is the single URL-first repository identity parser. The
+// current wire protocol exposes opaque repository IDs at /<id>; owner/name
+// paths are rejected rather than guessed because the server does not expose
+// an owner identity in repository URLs.
+func ParseRepoURL(value string) (RepoRef, error) {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" {
-		return "", "", fmt.Errorf("invalid repository reference %q; use https://HOST/REPOSITORY_ID", value)
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/REPOSITORY_ID", value)
 	}
-	id := strings.TrimPrefix(u.Path, "/")
-	if u.Path != "/"+id || !repositoryID(id) {
-		return "", "", fmt.Errorf("invalid repository reference %q; use https://HOST/REPOSITORY_ID", value)
+	path := strings.TrimSuffix(u.Path, "/")
+	if path == "" || strings.Contains(path, "//") {
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q; repository ID is required", value)
+	}
+	id := strings.TrimPrefix(path, "/")
+	if strings.Contains(id, "/") || !repositoryID(id) {
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q; use https://HOST/REPOSITORY_ID", value)
 	}
 	originURL := *u
 	originURL.Path = ""
 	originURL.RawPath = ""
 	origin, err := webOrigin(&originURL)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid repository reference %q: %w", value, err)
+		return RepoRef{}, fmt.Errorf("invalid repository URL %q: %w", value, err)
 	}
-	return origin, id, nil
+	return RepoRef{Server: origin, ID: id}, nil
+}
+
+func parseRepositoryReference(value string) (string, string, error) {
+	ref, err := ParseRepoURL(value)
+	if err != nil {
+		return "", "", err
+	}
+	return ref.Server, ref.ID, nil
+}
+
+func repositoryTarget(c cliConfig, value string) (cliConfig, string, error) {
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		ref, err := ParseRepoURL(value)
+		if err != nil {
+			return c, "", err
+		}
+		return c.selectServer(ref.Server), ref.ID, nil
+	}
+	id, err := resolveRepository(c, value)
+	return c, id, err
 }
 
 func repositoryID(value string) bool {
