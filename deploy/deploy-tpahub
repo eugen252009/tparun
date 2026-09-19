@@ -131,7 +131,7 @@ with open(sys.argv[1], encoding='utf-8') as f:
     value = json.load(f)
 assert value.get('service') == 'tpahub'
 assert value.get('version') == '0.1.1'
-assert value.get('schema') == 5
+assert value.get('schema') == '5'
 assert value.get('revision') == sys.argv[2]
 PY
     then break; fi
@@ -143,7 +143,7 @@ import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
     value = json.load(f)
 assert value.get('revision') == sys.argv[2]
-assert value.get('schema') == 5
+assert value.get('schema') == '5'
 PY
 then rollback_deploy; fi
 
