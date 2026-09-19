@@ -213,6 +213,7 @@ func stageCLI(args []string) error {
 			incoming = append(incoming, artifact)
 			temps = append(temps, temp)
 		}
+		oldPaths := make([]string, 0)
 		for i, artifact := range incoming {
 			identity := artifact.Package + "\x00" + artifact.Version + "\x00" + artifact.Architecture
 			index := -1
@@ -236,14 +237,20 @@ func stageCLI(args []string) error {
 				old := manifest.Artifacts[index].StagedPath
 				manifest.Artifacts[index] = artifact
 				if old != "" && old != finalPath {
-					_ = os.Remove(old)
+					oldPaths = append(oldPaths, old)
 				}
 			} else {
 				manifest.Artifacts = append(manifest.Artifacts, artifact)
 			}
 			fmt.Printf("Staged: %s %s %s\n", artifact.Package, artifact.Version, artifact.Architecture)
 		}
-		return saveStagingManifest(manifest)
+		if err := saveStagingManifest(manifest); err != nil {
+			return err
+		}
+		for _, old := range oldPaths {
+			_ = os.Remove(old)
+		}
+		return nil
 	})
 }
 
