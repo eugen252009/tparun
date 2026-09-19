@@ -51,6 +51,9 @@ func repositoryCommand(c cliConfig, a []string) error {
 		if e == nil {
 			name, _ := out["name"].(string)
 			username, _ := out["username"].(string)
+			if username == "" {
+				username = accountUsername(c.Email)
+			}
 			fmt.Println(canonicalRepositoryURL(c.Server, username, name))
 		}
 		return e
