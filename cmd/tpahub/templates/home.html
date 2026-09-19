@@ -1,62 +1,117 @@
 <!doctype html>
 <html lang="en">
-<head>{{template "head" "Signed Debian package hosting"}}</head>
+<head>{{template "head" "A simpler developer environment bootstrap"}}</head>
 <body>
 {{template "header" "home"}}
 <main id="main" tabindex="-1">
   <section class="hero">
-    <p class="eyebrow">Debian package distribution</p>
-    <h1>Your packages.<br>One familiar install.</h1>
-    <p class="lead">Publish a <code>.deb</code> to a signed repository. Your users install and update it with the APT tools they already know.</p>
-    <div class="actions"><a class="button" href="/docs">Get started</a><a href="/pricing">Explore the plans →</a></div>
+    <p class="eyebrow">TPA Hub beta</p>
+    <h1>A simpler way to bootstrap your development environment.</h1>
+    <p class="lead">Start with a clean Debian system, install the signed TPA ecosystem, and use Mema to put developer runtimes and tools in place.</p>
+    <div class="actions"><a class="button" href="#install">Get started on Debian 12</a><a href="/docs">Read the documentation →</a></div>
+    <p class="fine">Qualified on Debian 12 amd64. The public path uses ordinary APT and a signed repository.</p>
   </section>
-  {{template "release-note"}}
-  <section class="section" aria-labelledby="workflow">
-    <p class="eyebrow">A small, familiar workflow</p>
-    <h2 id="workflow">From your build to their machine.</h2>
-    <div class="steps">
-      <div><b>01 / BUILD</b><h3>Bring your package</h3><p>Use your existing build tools, or create Debian packages with TPA from a simple JSON definition.</p></div>
-      <div><b>02 / PUBLISH</b><h3>Upload with the CLI</h3><p>Create a repository and publish your package from the terminal.</p></div>
-      <div><b>03 / SHARE</b><h3>Choose who can install</h3><p>Distribute publicly or use repository reader tokens for private access.</p></div>
-      <div><b>04 / INSTALL</b><h3>Let APT do its job</h3><p>Your users get signed repository metadata and ordinary package updates.</p></div>
+
+  <section class="section quickstart" id="install" aria-labelledby="quickstart-heading">
+    <p class="eyebrow">Start here</p>
+    <h2 id="quickstart-heading">From clean machine to working tools.</h2>
+    <p>Run this on Debian 12 amd64 with a user that can use <code>sudo</code>. Review the installer before running it.</p>
+    <pre><code>curl -fsSL https://tpa.run/install.sh -o /tmp/tpahub-install.sh
+sudo bash /tmp/tpahub-install.sh
+sudo apt-get install -y mema bloom mema-go mema-bun
+sudo mema install go 1.26.5
+sudo mema install bun 1.3.14</code></pre>
+    <p class="fine">The installer configures the signed APT source and installs <code>tpahub</code>. Mema manages the runtimes; Bloom provides reusable capability discovery.</p>
+  </section>
+
+  <section class="section demo-section" id="demo" aria-labelledby="demo-heading">
+    <div class="demo-placeholder">
+      <div>
+        <p class="eyebrow">See it in action</p>
+        <h2 id="demo-heading">Fresh Debian → working development environment.</h2>
+        <p>A short terminal walkthrough will show the public installer, runtime setup, a real project build, and the resulting toolchain.</p>
+        <span class="demo-status" aria-label="Terminal demo video status">Terminal demo coming soon</span>
+      </div>
+      <div class="demo-screen" aria-hidden="true"><span>$ sudo mema install go 1.26.5</span><span>$ go test ./...</span><strong>PASS</strong></div>
     </div>
-    <p><a href="/docs#publish">Follow the complete publishing guide →</a></p>
   </section>
-  <section class="section" aria-labelledby="ecosystem">
-    <p class="eyebrow">The wider ecosystem</p>
-    <h2 id="ecosystem">Use the ecosystem without registering.</h2>
-    <p>You can explore public packages and tools from the ecosystem without creating a TPA Hub account. Publishing and private repository management are account features.</p>
+
+  <section class="section" aria-labelledby="roles-heading">
+    <p class="eyebrow">One path, three roles</p>
+    <h2 id="roles-heading">The pieces stay simple.</h2>
     <div class="card-grid">
-      <article class="card">
-        <h3>Mema</h3>
-        <p>Manage developer tools and runtimes from one place.</p>
-        <pre><code>mema list</code></pre>
-      </article>
-      <article class="card">
-        <h3>Bloom</h3>
-        <p>Discover reusable building blocks and inspect what they provide.</p>
-        <pre><code>bloom search "math min u32"
-bloom describe math.min.u32</code></pre>
-      </article>
+      <article class="card"><h3>TPA Hub</h3><p>Provides signed Debian package repositories and the public installation path.</p></article>
+      <article class="card"><h3>Mema</h3><p>Installs and manages developer runtimes and tools without replacing the package workflow you already know.</p></article>
+      <article class="card"><h3>Bloom</h3><p>Helps discover reusable capabilities and inspect what they provide.</p></article>
     </div>
-    <p class="fine">Need the tools first? <code>sudo apt install mema bloom</code></p>
   </section>
-  <section class="section" aria-labelledby="purpose">
-    <h2 id="purpose">Package hosting, not another build system.</h2>
+
+  <section class="section" aria-labelledby="ecosystem-heading">
+    <p class="eyebrow">Explore without registering</p>
+    <h2 id="ecosystem-heading">Use the ecosystem without registering.</h2>
     <div class="card-grid">
-      <article class="card"><h3>Keep your workflow</h3><p>TPA Hub handles hosted publication and delivery.</p><a href="/docs#consume">Install public packages →</a></article>
-      <article class="card"><h3>Start with a small repository</h3><p>Nano is designed for lightweight packages and recipe-based distribution. Capacity is measured in stored bytes and repository egress.</p><a href="/nano">Is Nano a fit? →</a></article>
+      <article class="card"><h3>Mema</h3><p>Manage developer runtimes and tools.</p><pre><code>mema list</code></pre></article>
+      <article class="card"><h3>Bloom</h3><p>Discover reusable capabilities.</p><pre><code>bloom search "math min u32"
+bloom describe math.min.u32</code></pre></article>
+    </div>
+    <p class="fine">Nano is the small-package path for lightweight Debian distribution. <a href="/nano">Learn about Nano →</a></p>
+  </section>
+
+  <section class="section" aria-labelledby="proof-heading">
+    <p class="eyebrow">Actually tested</p>
+    <h2 id="proof-heading">Qualified like a real developer environment.</h2>
+    <div class="proof-grid">
+      <ul class="proof-list">
+        <li>Fresh Debian 12 amd64 installation</li>
+        <li>Public signed APT bootstrap</li>
+        <li>Fresh-login PATH persistence</li>
+        <li>Go 1.26.5 and Bun 1.3.14 through Mema</li>
+        <li>Dependency downloads, generators, tests, and builds</li>
+        <li>Reboot and successful post-reboot rebuilds</li>
+      </ul>
+      <div class="proof-terminal">
+        <p class="fine">Real repositories</p>
+        <pre><code>rs/zerolog
+  go mod download
+  go test ./...
+  go build ./...       PASS
+
+a-h/templ examples/counter
+  templ generate
+  go test ./...
+  go build ./...       PASS
+
+honojs/hono
+  bun install
+  bun run test:bun      26/26 PASS
+  bun run build         PASS</code></pre>
+      </div>
     </div>
   </section>
+
+  <section class="section" aria-labelledby="support-heading">
+    <p class="eyebrow">Beta support</p>
+    <h2 id="support-heading">Verified on one clear path.</h2>
+    <p>This is the current qualification boundary, not a claim that every Linux distribution or runtime version has been tested.</p>
+    <div class="support-matrix">
+      <div><strong>Platform</strong><span>Debian 12 amd64</span></div>
+      <div><strong>TPA Hub</strong><span>0.1.1 · Schema 5</span></div>
+      <div><strong>Mema</strong><span>0.2-2</span></div>
+      <div><strong>Bloom</strong><span>0.1.0~bootstrap.7</span></div>
+      <div><strong>Runtimes</strong><span>Go 1.26.5 · Bun 1.3.14</span></div>
+    </div>
+    <div class="actions"><a class="button secondary" href="/docs">Open the practical guide</a><a href="/docs#publish">Publish a package</a><a href="/install.sh">View the installer</a></div>
+  </section>
+
   {{if .HasPackageCount}}
   <section class="section project-stat"><strong>{{.PackageCount}}</strong><span>packages currently published through TPA Hub</span></section>
   {{end}}
   <section class="section" aria-labelledby="trust">
     <p class="eyebrow">Repository trust</p>
     <h2 id="trust">Signed repositories, scoped trust.</h2>
-    <p>APT sources use a repository-scoped <code>signed-by</code> keyring, so each repository carries its own trust material.</p>
-    <div class="actions"><a href="/install.sh">Read the installer</a><a href="/docs#trust">Verify repository trust</a></div>
+    <p>APT uses repository-scoped <code>signed-by</code> keyrings. The current production signing fingerprint is:</p>
     <p class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</p>
+    <p><a href="/docs#trust">Read how trust is configured →</a></p>
   </section>
 </main>
 {{template "footer"}}

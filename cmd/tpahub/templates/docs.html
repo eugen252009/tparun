@@ -14,6 +14,7 @@
         <a href="#compatibility">Find a public repository</a>
         <a href="#consume">Install public packages</a>
         <a href="#bloom">Use the ecosystem</a>
+        <a href="#qualification">Developer qualification</a>
         <a href="#publish">Publish your package</a>
         <a href="#private">Private repositories</a>
         <a href="#limits">Usage & limits</a>
@@ -30,9 +31,10 @@
         <p>These commands target Debian 12 amd64. Run them with a user that can use <code>sudo</code>; omit it in a root shell.</p>
         <pre><code>sudo apt-get update
 sudo apt-get install -y ca-certificates curl gpg less
-curl -fsSL https://tpa.run/install.sh -o install-tpahub.sh
-less install-tpahub.sh</code></pre>
-        <p>Review the installer, then run it to configure the signed APT source and install <code>tpahub</code>.</p>
+curl -fsSL https://tpa.run/install.sh -o /tmp/tpahub-install.sh
+less /tmp/tpahub-install.sh
+sudo bash /tmp/tpahub-install.sh</code></pre>
+        <p>The installer configures the signed APT source and installs <code>tpahub</code>. Review it before running it; the public path is qualified on Debian 12 amd64.</p>
       </section>
       <section id="trust">
         <h2>Verify repository trust</h2>
@@ -61,6 +63,10 @@ sudo apt update
 sudo apt install mema bloom</code></pre>
         <p>If you use the repository directory, add each repository by its ID as described above, then run the same APT commands.</p>
         <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
+        <pre><code>sudo apt install -y mema bloom mema-go mema-bun
+sudo mema install go 1.26.5
+sudo mema install bun 1.3.14</code></pre>
+        <p>These exact runtime versions are the current Debian 12 amd64 beta qualification path.</p>
       </section>
       <section id="bloom">
         <h2>Use the ecosystem without registering</h2>
@@ -83,6 +89,15 @@ bloom describe math.min.u32</code></pre>
         <pre><code>printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' |
   bloom run math.min.u32 --input-format u32le --output-format text</code></pre>
         <p>Expected output: <strong><code>4</code></strong>. Mema and Bloom are independent tools.</p>
+      </section>
+      <section id="qualification">
+        <h2>Developer qualification</h2>
+        <p>The current beta path has been tested from a clean Debian 12 amd64 VM through fresh login and reboot.</p>
+        <div class="card-grid">
+          <article class="card"><h3>Go workflow</h3><p><code>rs/zerolog</code> was cloned, its modules downloaded, then tested and built. The <code>a-h/templ</code> counter example also generated code, passed tests, and built.</p></article>
+          <article class="card"><h3>Bun workflow</h3><p><code>honojs/hono</code> installed 781 packages, passed 26 Bun tests, and built successfully with its project-local tools.</p></article>
+        </div>
+        <p>After reboot, the runtimes, <code>templ</code>, Bloom discovery, dependency installation, tests, and builds continued to work. See the beta support matrix below before choosing this path.</p>
       </section>
       <section id="publish">
         <h2>Publish your package</h2>
