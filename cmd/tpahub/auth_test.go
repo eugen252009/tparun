@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,6 +147,24 @@ func TestLocalRegistrationExplicitlyProvisionsTPAGrants(t *testing.T) {
 	grant, err := s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), commerce.ProductID(TPAHubProductID), CapabilityRepositoryPublish, s.currentTime())
 	if err != nil || grant.Source != "local" || grant.OfferID != "nano" {
 		t.Fatalf("local registration grant=%+v err=%v", grant, err)
+	}
+}
+
+func TestAccountSummaryExposesEntitlementNotOperatorAuthority(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	if err := s.db.CreateAccount(ctx, store.Account{ID: "summary-account", Email: "summary@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateSession(ctx, store.Session{ID: "summary-session", AccountID: "summary-account", TokenPrefix: "tph_s_summary"}, store.HashToken("tph_s_summary")); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, h.URL+"/v1/account", nil)
+	r.Header.Set("Authorization", "Bearer tph_s_summary")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "operator") || !strings.Contains(w.Body.String(), "storage_limit_state") {
+		t.Fatalf("account summary status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

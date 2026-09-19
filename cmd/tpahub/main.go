@@ -290,6 +290,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/accounts", s.accounts)
 	m.HandleFunc("/v1/login", s.login)
 	m.HandleFunc("/v1/logout", s.logout)
+	m.HandleFunc("/v1/account", s.authHandler(s.accountSummary))
 	m.HandleFunc("/v1/billing/purchases/nano", s.authHandler(s.createNanoPurchase))
 	s.registerHostedRoutes(m)
 	m.HandleFunc("/v1/repositories", s.authHandler(s.repositories))

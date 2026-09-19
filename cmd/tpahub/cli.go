@@ -210,7 +210,20 @@ func cli(cfg config.Config, args []string) error {
 		if c.Token == "" {
 			return fmt.Errorf("authentication required; run tpahub login")
 		}
-		fmt.Printf("Account: %s\nServer: %s\n", c.Email, c.Server)
+		var out struct {
+			ID, Email, AccountClass, StorageLimitState  string
+			RepositoryCount, PackageCount, StorageBytes int64
+			StorageLimitBytes                           int64
+		}
+		if err := getJSON(c.Server+"/v1/account", c.Token, &out); err != nil {
+			return err
+		}
+		fmt.Printf("ID: %s\nEmail: %s\nClass: %s\nRepositories: %d\nPackages: %d\n", out.ID, out.Email, out.AccountClass, out.RepositoryCount, out.PackageCount)
+		if out.StorageLimitState == "finite" {
+			fmt.Printf("Storage: %s / %s\n", formatBytes(out.StorageBytes), formatBytes(out.StorageLimitBytes))
+		} else {
+			fmt.Printf("Storage: %s\n", formatBytes(out.StorageBytes))
+		}
 		return nil
 	case "publish":
 		yes := has(args, "-y") || has(args, "--yes")

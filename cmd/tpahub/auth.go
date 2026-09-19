@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"regexp"
@@ -112,6 +114,37 @@ func (s *server) customerAuthAllowed(r *http.Request) bool {
 		s.customerAuthRate = newAuthLimiter(4096, 10, time.Minute)
 	}
 	return s.customerAuthRate.allow(r.RemoteAddr, s.currentTime())
+}
+func (s *server) accountSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id := accountID(r)
+	a, err := s.db.AccountByID(r.Context(), id)
+	if err != nil {
+		bad(w, http.StatusNotFound, "account not found")
+		return
+	}
+	usage, err := s.accountUsage(r.Context(), id)
+	if err != nil {
+		bad(w, http.StatusInternalServerError, "account usage unavailable")
+		return
+	}
+	result := map[string]any{
+		"id":                  a.ID,
+		"email":               a.Email,
+		"account_class":       a.AccountClass,
+		"repository_count":    usage.RepositoryCount,
+		"package_count":       usage.PackageCount,
+		"storage_bytes":       usage.StoredBytes,
+		"storage_limit_state": "none",
+	}
+	if grant, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(id), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); grantErr == nil {
+		result["storage_limit_state"] = "finite"
+		result["storage_limit_bytes"] = grant.Limits.StorageBytes
+	}
+	jsonOut(w, result)
 }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	t, ok := bearer(r)
