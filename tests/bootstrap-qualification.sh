@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RELEASE_URL=${TPAHUB_RELEASE_PACKAGE_URL:-https://tpa.run/tpahub-release_0.1.3_all.deb}
-RELEASE_SHA256=${TPAHUB_RELEASE_PACKAGE_SHA256:-b7344f37df7b27a5ed1a90784a54ee257fde6192690bbb3cffcdda139d2d2657}
+RELEASE_SHA256=${TPAHUB_RELEASE_PACKAGE_SHA256:-420d7886545f52cf2a8c5ce987bba55a2ddd0e9888a3c71caddd4670c0d6f18c}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 cat >"$TMP/Dockerfile" <<'EOF'
