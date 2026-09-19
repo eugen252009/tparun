@@ -98,6 +98,26 @@ func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
 	}
 }
 
+func TestWebsiteEcosystemExamples(t *testing.T) {
+	s, _ := testServer(t)
+	for _, path := range []string{"/", "/docs"} {
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		body := w.Body.String()
+		for _, fragment := range []string{"Use the ecosystem without registering", "<h3>Mema</h3>", "<h3>Bloom</h3>", "mema list", "bloom search \"math min u32\""} {
+			if !strings.Contains(body, fragment) {
+				t.Errorf("%s missing ecosystem example %q", path, fragment)
+			}
+		}
+		if strings.Contains(body, "Try Bloom") {
+			t.Errorf("%s retains the former Bloom CTA", path)
+		}
+	}
+}
+
 func TestWebsiteFormsKeepProductionContracts(t *testing.T) {
 	s, _ := testServer(t)
 	for _, tc := range []struct {

@@ -11,7 +11,7 @@ Public pages answer distinct questions:
 - `/`: what the product does and where to start;
 - `/pricing`: current capacity, future plans, and payment availability;
 - `/nano`: when small packages or optional recipes are a good fit;
-- `/docs`: installation, trust, compatibility, consumption, publication, and limits;
+- `/docs`: installation, trust, repository discovery, consumption, publication, and limits;
 - `/account`: actual available usage data and conditional test checkout;
 - `/ops/*`: operator-only workflows with their own navigation;
 - unknown website routes: a shared, accessible 404 page.

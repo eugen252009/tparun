@@ -11,7 +11,7 @@
       <nav aria-label="On this page">
         <a href="#install">Install the client</a>
         <a href="#trust">Verify repository trust</a>
-        <a href="#compatibility">Client compatibility</a>
+        <a href="#compatibility">Find a public repository</a>
         <a href="#consume">Install public packages</a>
         <a href="#bloom">Use the ecosystem</a>
         <a href="#publish">Publish your package</a>
@@ -46,16 +46,11 @@ sudo apt update</code></pre>
         <pre><code>sudo bash install-tpahub.sh</code></pre>
       </section>
       <section id="compatibility">
-        <h2>Check client compatibility</h2>
-        <p class="notice">Newer clients can discover public repositories by name. Older releases need an explicit server and repository ID; the compatible commands are shown below.</p>
-        <pre><code>dpkg-query -W tpahub</code></pre>
-        <p>For a client supporting discovery, use:</p>
-        <pre><code>tpahub repo list --public --server https://tpa.lupricht.net</code></pre>
-        <p>If discovery is unavailable, open the public <a href="/v1/public/repositories">repository directory</a>. Find
-          the desired repository name and copy its <code>id</code>. Add it with the compatible command:</p>
-        <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net</code></pre>
-        <p>Use the same ID for later removal. Repository names are exact and may be ambiguous; an ID disambiguates them.
-          Public discovery does not expose private repositories.</p>
+        <h2>Find a public repository</h2>
+        <p>List public repositories from the CLI, then add the repository you want to use:</p>
+        <pre><code>tpahub repo list --public --server https://tpa.lupricht.net
+sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net</code></pre>
+        <p>The public <a href="/v1/public/repositories">repository directory</a> also shows each repository name and ID. Use the ID for an unambiguous repository configuration; private repositories are not listed.</p>
       </section>
       <section id="consume">
         <h2>Install public packages</h2>
@@ -64,20 +59,28 @@ sudo apt update</code></pre>
 sudo tpahub repo add bloom-public --server https://tpa.lupricht.net
 sudo apt update
 sudo apt install mema bloom</code></pre>
-        <p>For older clients, add each repository by its directory ID as described above, then run the same APT
-          commands.</p>
+        <p>If you use the repository directory, add each repository by its ID as described above, then run the same APT commands.</p>
         <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
       </section>
       <section id="bloom">
         <h2>Use the ecosystem without registering</h2>
-        <p>Public ecosystem packages are available before you create a TPA Hub account. Create an account when you want to publish packages or manage private repositories.</p>
-        <pre><code>sudo apt update
-sudo apt install mema bloom
-mema list</code></pre>
+        <p>You can explore public packages and tools from the ecosystem without creating a TPA Hub account. Publishing and private repository management are account features.</p>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Mema</h3>
+            <p>Manage developer tools and runtimes from one place.</p>
+            <pre><code>mema list</code></pre>
+          </article>
+          <article class="card">
+            <h3>Bloom</h3>
+            <p>Discover reusable building blocks and inspect what they provide.</p>
+            <pre><code>bloom search "math min u32"
+bloom describe math.min.u32</code></pre>
+          </article>
+        </div>
+        <p class="fine">Need the tools first? <code>sudo apt install mema bloom</code></p>
         <p>For a small Bloom example, find the minimum of <code>[31, 12, 91, 4, 28]</code>. The input encodes unsigned 32-bit little-endian integers:</p>
-        <pre><code>bloom search "math min u32"
-bloom describe math.min.u32
-printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' |
+        <pre><code>printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' |
   bloom run math.min.u32 --input-format u32le --output-format text</code></pre>
         <p>Expected output: <strong><code>4</code></strong>. Mema and Bloom are independent tools.</p>
       </section>
@@ -96,8 +99,7 @@ tpahub status JOB_ID</code></pre>
         <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net
 sudo apt update
 sudo apt install my-package</code></pre>
-        <p>The CLI saves the server selected during login. Supported newer clients also accept
-          <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
+        <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
       </section>
       <section id="private">
         <h2>Private repositories</h2>
