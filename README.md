@@ -210,6 +210,9 @@ No deployment or production upgrade is authorized by local qualification. Offlin
 recovery state and the destructive restore gate are documented in
 [backup and restore](docs/backup-restore.md). The public clean Debian consumer
 path is recorded in the [final bootstrap qualification](docs/debian-bootstrap-qualification.md).
+The follow-on real developer workflow qualification covers fresh-login repository
+clones, dependency resolution, templ generation, Bun project tooling, reboot, and
+post-reboot rebuilds: [developer environment qualification](docs/developer-environment-qualification.md).
 
 ## API and storage
 
