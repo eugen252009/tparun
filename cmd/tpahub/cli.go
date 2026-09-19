@@ -51,9 +51,24 @@ func input(prompt string, secret bool) string {
 	v, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	return strings.TrimSpace(v)
 }
+
+func readRepositoryPassword() (string, error) {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return "", fmt.Errorf("private repository requires an interactive terminal; use --token for automation")
+	}
+	defer tty.Close()
+	fmt.Fprint(os.Stderr, "Repository password: ")
+	value, err := terminal.ReadPassword(int(tty.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("reading repository password: %w", err)
+	}
+	return strings.TrimSpace(string(value)), nil
+}
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub init | serve | schema | migrate | register | login | logout | repo create/list/show/add [--dry-run]/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
+		fmt.Println("tpahub init | serve | schema | migrate | register | login | logout | repo create/list/show/add <repository-reference> [--dry-run]/remove/token | publish | status | admin egress ... | admin account classify ... | admin operator recovery issue|revoke")
 		return nil
 	}
 	if args[0] == "init" {

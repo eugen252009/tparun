@@ -121,18 +121,20 @@ Create a public repository with `tpahub repo create name --public`. Repositories
 Public repository:
 
 ```sh
-sudo tpahub repo add REPOSITORY_ID
+sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
 apt update
 apt install package-name
 ```
 
-Private repository registration uses a repository reader token, not the publisher session token:
+Private repository registration uses a repository reader credential, not the publisher session token:
 
 ```sh
-sudo tpahub repo add REPOSITORY_ID --token tph_r_...
+sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
 apt update
 apt install package-name
 ```
+
+Private repositories prompt for `Repository password:` without echoing the input. For automation, retain an existing reader token with `--token`; do not place it in a command shared with other users.
 
 `repo add` is an installation-side operation: it writes system APT configuration
 and therefore must be run as root (normally with `sudo`). It is not needed to
@@ -140,7 +142,7 @@ register, publish, or inspect repositories. Unprivileged users can preview the
 exact network-fetched key and files without changing the machine:
 
 ```sh
-tpahub repo add REPOSITORY_ID --dry-run
+tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID --dry-run
 ```
 
 The CLI writes:

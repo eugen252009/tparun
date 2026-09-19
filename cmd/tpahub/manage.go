@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,12 +64,27 @@ func repoCLI(c cliConfig, a []string) error {
 		}
 		return getPrint(c.Server+"/v1/repositories/"+repository, c.Token)
 	case "add":
-		if len(a) < 2 {
-			return fmt.Errorf("repository required")
+		if len(a) > 1 && (a[1] == "--help" || a[1] == "-h") {
+			fmt.Println("Usage: tpahub repo add <repository-reference> [--dry-run]")
+			fmt.Println("Public repositories are added directly; private repositories prompt for a repository password.")
+			fmt.Println("For automation, --token supplies an existing reader credential without prompting.")
+			return nil
 		}
-		repository, err := resolveRepository(c, a[1])
-		if err != nil {
-			return err
+		if len(a) < 2 {
+			return fmt.Errorf("repository reference required")
+		}
+		repository := a[1]
+		if origin, id, parseErr := parseRepositoryReference(repository); parseErr == nil {
+			c = c.selectServer(origin)
+			repository = id
+		} else if strings.HasPrefix(repository, "http://") || strings.HasPrefix(repository, "https://") {
+			return parseErr
+		} else {
+			var err error
+			repository, err = resolveRepository(c, repository)
+			if err != nil {
+				return err
+			}
 		}
 		return addRepo(c, repository, flagValue(a, "--token", ""), has(a, "--dry-run"))
 	case "remove":
@@ -145,6 +161,25 @@ func tokenCLI(c cliConfig, a []string) error {
 		return fmt.Errorf("unknown token action")
 	}
 }
+func parseRepositoryReference(value string) (string, string, error) {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" {
+		return "", "", fmt.Errorf("invalid repository reference %q; use https://HOST/REPOSITORY_ID", value)
+	}
+	id := strings.TrimPrefix(u.Path, "/")
+	if u.Path != "/"+id || !repositoryID(id) {
+		return "", "", fmt.Errorf("invalid repository reference %q; use https://HOST/REPOSITORY_ID", value)
+	}
+	originURL := *u
+	originURL.Path = ""
+	originURL.RawPath = ""
+	origin, err := webOrigin(&originURL)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid repository reference %q: %w", value, err)
+	}
+	return origin, id, nil
+}
+
 func repositoryID(value string) bool {
 	if len(value) == 32 {
 		valid := true
@@ -205,6 +240,51 @@ func resolveRepositoryInScope(c cliConfig, value string, ownerOnly bool) (string
 	return match, nil
 }
 
+func validateReaderCredential(c cliConfig, repo, reader string) error {
+	req, err := http.NewRequest("GET", c.Server+"/r/"+url.PathEscape(repo)+"/dists/stable/InRelease", nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth("reader", reader)
+	res, err := doCLIRequest(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	io.Copy(io.Discard, res.Body)
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("repository password rejected")
+	}
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("repository access check failed: %s", res.Status)
+	}
+	return nil
+}
+
+func getRepositoryMetadata(c cliConfig, repo string, out any) (int, error) {
+	req, err := http.NewRequest("GET", c.Server+"/v1/repositories/"+url.PathEscape(repo), nil)
+	if err != nil {
+		return 0, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	res, err := doCLIRequest(req)
+	if err != nil {
+		return 0, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return res.StatusCode, fmt.Errorf("request failed: %s", res.Status)
+	}
+	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+		return res.StatusCode, err
+	}
+	return res.StatusCode, nil
+}
+
+var repositoryPasswordReader = readRepositoryPassword
+
 func addRepo(c cliConfig, v, reader string, dryRun bool) error {
 	// repoCLI resolved a public name or explicit ID already. Reader-based APT
 	// registration needs no publisher credential or authenticated discovery.
@@ -218,14 +298,32 @@ func addRepo(c cliConfig, v, reader string, dryRun bool) error {
 	if reader != "" {
 		meta.ID = repo
 		meta.Visibility = "private"
-	} else if e = getJSON(c.Server+"/v1/repositories/"+repo, c.Token, &meta); e != nil {
-		return e
+	} else {
+		status, fetchErr := getRepositoryMetadata(c, repo, &meta)
+		if fetchErr != nil && status != http.StatusUnauthorized && status != http.StatusForbidden {
+			return fetchErr
+		}
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			meta.ID = repo
+			meta.Visibility = "private"
+		}
 	}
 	if meta.Visibility == "private" && reader == "" {
-		return fmt.Errorf("private repository requires --token")
+		reader, e = repositoryPasswordReader()
+		if e != nil {
+			return e
+		}
+		if reader == "" {
+			return fmt.Errorf("repository password cannot be empty")
+		}
 	}
 	if strings.ContainsAny(reader, " \t\r\n\"\\\x00") {
 		return fmt.Errorf("invalid reader credential")
+	}
+	if meta.Visibility == "private" {
+		if e = validateReaderCredential(c, repo, reader); e != nil {
+			return e
+		}
 	}
 	req, e := http.NewRequest("GET", c.Server+"/v1/repositories/"+repo+"/signing-key", nil)
 	if e != nil {

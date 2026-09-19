@@ -37,7 +37,7 @@ less install-tpahub.sh</code></pre>
       <section id="trust">
         <h2>Verify repository trust</h2>
         <p>Each repository provides a public signing key. The client installs it in a repository-scoped keyring when you run <code>repo add</code>.</p>
-        <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net
+        <pre><code>sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
 sudo apt update</code></pre>
         <p>APT uses <code>signed-by=</code> with the repository keyring under <code>/etc/apt/keyrings</code>. The current production signing fingerprint is:</p>
         <p class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</p>
@@ -49,14 +49,14 @@ sudo apt update</code></pre>
         <h2>Find a public repository</h2>
         <p>List public repositories from the CLI, then add the repository you want to use:</p>
         <pre><code>tpahub repo list --public --server https://tpa.lupricht.net
-sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net</code></pre>
+sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID</code></pre>
         <p>The public <a href="/v1/public/repositories">repository directory</a> also shows each repository name and ID. Use the ID for an unambiguous repository configuration; private repositories are not listed.</p>
       </section>
       <section id="consume">
         <h2>Install public packages</h2>
-        <p>No publisher login is required. With a client supporting name resolution:</p>
-        <pre><code>sudo tpahub repo add mema-public --server https://tpa.lupricht.net
-sudo tpahub repo add bloom-public --server https://tpa.lupricht.net
+        <p>No publisher login is required. Add the public repository IDs shown above:</p>
+        <pre><code>sudo tpahub repo add https://tpa.lupricht.net/MEMA_REPOSITORY_ID
+sudo tpahub repo add https://tpa.lupricht.net/BLOOM_REPOSITORY_ID
 sudo apt update
 sudo apt install mema bloom</code></pre>
         <p>If you use the repository directory, add each repository by its ID as described above, then run the same APT commands.</p>
@@ -96,7 +96,7 @@ tpahub status JOB_ID</code></pre>
         <p>Replace the package path with your build output and <code>JOB_ID</code> with the returned job ID. Wait for
           successful publication before configuring consumers.</p>
         <p>On the consuming machine, add the repository's ID, then install:</p>
-        <pre><code>sudo tpahub repo add REPOSITORY_ID --server https://tpa.lupricht.net
+        <pre><code>sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID
 sudo apt update
 sudo apt install my-package</code></pre>
         <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
@@ -108,11 +108,8 @@ sudo apt install my-package</code></pre>
         <pre><code>tpahub repo create private-tools
 tpahub repo token create private-tools workstation</code></pre>
         <p>On the consuming machine:</p>
-        <pre><code>sudo tpahub repo add REPOSITORY_ID --token READER_TOKEN --server https://tpa.lupricht.net</code></pre>
-        <p>Reader tokens authorize downloads from one repository, not administration or publishing. Treat them as
-          secrets; avoid shared shell histories. APT credentials are written to a restricted file under
-          <code>/etc/apt/auth.conf.d</code>.
-        </p>
+        <pre><code>sudo tpahub repo add https://tpa.lupricht.net/REPOSITORY_ID</code></pre>
+        <p>The CLI prompts for <strong>Repository password:</strong> without echoing the input. Reader credentials authorize downloads from one repository, not administration or publishing. Treat them as secrets; avoid shared shell histories. APT credentials are written to a restricted file under <code>/etc/apt/auth.conf.d</code>.</p>
       </section>
       <section id="limits">
         <h2>Usage & limits</h2>
