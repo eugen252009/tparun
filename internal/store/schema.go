@@ -190,7 +190,7 @@ var canonicalSchemaDefinitions = sync.OnceValues(func() (map[string]string, erro
 // Validate every declared table, column, CHECK, FK, index and trigger against
 // the canonical executable DDL. Every instance is freshly inspected read-only.
 func validateCurrentSchema(db *sql.DB) error {
-	return validateSchema(db, schemaSQL, "Schema 6")
+	return validateSchema(db, schemaSQL, "Schema 7")
 }
 
 func validateSchema(db *sql.DB, ddl, label string) error {
@@ -257,12 +257,22 @@ func migrateSchemaTo7(db *sql.DB, version int) error {
 	}
 	defer tx.Rollback()
 	if version == 5 {
-		if _, err = tx.Exec(oldCred); err != nil {
+		if _, err = tx.Exec(finalCred); err != nil {
 			return fmt.Errorf("create SSH credential table: %w", err)
 		}
-	}
-	if _, err = tx.Exec(`ALTER TABLE account_ssh_credentials ADD COLUMN flags INTEGER NOT NULL DEFAULT 0 CHECK(flags>=0)`); err != nil && version != 5 {
-		return fmt.Errorf("add SSH credential flags: %w", err)
+	} else {
+		if _, err = tx.Exec(`ALTER TABLE account_ssh_credentials RENAME TO account_ssh_credentials_legacy`); err != nil {
+			return fmt.Errorf("stage SSH credential table: %w", err)
+		}
+		if _, err = tx.Exec(finalCred); err != nil {
+			return fmt.Errorf("create canonical SSH credential table: %w", err)
+		}
+		if _, err = tx.Exec(`INSERT INTO account_ssh_credentials(id,account_id,credential_type,public_key,fingerprint,label,flags,created_at,revoked_at) SELECT id,account_id,credential_type,public_key,fingerprint,label,0,created_at,revoked_at FROM account_ssh_credentials_legacy`); err != nil {
+			return fmt.Errorf("preserve SSH credentials: %w", err)
+		}
+		if _, err = tx.Exec(`DROP TABLE account_ssh_credentials_legacy`); err != nil {
+			return fmt.Errorf("remove staged SSH credential table: %w", err)
+		}
 	}
 	if _, err = tx.Exec(`CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),credential_id TEXT NOT NULL,old_flags INTEGER NOT NULL CHECK(old_flags>=0),new_flags INTEGER NOT NULL CHECK(new_flags>=0),action TEXT NOT NULL,created_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("create SSH credential audit table: %w", err)
@@ -369,7 +379,7 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 		}
 		defer tx.Rollback()
 		if _, err = tx.Exec(schemaSQL); err != nil {
-			return nil, fmt.Errorf("initialize Schema 6: %w", err)
+			return nil, fmt.Errorf("initialize Schema 7: %w", err)
 		}
 		if _, err = tx.Exec(`INSERT INTO tpahub_schema(singleton,version) VALUES(1,?)`, currentSchemaVersion); err != nil {
 			return nil, err
