@@ -91,9 +91,17 @@ func normalizeCLICommand(args []string) []string {
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
 		fmt.Println("Repositories: add <repo-url> | remove <repo-url> | show <repo-url> | list | create <name> | edit <repo-url> visibility | delete <repo-url>")
-		fmt.Println("Publication: stage <package.deb>... | unstage <package.deb> | status | publish <repo-url> [-y]")
+		fmt.Println("Publication: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
 		fmt.Println("Authentication: register | login | logout | whoami    System: version | doctor    Other: status <job-id>")
 		fmt.Println("Compatibility: tpahub repo add|remove|show|list|create ...; credentials: tpahub repo token ...")
+		return nil
+	}
+	if args[0] == "publish" && has(args[1:], "--help") {
+		fmt.Println("Usage: tpahub publish [--yes] [--verbose] <repository-url>")
+		fmt.Println("Publish the currently staged packages to a repository.")
+		fmt.Println("Options:")
+		fmt.Println("  -y, --yes      Skip confirmation")
+		fmt.Println("      --verbose  Show the detailed publication plan")
 		return nil
 	}
 	if args[0] == "stage" {
@@ -219,43 +227,17 @@ func cli(cfg config.Config, args []string) error {
 		return repoCLI(c, args)
 	case "publish":
 		yes := has(args, "-y") || has(args, "--yes")
+		verbose := has(args, "--verbose")
 		operands := make([]string, 0, len(args))
 		for _, arg := range args[1:] {
-			if arg != "-y" && arg != "--yes" {
+			if arg != "-y" && arg != "--yes" && arg != "--verbose" {
 				operands = append(operands, arg)
 			}
 		}
-		if len(operands) == 1 {
-			return publishStaged(c, operands[0], yes)
+		if len(operands) != 1 {
+			return fmt.Errorf("usage: tpahub publish [--yes] [--verbose] <repo-url>")
 		}
-		if len(operands) < 2 {
-			return fmt.Errorf("usage: tpahub publish <repo-url> (uses staged packages) or tpahub publish <repo> <files...>")
-		}
-		if yes {
-			return fmt.Errorf("--yes is supported for staged publication; stage packages before publishing")
-		}
-		repo, e := owned(c, operands[0])
-		if e != nil {
-			return e
-		}
-		var body bytes.Buffer
-		w := newMultipart(&body)
-		for _, p := range operands[1:] {
-			if e := w.AddFile("files", p); e != nil {
-				return e
-			}
-		}
-		w.Close()
-		req, _ := http.NewRequest("POST", c.Server+"/v1/repositories/"+repo+"/publishes", &body)
-		if c.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.Token)
-		}
-		req.Header.Set("Content-Type", w.FormDataContentType())
-		res, e := doCLIRequest(req)
-		if e != nil {
-			return e
-		}
-		return printResponse(res)
+		return publishStaged(c, operands[0], yes, verbose)
 	case "status":
 		if len(args) < 2 {
 			return statusCLI()

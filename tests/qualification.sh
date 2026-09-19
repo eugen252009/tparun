@@ -48,10 +48,9 @@ PY
 REPO=$(client create tpa | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 printf 'public\ny\n' | client edit "$SERVER/$REPO" visibility >/dev/null
 client show "$SERVER/$REPO" >/dev/null
-publish(){ client publish tpa "$1"; }
-JOB=$(publish "$TMP/tpa_1.0.0_amd64.deb" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+client stage "$TMP/tpa_1.0.0_amd64.deb" >/dev/null
+client publish "$SERVER/$REPO" --yes >/dev/null
 wait_job(){ i=0; while :; do state=$(curl -fsS "$SERVER/v1/publish-jobs/$1" -H "Authorization: Bearer $AUTH"|python3 -c 'import json,sys; print(json.load(sys.stdin)["State"])'); case "$state" in succeeded)return;; failed) curl -fsS "$SERVER/v1/publish-jobs/$1" -H "Authorization: Bearer $AUTH"; exit 1;; esac; i=$((i+1)); [ "$i" -lt 300 ] || exit 1; sleep .1; done; }
-wait_job "$JOB"
 curl -fsS "$SERVER/r/$REPO/dists/stable/InRelease" >/dev/null
 curl -fsS "$SERVER/r/$REPO/dists/stable/main/binary-amd64/Packages" | grep -q '^Package: tpa$'
 TPA_PATH=$(curl -fsS "$SERVER/r/$REPO/dists/stable/main/binary-amd64/Packages" | awk '/^Filename:/{print $2;exit}')
@@ -75,12 +74,14 @@ i=0; while :; do state=$(curl -fsS "$SERVER/v1/publish-jobs/$JOB" -H "Authorizat
 # Private repository and reader-credential qualification.
 PRIVATE=$(client repo create private-tools | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 client repo show private-tools >/dev/null
-JOB=$(client publish private-tools "$TMP/tpa_1.0.0_amd64.deb" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'); wait_job "$JOB"
+client stage "$TMP/tpa_1.0.0_amd64.deb" >/dev/null
+client publish "$PRIVATE" --yes >/dev/null
 READER_TOKEN=$(client repo token create private-tools qualification | awk '/^Token:/{print $2}')
 READER_ID=$(client repo token list "$PRIVATE" | python3 -c 'import json,sys;print(next(x["ID"] for x in json.load(sys.stdin) if x["Name"]=="qualification"))')
 make_deb private-b-probe 1.0.0
 PRIVATE_B=$(client repo create private-b | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
-JOB=$(client publish "$PRIVATE_B" "$TMP/private-b-probe-1.0.0.deb" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'); wait_job "$JOB"
+client stage "$TMP/private-b-probe-1.0.0.deb" >/dev/null
+client publish "$PRIVATE_B" --yes >/dev/null
 READER_B=$(client repo token create private-b reader-b | awk '/^Token:/{print $2}')
 [ "$(curl -s -o /dev/null -w '%{http_code}' -u reader:$READER_TOKEN "$SERVER/r/$PRIVATE_B/dists/stable/InRelease")" = 401 ]
 [ "$(curl -s -o /dev/null -w '%{http_code}' -u reader:$READER_B "$SERVER/r/$PRIVATE_B/dists/stable/InRelease")" = 200 ]

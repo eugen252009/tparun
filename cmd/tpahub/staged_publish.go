@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -55,15 +56,44 @@ func postJSONAuth(u, token string, value any, out any) (int, error) {
 	return res.StatusCode, nil
 }
 
-func printPublicationPlan(repository string, plan publicationPlanResponse) {
-	fmt.Printf("Repository:\n  %s\n\nCurrent:\n  %d packages\n  %s used\n\nStaged:\n", repository, plan.CurrentPackageCount, formatBytes(plan.CurrentStorageBytes))
-	for _, item := range plan.Items {
-		fmt.Printf("  %s %s %s  %s\n", item.Classification, item.Package, item.Version, item.Architecture)
-	}
-	fmt.Printf("  %d packages\n  %s\n\nAfter publication:\n  %d packages\n  repository: %s\n  account:    %s used / %s limit\n  %s remaining\n", plan.StagedPackageCount, formatBytes(plan.StagedStorageBytes), plan.ProjectedPackageCount, formatBytes(plan.ProjectedStorageBytes), formatBytes(plan.ProjectedAccountStorageBytes), formatBytes(plan.StorageLimitBytes), formatBytes(plan.RemainingStorageBytes))
+func printPublicationPlan(plan publicationPlanResponse, verbose bool) {
+	fmt.Print(publicationPlanOutput(plan, verbose))
 }
 
-func publishStaged(c cliConfig, repository string, yes bool) error {
+func publicationPlanOutput(plan publicationPlanResponse, verbose bool) string {
+	var out strings.Builder
+	if verbose {
+		fmt.Fprint(&out, "Staged packages\n\n")
+		for _, item := range plan.Items {
+			fmt.Fprintf(&out, "%-14s %-24s %-12s %-10s %s\n", item.Classification, item.Package, item.Version, item.Architecture, formatBytes(item.Size))
+		}
+		fmt.Fprintf(&out, "\nCurrent repository\n\n%d packages\n", plan.CurrentPackageCount)
+		if plan.StorageLimitBytes == math.MaxInt64 {
+			fmt.Fprintf(&out, "%s\n", formatBytes(plan.CurrentStorageBytes))
+		} else {
+			fmt.Fprintf(&out, "%s / %s\n", formatBytes(plan.CurrentStorageBytes), formatBytes(plan.StorageLimitBytes))
+		}
+		out.WriteString("\n")
+	}
+	storageDelta := plan.ProjectedStorageBytes - plan.CurrentStorageBytes
+	out.WriteString("New repository statistics\n\n")
+	fmt.Fprintf(&out, "%d packages (+%d)\n", plan.ProjectedPackageCount, plan.NewPackageCount)
+	if plan.StorageLimitBytes == math.MaxInt64 {
+		fmt.Fprintf(&out, "%s (%s)\n", formatBytes(plan.ProjectedStorageBytes), formatDeltaBytes(storageDelta))
+	} else {
+		fmt.Fprintf(&out, "%s / %s (%s)\n", formatBytes(plan.ProjectedStorageBytes), formatBytes(plan.StorageLimitBytes), formatDeltaBytes(storageDelta))
+	}
+	return out.String()
+}
+
+func formatDeltaBytes(bytes int64) string {
+	if bytes < 0 {
+		return "-" + formatBytes(-bytes)
+	}
+	return "+" + formatBytes(bytes)
+}
+
+func publishStaged(c cliConfig, repository string, yes, verbose bool) error {
 	target, repo, err := repositoryTarget(c, repository)
 	if err != nil {
 		return err
@@ -74,7 +104,7 @@ func publishStaged(c cliConfig, repository string, yes bool) error {
 			return err
 		}
 		if len(manifest.Artifacts) == 0 {
-			return fmt.Errorf("nothing staged for publication; use `tpahub stage <package.deb>...` first")
+			return fmt.Errorf("Nothing staged for publication. Use `tpahub stage <package.deb>...` first.")
 		}
 		inputs, err := stagedPlanInputs(manifest)
 		if err != nil {
@@ -85,8 +115,12 @@ func publishStaged(c cliConfig, repository string, yes bool) error {
 		if err != nil {
 			return err
 		}
-		printPublicationPlan(target.Server+"/"+repo, plan)
+		printPublicationPlan(plan, verbose)
 		if status >= 300 || !plan.Allowed {
+			if plan.StorageLimitBytes != math.MaxInt64 && plan.ProjectedAccountStorageBytes > plan.StorageLimitBytes {
+				excess := plan.ProjectedAccountStorageBytes - plan.StorageLimitBytes
+				return fmt.Errorf("publication exceeds available storage by %s", formatBytes(excess))
+			}
 			if plan.Reason != "" {
 				return fmt.Errorf("publication preflight rejected: %s", plan.Reason)
 			}
@@ -96,9 +130,9 @@ func publishStaged(c cliConfig, repository string, yes bool) error {
 			if !publishInteractive() {
 				return fmt.Errorf("publication requires confirmation; use --yes for non-interactive execution")
 			}
-			answer := strings.ToLower(strings.TrimSpace(publishPrompt("Publish these packages? [y/N] ")))
+			answer := strings.ToLower(strings.TrimSpace(publishPrompt("Publish? [y/N] ")))
 			if answer != "y" && answer != "yes" {
-				fmt.Println("Publication cancelled; staging preserved.")
+				fmt.Println("publication cancelled; staging preserved")
 				return nil
 			}
 		}
@@ -137,7 +171,7 @@ func publishStaged(c cliConfig, repository string, yes bool) error {
 		if accepted.ID == "" {
 			return fmt.Errorf("publication response did not include a job ID")
 		}
-		fmt.Printf("\nPublication accepted. Job: %s\n", accepted.ID)
+		fmt.Println("\nPublishing...")
 		state, jobErr := waitForPublication(target.Server, target.Token, accepted.ID)
 		if jobErr != nil {
 			return jobErr

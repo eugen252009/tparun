@@ -108,7 +108,9 @@ tpahub register
 tpahub login
 tpahub create private-tools
 tpahub list
-tpahub publish private-tools ./tool_1.0.0_amd64.deb
+tpahub stage ./tool_1.0.0_amd64.deb
+tpahub status
+tpahub publish https://tpa.run/REPOSITORY_ID
 tpahub status JOB_ID
 tpahub repo token create private-tools workstation
 ```

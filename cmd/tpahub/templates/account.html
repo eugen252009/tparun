@@ -81,7 +81,9 @@
       <p>The CLI creates repositories, publishes packages, and manages reader tokens. See the guide for installation, repository discovery, and consumer setup.</p>
       <pre><code>tpahub login --server https://tpa.run
 tpahub create myrepo
-tpahub publish myrepo ./package.deb</code></pre>
+tpahub stage ./package.deb
+tpahub status
+tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
       <p class="fine">Repositories are private by default. Publishing requires an active entitlement.</p>
       <a class="button secondary" href="/docs#publish">Open the publishing guide</a>
     </section>

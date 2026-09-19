@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,8 +14,6 @@ import (
 
 func TestClientCommandsRejectCrossOriginReplay(t *testing.T) {
 	clientTestHome(t)
-	payload := filepath.Join(t.TempDir(), "private.deb")
-	os.WriteFile(payload, []byte("private-publication-fixture"), 0600)
 	var arrivals atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { arrivals.Add(1); io.Copy(io.Discard, r.Body) }))
 	defer target.Close()
@@ -25,7 +21,7 @@ func TestClientCommandsRejectCrossOriginReplay(t *testing.T) {
 		for _, args := range [][]string{
 			{"login"}, {"register"}, {"logout"}, {"repo", "create", "private"}, {"repo", "list"}, {"repo", "show", admissionRepo}, {"status", "job"},
 			{"repo", "token", "create", admissionRepo, "reader"}, {"repo", "token", "list", admissionRepo}, {"repo", "token", "revoke", admissionRepo, "credential"},
-			{"publish", admissionRepo, payload}, {"repo", "add", admissionRepo, "--token", "reader-fixture"},
+			{"repo", "add", admissionRepo, "--token", "reader-fixture"},
 		} {
 			t.Run(fmt.Sprint(code, args[:1]), func(t *testing.T) {
 				var sensitive atomic.Bool

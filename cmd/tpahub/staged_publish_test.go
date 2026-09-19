@@ -40,12 +40,45 @@ func TestStagedPublicationClearsAfterAcceptedSuccess(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if err := publishStaged(cliConfig{Server: server.URL, Token: "token"}, repositoryID, true); err != nil {
+	if err := publishStaged(cliConfig{Server: server.URL, Token: "token"}, repositoryID, true, false); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := loadStagingManifest()
 	if err != nil || len(manifest.Artifacts) != 0 {
 		t.Fatalf("successful publication did not clear staging: %+v err=%v", manifest, err)
+	}
+}
+
+func TestStagedPublicationCancellationPreservesStaging(t *testing.T) {
+	packagePath := filepath.Join(t.TempDir(), "cancel_1_amd64.deb")
+	buildSemanticTestDebForArchitecture(t, packagePath, "amd64")
+	t.Setenv("TPAHUB_STAGING_DIR", filepath.Join(t.TempDir(), "staging"))
+	if err := stageCLI([]string{packagePath}); err != nil {
+		t.Fatal(err)
+	}
+	const repositoryID = "cececececececececececececececece"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/repositories" || r.URL.Path == "/v1/public/repositories" {
+			json.NewEncoder(w).Encode([]map[string]string{{"id": repositoryID, "name": "cancel"}})
+			return
+		}
+		if r.URL.Path == "/v1/repositories/"+repositoryID+"/publication-plan" {
+			json.NewEncoder(w).Encode(publicationPlanResponse{RepositoryID: repositoryID, ProjectedPackageCount: 1, ProjectedStorageBytes: 1, ProjectedAccountStorageBytes: 1, StorageLimitBytes: 100, Allowed: true})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	oldInteractive, oldPrompt := publishInteractive, publishPrompt
+	publishInteractive = func() bool { return true }
+	publishPrompt = func(string) string { return "n" }
+	defer func() { publishInteractive, publishPrompt = oldInteractive, oldPrompt }()
+	if err := publishStaged(cliConfig{Server: server.URL, Token: "token"}, server.URL+"/"+repositoryID, false, false); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadStagingManifest()
+	if err != nil || len(manifest.Artifacts) != 1 {
+		t.Fatalf("cancelled publication did not preserve staging: %+v err=%v", manifest, err)
 	}
 }
 
@@ -79,7 +112,7 @@ func TestStagedPublicationRunsRealServerPublication(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	if err := publishStaged(cliConfig{Server: h.URL, Token: "tph_s_test"}, repositoryID, true); err != nil {
+	if err := publishStaged(cliConfig{Server: h.URL, Token: "tph_s_test"}, repositoryID, true, false); err != nil {
 		t.Fatal(err)
 	}
 	<-processed

@@ -112,14 +112,14 @@ tpahub create tools</code></pre>
         <pre><code>tpahub stage ./my-package_1.0.0_amd64.deb
 tpahub status
 tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
-        <p>TPA Hub snapshots the package bytes locally. Before upload, it shows the current repository usage, staged packages, projected storage, and remaining capacity. A confirmation is required by default.</p>
-        <p>For multiple packages, stage the complete set and remove an item before publishing if needed:</p>
+        <p>TPA Hub snapshots the package bytes locally. Before upload, it shows the projected repository statistics and asks for confirmation. Use <code>--verbose</code> for the full publication plan.</p>
+        <p>For multiple packages, stage the complete set and inspect it with <code>tpahub status</code> before publishing:</p>
         <pre><code>tpahub stage ./app_1.0.0_amd64.deb ./cli_1.0.0_amd64.deb
 tpahub unstage ./cli_1.0.0_amd64.deb
-tpahub publish -y https://tpa.run/REPOSITORY_ID</code></pre>
+tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
         <p><code>-y</code> or <code>--yes</code> only accepts the confirmation; authentication, authorization, package validation, and capacity checks still apply. Successful publication clears local staging. Failed or cancelled publication preserves it for retry. Staging lives under <code>/tmp</code> and may be removed by reboot or system cleanup.</p>
         <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
-        <p>For compatibility, the existing direct form <code>tpahub publish REPOSITORY package.deb</code> remains available; the staged form is the recommended workflow.</p>
+        <p>Use <code>--verbose</code> when you want the detailed publication plan. The normal publish output shows only the projected repository statistics and confirmation.</p>
         <p>On the consuming machine, add the repository's ID, then install:</p>
         <pre><code>sudo tpahub add https://tpa.run/REPOSITORY_ID
 sudo apt update

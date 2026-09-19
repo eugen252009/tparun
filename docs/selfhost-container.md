@@ -138,7 +138,9 @@ TPAHUB_SERVER=https://packages.home.example tpahub register
 TPAHUB_SERVER=https://packages.home.example tpahub login
 tpahub --server https://packages.home.example repo list
 tpahub --server https://packages.home.example repo create client-test
-tpahub --server https://packages.home.example publish client-test ./test.deb
+tpahub --server https://packages.home.example stage ./test.deb
+tpahub --server https://packages.home.example status
+tpahub --server https://packages.home.example publish https://packages.home.example/REPOSITORY_ID
 tpahub add https://packages.home.example/REPOSITORY_ID --dry-run
 sudo tpahub add https://packages.home.example/REPOSITORY_ID
 sudo apt update
