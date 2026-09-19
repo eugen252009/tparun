@@ -83,7 +83,7 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	if !bytes.Equal(rootSource, source) {
 		t.Fatal("root installer must match the embedded installer source")
 	}
-	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.3_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
+	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.4_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")

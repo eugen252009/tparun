@@ -18,8 +18,17 @@ for package in "$DIST"/pool/main/*/*/*.deb; do
 done
 grep -q '^Package: tpahub$' "$PKG_INDEX" || { echo 'current tpahub package missing' >&2; exit 1; }
 grep -q '^Package: tpahub-release$' "$PKG_INDEX" || { echo 'release package missing' >&2; exit 1; }
+release_package=$(find "$DIST/pool/main/t/tpahub-release" -name '*.deb' -print -quit)
+release_root=$(mktemp -d)
+trap 'rm -rf "$release_root"' EXIT
+dpkg-deb --extract "$release_package" "$release_root"
+grep -Fq 'URIs: https://tpa.run/r/tpahub-bootstrap/tpahub-bootstrap' "$release_root/etc/apt/sources.list.d/tpahub.sources" || { echo 'release package does not use canonical bootstrap URL' >&2; exit 1; }
 if [[ -f "$DIST/dists/stable/InRelease" ]]; then
   command -v gpg >/dev/null || { echo 'gpg is required to verify InRelease' >&2; exit 1; }
-  gpg --batch --status-fd 1 --verify "$DIST/dists/stable/InRelease" >/dev/null
+  keyring=$(mktemp -d)
+  trap 'rm -rf "$release_root" "$keyring"' EXIT
+  chmod 700 "$keyring"
+  GNUPGHOME="$keyring" gpg --batch --quiet --import "$DIST/keyring/tpahub.asc" >/dev/null 2>&1
+  GNUPGHOME="$keyring" gpg --batch --status-fd 1 --verify "$DIST/dists/stable/InRelease" >/dev/null
 fi
 printf '%s\n' 'TPA HUB DISTRIBUTION SELF-CONSISTENCY PASS'

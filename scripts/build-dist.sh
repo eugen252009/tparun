@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DIST=${1:-$ROOT/dist}
-VERSION=${TPAHUB_VERSION:-0.1.1}
-RELEASE_VERSION=${TPAHUB_RELEASE_VERSION:-0.1.3}
+VERSION=${TPAHUB_VERSION:-0.1.1-1}
+RELEASE_VERSION=${TPAHUB_RELEASE_VERSION:-0.1.4}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
 ARCH=${TPAHUB_ARCH:-amd64}
 mkdir -p "$DIST/pool/main/t/tpahub" "$DIST/pool/main/t/tpahub-release" "$DIST/dists/stable/main/binary-$ARCH" "$DIST/keyring"
@@ -52,5 +52,9 @@ elif [[ "${TPAHUB_DIST_ALLOW_UNSIGNED:-0}" != 1 ]]; then
   echo 'set TPAHUB_DIST_GNUPGHOME and TPAHUB_DIST_SIGNING_KEY, or explicitly set TPAHUB_DIST_ALLOW_UNSIGNED=1 for local fixtures' >&2
   exit 1
 fi
-cp "$ROOT/install.sh" "$DIST/install.sh"
+release_package="$DIST/pool/main/t/tpahub-release/tpahub-release_${RELEASE_VERSION}_all.deb"
+release_sha=$(sha256sum "$release_package" | awk '{print $1}')
+sed -e "s/tpahub-release_[0-9][^/ ]*\.deb/tpahub-release_${RELEASE_VERSION}_all.deb/" \
+  -e "s/RELEASE_PACKAGE_SHA256=\${TPAHUB_RELEASE_PACKAGE_SHA256:-[0-9a-f]*}/RELEASE_PACKAGE_SHA256=\${TPAHUB_RELEASE_PACKAGE_SHA256:-$release_sha}/" \
+  "$ROOT/install.sh" >"$DIST/install.sh"
 printf '%s\n' "$DIST"
