@@ -90,7 +90,8 @@ bloom describe math.min.u32</code></pre>
           paid capacity. Check your <a href="/account">account</a> and <a href="/pricing">plan availability</a>.</p>
         <pre><code>tpahub register --server https://tpa.run
 tpahub login --server https://tpa.run
-tpahub create tools --public
+tpahub create tools
+tpahub edit https://tpa.run/REPOSITORY_ID visibility
 tpahub publish tools ./my-package_1.0.0_amd64.deb
 tpahub status JOB_ID</code></pre>
         <p>Replace the package path with your build output and <code>JOB_ID</code> with the returned job ID. Wait for
@@ -103,7 +104,7 @@ sudo apt install my-package</code></pre>
       </section>
       <section id="private">
         <h2>Private repositories</h2>
-        <p>Repositories are private unless created with <code>--public</code>. As the publisher, create a reader token:
+        <p>Repositories are private when created. To change visibility, use <code>tpahub edit https://tpa.run/REPOSITORY_ID visibility</code>. As the publisher, create a reader token:
         </p>
         <pre><code>tpahub create private-tools
 tpahub repo token create private-tools workstation</code></pre>

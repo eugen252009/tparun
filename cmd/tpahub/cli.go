@@ -80,8 +80,9 @@ func normalizeCLICommand(args []string) []string {
 
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
-		fmt.Println("tpahub add <repo-url> | remove <repo-url> | show <repo-url> | list | create <name> | login | logout | whoami | publish | status | version | doctor")
-		fmt.Println("Compatibility: tpahub repo add|remove|show|list|create ...")
+		fmt.Println("Repositories: add <repo-url> | remove <repo-url> | show <repo-url> | list | create <name> | edit <repo-url> visibility | delete <repo-url>")
+		fmt.Println("Authentication: register | login | logout | whoami    System: version | doctor    Other: publish | status")
+		fmt.Println("Compatibility: tpahub repo add|remove|show|list|create ...; credentials: tpahub repo token ...")
 		return nil
 	}
 	if args[0] == "init" {
@@ -194,7 +195,7 @@ func cli(cfg config.Config, args []string) error {
 		return saveCLI(c)
 	case "repo":
 		return repoCLI(c, args[1:])
-	case "add", "remove", "show", "list", "create":
+	case "add", "remove", "show", "list", "create", "edit", "delete":
 		return repoCLI(c, args)
 	case "publish":
 		if len(args) < 3 {

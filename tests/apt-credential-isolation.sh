@@ -18,8 +18,8 @@ docker cp "$BIN" "$CONTAINER:/usr/local/bin/tpahub"
 docker exec "$CONTAINER" sh -eu -c '
  chmod 755 /usr/local/bin/tpahub
  rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
- tpahub repo add "$A" --server "$ORIGIN" --token "$READER_A"
- tpahub repo add "$B" --server "$ORIGIN" --token unavailable-reader
+ tpahub add "$A" --server "$ORIGIN" --token "$READER_A"
+ tpahub add "$B" --server "$ORIGIN" --token unavailable-reader
  rm /etc/apt/auth.conf.d/tpahub-"$B"
  if apt-get update -o APT::Update::Error-Mode=any >/tmp/apt.log 2>&1; then echo "B authenticated without its credential" >&2; exit 1; fi
 '
@@ -33,7 +33,7 @@ assert b and all(not r['auth'] and r['status']==401 for r in b),b
 PY
 printf '%s\n' both >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
- tpahub repo add "$B" --server "$ORIGIN" --token "$READER_B"
+ tpahub add "$B" --server "$ORIGIN" --token "$READER_B"
  rm -rf /var/lib/apt/lists/*
  apt-get update -o APT::Update::Error-Mode=any
  cd /tmp
@@ -49,7 +49,7 @@ for key,repo in [('a',sys.argv[2]),('b',sys.argv[3])]:
 PY
 printf '%s\n' public >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
- tpahub repo add "$PUBLIC" --server "$ORIGIN"
+ tpahub add "$PUBLIC" --server "$ORIGIN"
  rm -rf /var/lib/apt/lists/*
  apt-get update -o APT::Update::Error-Mode=any
 '

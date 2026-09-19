@@ -30,6 +30,9 @@ func (w *multipartWriter) AddFile(field, path string) error {
 	_, e = io.Copy(x, f)
 	return e
 }
+
+var repositoryPrompt = func(prompt string) string { return input(prompt, false) }
+
 func repoCLI(c cliConfig, a []string) error {
 	if len(a) < 1 {
 		return fmt.Errorf("repo command required")
@@ -39,10 +42,10 @@ func repoCLI(c cliConfig, a []string) error {
 		if len(a) < 2 {
 			return fmt.Errorf("repository name required")
 		}
-		v := map[string]string{"name": a[1], "visibility": "private"}
 		if has(a, "--public") {
-			v["visibility"] = "public"
+			return fmt.Errorf("--public is removed; create private, then use tpahub edit <repo-url> visibility")
 		}
+		v := map[string]string{"name": a[1], "visibility": "private"}
 		var out map[string]any
 		e := postAuth(c, "/v1/repositories", v, &out)
 		if e == nil {
@@ -90,12 +93,98 @@ func repoCLI(c cliConfig, a []string) error {
 			return err
 		}
 		return removeRepo(target, repository)
+	case "edit":
+		return editRepository(c, a[1:])
+	case "delete":
+		return deleteRepository(c, a[1:])
 	case "token":
 		return tokenCLI(c, a[1:])
 	default:
 		return fmt.Errorf("unknown repo command %q", a[0])
 	}
 }
+func editRepository(c cliConfig, args []string) error {
+	if len(args) != 2 || args[1] != "visibility" {
+		return fmt.Errorf("usage: tpahub edit <repo-url> visibility")
+	}
+	target, repository, err := repositoryTarget(c, args[0])
+	if err != nil {
+		return err
+	}
+	var metadata struct {
+		ID, Name, Visibility string
+	}
+	if _, err = getRepositoryMetadata(target, repository, &metadata); err != nil {
+		return err
+	}
+	if metadata.Visibility != "private" && metadata.Visibility != "public" {
+		return fmt.Errorf("invalid current repository visibility")
+	}
+	fmt.Printf("Repository: %s/%s\\nCurrent visibility: %s\\n", strings.TrimRight(target.Server, "/"), repository, metadata.Visibility)
+	next := strings.ToLower(strings.TrimSpace(repositoryPrompt("New visibility (private/public): ")))
+	if next != "private" && next != "public" {
+		return fmt.Errorf("visibility must be private or public")
+	}
+	if next == metadata.Visibility {
+		return fmt.Errorf("visibility is already %s", next)
+	}
+	if next == "public" {
+		fmt.Println("This repository will become publicly readable.")
+	}
+	if strings.ToLower(strings.TrimSpace(repositoryPrompt("Change repository visibility? [y/N] "))) != "y" {
+		fmt.Println("Visibility change cancelled.")
+		return nil
+	}
+	body, _ := json.Marshal(map[string]string{"visibility": next})
+	req, err := http.NewRequest(http.MethodPatch, target.Server+"/v1/repositories/"+url.PathEscape(repository), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+target.Token)
+	res, err := doCLIRequest(req)
+	if err != nil {
+		return err
+	}
+	return printResponse(res)
+}
+
+func deleteRepository(c cliConfig, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: tpahub delete <repo-url>")
+	}
+	target, repository, err := repositoryTarget(c, args[0])
+	if err != nil {
+		return err
+	}
+	var metadata struct {
+		ID, Name, Visibility string
+	}
+	if _, err = getRepositoryMetadata(target, repository, &metadata); err != nil {
+		return err
+	}
+	fmt.Printf("Repository:\\n  Name: %s\\n  URL: %s/%s\\n  Visibility: %s\\n", metadata.Name, strings.TrimRight(target.Server, "/"), repository, metadata.Visibility)
+	if strings.ToLower(strings.TrimSpace(repositoryPrompt("Delete this repository permanently? [y/N] "))) != "y" {
+		fmt.Println("Deletion cancelled.")
+		return nil
+	}
+	req, err := http.NewRequest(http.MethodDelete, target.Server+"/v1/repositories/"+url.PathEscape(repository), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+target.Token)
+	res, err := doCLIRequest(req)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode == http.StatusNoContent {
+		res.Body.Close()
+		fmt.Println("Repository deleted.")
+		return nil
+	}
+	return printResponse(res)
+}
+
 func has(a []string, v string) bool {
 	for _, x := range a {
 		if x == v {

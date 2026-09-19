@@ -45,9 +45,9 @@ with sqlite3.connect(sys.argv[1]) as db:
     assert db.execute('SELECT singleton,version FROM tpahub_schema').fetchall() == [(1,5)]
     assert db.execute("SELECT DISTINCT storage_limit_bytes FROM product_grants WHERE capability_id='repository.publish'").fetchall() == [(5000000,)]
 PY
-REPO=$(client repo create tpa --public | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
-client repo show tpa >/dev/null
-client repo show "$REPO" >/dev/null
+REPO=$(client create tpa | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+printf 'public\ny\n' | client edit "$SERVER/$REPO" visibility >/dev/null
+client show "$SERVER/$REPO" >/dev/null
 publish(){ client publish tpa "$1"; }
 JOB=$(publish "$TMP/tpa_1.0.0_amd64.deb" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 wait_job(){ i=0; while :; do state=$(curl -fsS "$SERVER/v1/publish-jobs/$1" -H "Authorization: Bearer $AUTH"|python3 -c 'import json,sys; print(json.load(sys.stdin)["State"])'); case "$state" in succeeded)return;; failed) curl -fsS "$SERVER/v1/publish-jobs/$1" -H "Authorization: Bearer $AUTH"; exit 1;; esac; i=$((i+1)); [ "$i" -lt 300 ] || exit 1; sleep .1; done; }
@@ -147,9 +147,9 @@ COPY restored/tpahub /usr/local/bin/tpahub
 COPY restored/bootstrap-tpa /usr/local/bin/bootstrap-tpa
 RUN chmod 755 /usr/local/bin/tpahub /usr/local/bin/bootstrap-tpa
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/tpahub-*.list
-RUN tpahub --server $SERVER repo add tpa && tpahub repo add $REPO --server=$SERVER && test "\$(grep -c '^deb ' /etc/apt/sources.list.d/tpahub-$REPO.list)" = 1
+RUN tpahub --server $SERVER repo add tpa && tpahub add $REPO --server=$SERVER && test "\$(grep -c '^deb ' /etc/apt/sources.list.d/tpahub-$REPO.list)" = 1
 RUN test -s /etc/apt/keyrings/tpahub-$REPO.gpg && grep -F 'signed-by=/etc/apt/keyrings/tpahub-$REPO.gpg' /etc/apt/sources.list.d/tpahub-$REPO.list
-RUN tpahub repo add $PRIVATE --server $SERVER --token $READER_TOKEN && test -f /etc/apt/auth.conf.d/tpahub-$PRIVATE && test "\$(stat -c %a /etc/apt/auth.conf.d/tpahub-$PRIVATE)" = 600
+RUN tpahub add $PRIVATE --server $SERVER --token $READER_TOKEN && test -f /etc/apt/auth.conf.d/tpahub-$PRIVATE && test "\$(stat -c %a /etc/apt/auth.conf.d/tpahub-$PRIVATE)" = 600
 RUN apt-get update && apt-get install -y --no-install-recommends tpa && command -v tpa && dpkg-query -W tpa && tpa schema >/dev/null
 RUN apt-get install -y hub-qualification=1.0.0 && test "\$(cat /usr/share/hub-qualification/version)" = 1.0.0
 RUN apt-get upgrade -y && test "\$(cat /usr/share/hub-qualification/version)" = 2.0.0
@@ -157,7 +157,7 @@ RUN apt-get install -y restored-probe=1.0.0 && test "\$(cat /usr/share/restored-
 RUN apt-get upgrade -y && test "\$(cat /usr/share/restored-probe/version)" = 2.0.0
 RUN apt-get install -y --allow-downgrades hub-qualification=1.0.0 && test "\$(cat /usr/share/hub-qualification/version)" = 1.0.0
 RUN apt-get install -y dep-chain && test -f /usr/share/dep-base/version && test -f /usr/share/dep-meta/version && test -f /usr/share/dep-chain/version
-RUN tpahub repo remove tpa --server $SERVER && test ! -e /etc/apt/sources.list.d/tpahub-$REPO.list && test ! -e /etc/apt/keyrings/tpahub-$REPO.gpg
+RUN tpahub remove tpa --server $SERVER && test ! -e /etc/apt/sources.list.d/tpahub-$REPO.list && test ! -e /etc/apt/keyrings/tpahub-$REPO.gpg
 EOF
 docker build --network=host --build-arg REPO="$REPO" -f "$TMP/Dockerfile" "$TMP"
 printf '%s\n' 'REAL APT SELF-HOSTING QUALIFIED'

@@ -145,6 +145,8 @@ exact network-fetched key and files without changing the machine:
 tpahub add https://tpa.run/REPOSITORY_ID --dry-run
 ```
 
+`tpahub list` lists repositories owned by the selected remote account/server; it is not a local APT-subscription inventory.
+
 The CLI writes:
 
 ```text
@@ -153,7 +155,7 @@ The CLI writes:
 /etc/apt/auth.conf.d/tpahub-<id>                  0600, private repos only
 ```
 
-The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/REPOSITORY_ID` removes only these files; it never uninstalls packages.
+The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/REPOSITORY_ID` removes only these local APT files; it never uninstalls packages or deletes the remote repository. Remote deletion is explicit and destructive: `tpahub delete https://tpa.run/REPOSITORY_ID`.
 
 Reader credentials are scoped to one repository, stored server-side only as hashes, and displayed only at creation:
 
