@@ -60,7 +60,7 @@ func printPublicationPlan(repository string, plan publicationPlanResponse) {
 	for _, item := range plan.Items {
 		fmt.Printf("  %s %s %s  %s\n", item.Classification, item.Package, item.Version, item.Architecture)
 	}
-	fmt.Printf("  %d packages\n  %s\n\nAfter publication:\n  %d packages\n  %s used / %s limit\n  %s remaining\n", plan.StagedPackageCount, formatBytes(plan.StagedStorageBytes), plan.ProjectedPackageCount, formatBytes(plan.ProjectedAccountStorageBytes), formatBytes(plan.StorageLimitBytes), formatBytes(plan.RemainingStorageBytes))
+	fmt.Printf("  %d packages\n  %s\n\nAfter publication:\n  %d packages\n  repository: %s\n  account:    %s used / %s limit\n  %s remaining\n", plan.StagedPackageCount, formatBytes(plan.StagedStorageBytes), plan.ProjectedPackageCount, formatBytes(plan.ProjectedStorageBytes), formatBytes(plan.ProjectedAccountStorageBytes), formatBytes(plan.StorageLimitBytes), formatBytes(plan.RemainingStorageBytes))
 }
 
 func publishStaged(c cliConfig, repository string, yes bool) error {
