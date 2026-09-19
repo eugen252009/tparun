@@ -35,7 +35,7 @@ const (
 	AccountClassUnclassified = "unclassified"
 )
 
-type Session struct{ ID, AccountID, TokenPrefix string }
+type Session struct{ ID, AccountID, TokenPrefix, CredentialID string }
 type ReaderCredential struct{ ID, RepositoryID, Name, TokenPrefix, CreatedAt string }
 type Store struct{ db *sql.DB }
 
@@ -58,16 +58,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 6 directly or opens the current supported schema.
+// Open initializes Schema 7 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit Schema 5 → 6 upgrade or validates Schema 6.
+// Migrate performs the explicit supported forward upgrade or validates Schema 7.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -1331,16 +1331,28 @@ func (s *Store) SetAccountStatus(c context.Context, id, status string) error {
 	return e
 }
 func (s *Store) CreateSession(c context.Context, x Session, hash string) error {
-	_, e := s.db.ExecContext(c, "INSERT INTO sessions(id,account_id,token_prefix,token_hash,created_at) VALUES(?,?,?,?,?)", x.ID, x.AccountID, x.TokenPrefix, hash, time.Now().UTC().Format(time.RFC3339Nano))
+	_, e := s.db.ExecContext(c, "INSERT INTO sessions(id,account_id,token_prefix,token_hash,created_at,credential_id) VALUES(?,?,?,?,?,?)", x.ID, x.AccountID, x.TokenPrefix, hash, time.Now().UTC().Format(time.RFC3339Nano), x.CredentialID)
 	return e
 }
-func (s *Store) AccountByToken(c context.Context, hash string) (string, error) {
-	var id string
-	e := s.db.QueryRowContext(c, `SELECT s.account_id FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND a.status=?`, hash, AccountStatusActive).Scan(&id)
+
+type SessionPrincipal struct {
+	AccountID, CredentialID string
+	CredentialFlags         CredentialFlags
+}
+
+func (s *Store) SessionPrincipalByToken(c context.Context, hash string) (SessionPrincipal, error) {
+	var p SessionPrincipal
+	var flags uint64
+	e := s.db.QueryRowContext(c, `SELECT s.account_id,s.credential_id,COALESCE(k.flags,0) FROM sessions s JOIN accounts a ON a.id=s.account_id LEFT JOIN account_ssh_credentials k ON k.id=s.credential_id AND k.account_id=s.account_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND a.status=? AND (s.credential_id='' OR (k.revoked_at='' AND (k.flags & 1) != 0))`, hash, AccountStatusActive).Scan(&p.AccountID, &p.CredentialID, &flags)
+	p.CredentialFlags = CredentialFlags(flags)
 	if e == nil {
 		_, _ = s.db.ExecContext(c, "UPDATE sessions SET last_used_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash)
 	}
-	return id, e
+	return p, e
+}
+func (s *Store) AccountByToken(c context.Context, hash string) (string, error) {
+	p, e := s.SessionPrincipalByToken(c, hash)
+	return p.AccountID, e
 }
 func (s *Store) RevokeSession(c context.Context, hash string) error {
 	_, e := s.db.ExecContext(c, "UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash)

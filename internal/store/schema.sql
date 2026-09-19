@@ -1,6 +1,8 @@
 CREATE TABLE account_metadata(account_id TEXT PRIMARY KEY REFERENCES accounts(id),account_class TEXT NOT NULL DEFAULT 'unclassified');
 
-CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',flags INTEGER NOT NULL DEFAULT 0 CHECK(flags>=0),created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');
+
+CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),credential_id TEXT NOT NULL,old_flags INTEGER NOT NULL CHECK(old_flags>=0),new_flags INTEGER NOT NULL CHECK(new_flags>=0),action TEXT NOT NULL,created_at TEXT NOT NULL);
 
 CREATE TABLE account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period));
 
@@ -50,7 +52,7 @@ CREATE TABLE repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repo
 
 CREATE TABLE repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL);
 
-CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT);
+CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT,credential_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version > 0));
 

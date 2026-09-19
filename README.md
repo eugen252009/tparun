@@ -1,6 +1,6 @@
 # TPA Hub
 
-**Persistent release baseline: Schema 6 (upgradable from Schema 5).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+**Persistent release baseline: Schema 7 (upgradable from Schema 5/6).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
 
 TPA Hub is a CLI-first service for publishing and serving public or private APT repositories. **TPA Hub uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 

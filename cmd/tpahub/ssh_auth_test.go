@@ -27,7 +27,7 @@ func sshTestCredential(t *testing.T, s *server, account string) ssh.Signer {
 		t.Fatal(err)
 	}
 	key := ssh.MarshalAuthorizedKey(signer.PublicKey())
-	if err := s.db.CreateSSHCredential(context.Background(), store.SSHCredential{ID: "ssh-" + account, AccountID: account, CredentialType: "ssh", PublicKey: key, Fingerprint: ssh.FingerprintSHA256(signer.PublicKey()), CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
+	if err := s.db.CreateSSHCredential(context.Background(), store.SSHCredential{ID: "ssh-" + account, AccountID: account, CredentialType: "ssh", PublicKey: key, Fingerprint: ssh.FingerprintSHA256(signer.PublicKey()), Flags: store.CredentialEnabled | store.CredentialRead | store.CredentialWrite, CreatedAt: "2026-01-01T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	return signer

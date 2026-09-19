@@ -53,7 +53,7 @@ func (s *server) sshChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credential, err := s.db.SSHCredentialByFingerprint(r.Context(), sshFingerprint(key))
-	if err != nil || credential.AccountID != a.ID || credential.RevokedAt != "" {
+	if err != nil || credential.AccountID != a.ID || credential.RevokedAt != "" || !credential.Flags.Has(store.CredentialEnabled) {
 		bad(w, http.StatusUnauthorized, "public key not registered")
 		return
 	}
@@ -125,12 +125,17 @@ func (s *server) sshLogin(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusUnauthorized, "invalid signature")
 		return
 	}
+	credential, err := s.db.SSHCredentialByFingerprint(r.Context(), c.Fingerprint)
+	if err != nil || credential.AccountID != c.AccountID || credential.RevokedAt != "" || !credential.Flags.Has(store.CredentialEnabled) {
+		bad(w, http.StatusUnauthorized, "credential disabled or revoked")
+		return
+	}
 	a, err := s.db.AccountByID(r.Context(), c.AccountID)
 	if err != nil || a.Status != store.AccountStatusActive {
 		bad(w, http.StatusUnauthorized, "account disabled")
 		return
 	}
-	t, err := s.issue(r.Context(), a.ID)
+	t, err := s.issueWithCredential(r.Context(), a.ID, credential.ID)
 	if err != nil {
 		bad(w, http.StatusInternalServerError, "session creation failed")
 		return
@@ -139,8 +144,8 @@ func (s *server) sshLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) sshCredentialRoute(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !normalAccountSession(r) {
+		bad(w, http.StatusForbidden, "normal account session required")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/account/ssh-credentials/")
@@ -148,14 +153,91 @@ func (s *server) sshCredentialRoute(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusNotFound, "credential not found")
 		return
 	}
-	if err := s.db.RevokeSSHCredential(r.Context(), accountID(r), id, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
-		bad(w, http.StatusNotFound, "credential not found")
+	if r.Method == http.MethodDelete {
+		if err := s.db.RevokeSSHCredentialAudited(r.Context(), accountID(r), id, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
+			bad(w, http.StatusNotFound, "credential not found")
+			return
+		}
+		jsonOut(w, map[string]string{"result": "revoked"})
 		return
 	}
-	jsonOut(w, map[string]string{"result": "revoked"})
+	if r.Method != http.MethodPatch {
+		bad(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var raw map[string]any
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&raw) != nil {
+		bad(w, 400, "invalid credential configuration")
+		return
+	}
+	current, err := s.db.SSHCredentialByID(r.Context(), accountID(r), id)
+	if err != nil {
+		bad(w, 404, "credential not found")
+		return
+	}
+	label := current.Label
+	if value, ok := raw["label"]; ok {
+		var valid bool
+		label, valid = value.(string)
+		if !valid {
+			bad(w, 400, "label must be string")
+			return
+		}
+	}
+	flags := current.Flags
+	for name, bit := range map[string]store.CredentialFlags{"enabled": store.CredentialEnabled, "list": store.CredentialList, "read": store.CredentialRead, "write": store.CredentialWrite} {
+		if value, ok := raw[name]; ok {
+			b, valid := value.(bool)
+			if !valid {
+				bad(w, 400, name+" must be boolean")
+				return
+			}
+			if b {
+				flags = flags.With(bit)
+			} else {
+				flags = flags.Without(bit)
+			}
+		}
+	}
+	action := credentialMutationAction(current.Flags, flags, current.Label != label)
+	if flags.Has(store.CredentialEnabled) != current.Flags.Has(store.CredentialEnabled) {
+		if flags.Has(store.CredentialEnabled) {
+			action = "credential enabled"
+		} else {
+			action = "credential disabled"
+		}
+	}
+	if err := s.db.UpdateSSHCredentialAudited(r.Context(), accountID(r), id, label, flags, action, s.currentTime().UTC().Format(time.RFC3339Nano)); err != nil {
+		bad(w, 404, "credential not found")
+		return
+	}
+	jsonOut(w, map[string]any{"id": id, "label": label, "enabled": flags.Has(store.CredentialEnabled), "capabilities": flags.Names(), "revoked": false})
+}
+
+func credentialMutationAction(oldFlags, newFlags store.CredentialFlags, labelChanged bool) string {
+	if oldFlags.Has(store.CredentialEnabled) != newFlags.Has(store.CredentialEnabled) {
+		if newFlags.Has(store.CredentialEnabled) {
+			return "credential enabled"
+		}
+		return "credential disabled"
+	}
+	if oldFlags != newFlags {
+		if newFlags&^oldFlags != 0 {
+			return "capability granted"
+		}
+		return "capability revoked"
+	}
+	if labelChanged {
+		return "label changed"
+	}
+	return "credential configuration changed"
 }
 
 func (s *server) sshCredentials(w http.ResponseWriter, r *http.Request) {
+	if !normalAccountSession(r) {
+		bad(w, http.StatusForbidden, "normal account session required")
+		return
+	}
 	if r.Method == http.MethodGet {
 		items, err := s.db.ListSSHCredentials(r.Context(), accountID(r))
 		if err != nil {
@@ -164,7 +246,7 @@ func (s *server) sshCredentials(w http.ResponseWriter, r *http.Request) {
 		}
 		out := make([]map[string]any, 0, len(items))
 		for _, c := range items {
-			out = append(out, map[string]any{"id": c.ID, "type": c.CredentialType, "fingerprint": c.Fingerprint, "label": c.Label, "created_at": c.CreatedAt, "revoked": c.RevokedAt != ""})
+			out = append(out, map[string]any{"id": c.ID, "type": c.CredentialType, "fingerprint": c.Fingerprint, "label": c.Label, "created_at": c.CreatedAt, "revoked": c.RevokedAt != "", "enabled": c.Flags.Has(store.CredentialEnabled), "capabilities": c.Flags.Names()})
 		}
 		jsonOut(w, out)
 		return
@@ -186,10 +268,10 @@ func (s *server) sshCredentials(w http.ResponseWriter, r *http.Request) {
 		bad(w, 400, "invalid SSH public key")
 		return
 	}
-	c := store.SSHCredential{ID: newID(), AccountID: accountID(r), CredentialType: "ssh", PublicKey: ssh.MarshalAuthorizedKey(key), Fingerprint: sshFingerprint(key), Label: strings.TrimSpace(in.Label), CreatedAt: s.currentTime().UTC().Format(time.RFC3339Nano)}
-	if err := s.db.CreateSSHCredential(r.Context(), c); err != nil {
+	c := store.SSHCredential{ID: newID(), AccountID: accountID(r), CredentialType: "ssh", PublicKey: ssh.MarshalAuthorizedKey(key), Fingerprint: sshFingerprint(key), Label: strings.TrimSpace(in.Label), Flags: 0, CreatedAt: s.currentTime().UTC().Format(time.RFC3339Nano)}
+	if err := s.db.CreateSSHCredentialAudited(r.Context(), c); err != nil {
 		bad(w, 409, "SSH public key already registered")
 		return
 	}
-	jsonOut(w, map[string]any{"id": c.ID, "type": c.CredentialType, "fingerprint": c.Fingerprint, "label": c.Label, "created_at": c.CreatedAt, "revoked": false})
+	jsonOut(w, map[string]any{"id": c.ID, "type": c.CredentialType, "fingerprint": c.Fingerprint, "label": c.Label, "created_at": c.CreatedAt, "revoked": false, "enabled": false, "capabilities": []string{}})
 }

@@ -237,24 +237,44 @@ func validateSchema(db *sql.DB, ddl, label string) error {
 	return nil
 }
 
-func migrateSchema5To6(db *sql.DB) error {
-	legacyDDL := strings.Replace(schemaSQL, "CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');\n\n", "", 1)
-	if err := validateSchema(db, legacyDDL, "Schema 5"); err != nil {
-		return fmt.Errorf("Schema 5 validation failed: %w", err)
+func migrateSchemaTo7(db *sql.DB, version int) error {
+	finalCred := "CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',flags INTEGER NOT NULL DEFAULT 0 CHECK(flags>=0),created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');\n\n"
+	finalAudit := "CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),credential_id TEXT NOT NULL,old_flags INTEGER NOT NULL CHECK(old_flags>=0),new_flags INTEGER NOT NULL CHECK(new_flags>=0),action TEXT NOT NULL,created_at TEXT NOT NULL);\n\n"
+	finalSessions := "CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT,credential_id TEXT NOT NULL DEFAULT '');"
+	oldCred := "CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');\n\n"
+	oldSessions := "CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT);"
+	legacyDDL := strings.Replace(schemaSQL, finalCred+finalAudit, oldCred, 1)
+	legacyDDL = strings.Replace(legacyDDL, finalSessions, oldSessions, 1)
+	if version == 5 {
+		legacyDDL = strings.Replace(legacyDDL, oldCred, "", 1)
+	}
+	if err := validateSchema(db, legacyDDL, fmt.Sprintf("Schema %d", version)); err != nil {
+		return fmt.Errorf("Schema %d validation failed: %w", version, err)
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin Schema 5 to 6 migration: %w", err)
+		return fmt.Errorf("begin Schema %d to 7 migration: %w", version, err)
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '')`); err != nil {
-		return fmt.Errorf("create SSH credential table: %w", err)
+	if version == 5 {
+		if _, err = tx.Exec(oldCred); err != nil {
+			return fmt.Errorf("create SSH credential table: %w", err)
+		}
 	}
-	if err = migrationCheckpoint("before-schema-6-version"); err != nil {
+	if _, err = tx.Exec(`ALTER TABLE account_ssh_credentials ADD COLUMN flags INTEGER NOT NULL DEFAULT 0 CHECK(flags>=0)`); err != nil && version != 5 {
+		return fmt.Errorf("add SSH credential flags: %w", err)
+	}
+	if _, err = tx.Exec(`CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),credential_id TEXT NOT NULL,old_flags INTEGER NOT NULL CHECK(old_flags>=0),new_flags INTEGER NOT NULL CHECK(new_flags>=0),action TEXT NOT NULL,created_at TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("create SSH credential audit table: %w", err)
+	}
+	if _, err = tx.Exec(`ALTER TABLE sessions ADD COLUMN credential_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add session credential identity: %w", err)
+	}
+	if err = migrationCheckpoint("before-schema-7-version"); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=6 WHERE singleton=1`); err != nil {
-		return fmt.Errorf("set Schema 6 version: %w", err)
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=7 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 7 version: %w", err)
 	}
 	return tx.Commit()
 }
@@ -313,10 +333,10 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			if !explicitMigration || version != 5 || currentSchemaVersion != 6 {
+			if !explicitMigration || (version != 5 && version != 6) || currentSchemaVersion != 7 {
 				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
 			}
-			if err = migrateSchema5To6(db); err != nil {
+			if err = migrateSchemaTo7(db, version); err != nil {
 				return nil, err
 			}
 		}

@@ -16,14 +16,21 @@ import (
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/ssh"
 )
 
 //go:embed install.sh templates/*.html static/site.css static/ops-auth.js static/ops.js
 var websiteFiles embed.FS
 var websiteTemplates = template.Must(template.ParseFS(websiteFiles, "templates/*.html"))
 
+type webSSHCredential struct {
+	ID, Label, Fingerprint, CreatedAt   string
+	Enabled, Revoked, List, Read, Write bool
+	Capabilities                        []string
+}
 type pageData struct {
 	Title, Email                   string
+	SSHCredentials                 []webSSHCredential
 	LoggedIn                       bool
 	Error                          string
 	CSRF                           string
@@ -53,8 +60,12 @@ func (s *server) browserSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if accountID(r) == "" {
 			if c, e := r.Cookie("tpahub_session"); e == nil {
-				if id, e := s.db.AccountByToken(r.Context(), store.HashToken(c.Value)); e == nil {
-					r = r.WithContext(context.WithValue(r.Context(), accountKey, id))
+				if principal, e := s.db.SessionPrincipalByToken(r.Context(), store.HashToken(c.Value)); e == nil {
+					ctx := context.WithValue(r.Context(), accountKey, principal.AccountID)
+					if principal.CredentialID != "" {
+						ctx = context.WithValue(ctx, credentialFlagsKey, principal.CredentialFlags)
+					}
+					r = r.WithContext(ctx)
 				}
 			}
 		}
@@ -94,12 +105,18 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	var egress deliveryUsageView
 	var egressErr, storageGrantErr error
 	var billingSnapshot BillingUsageSnapshot
+	var sshCredentials []webSSHCredential
 	var billingPreview BillingPreview
 	var billingErr error
 	billingRequested := r.URL.Query().Get("billing") == "preview" && s.billingEnabled()
 	var billingMode BillingMode
 	showSandboxPurchase := false
 	if name == "account" && id != "" {
+		if items, err := s.db.ListSSHCredentials(r.Context(), id); err == nil {
+			for _, c := range items {
+				sshCredentials = append(sshCredentials, webSSHCredential{ID: c.ID, Label: c.Label, Fingerprint: c.Fingerprint, CreatedAt: c.CreatedAt, Enabled: c.Flags.Has(store.CredentialEnabled), Revoked: c.RevokedAt != "", List: c.Flags.Has(store.CredentialList), Read: c.Flags.Has(store.CredentialRead), Write: c.Flags.Has(store.CredentialWrite), Capabilities: c.Flags.Names()})
+			}
+		}
 		showSandboxPurchase = s.nanoPurchaseAvailable()
 
 		accountUsage, usageErr = s.accountUsage(r.Context(), id)
@@ -138,7 +155,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egress.Bytes), EgressCapacity: formatBytes(egress.Limit), EgressStatus: egress.Status, HasEgressUsage: egressErr == nil, EgressMeasured: egress.Measured, EgressEnforced: egress.Enforced, EgressPeriod: egress.Period, EgressRequests: egress.Requests, ShowBillingPreviewLink: s.billingEnabled(), BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingRequested && billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
+	_ = websiteTemplates.ExecuteTemplate(w, name+".html", pageData{Title: "TPA Hub", Email: email, LoggedIn: id != "", SSHCredentials: sshCredentials, PackageCount: packageCount, HasPackageCount: countErr == nil, StorageUsed: formatBytes(accountUsage.StoredBytes), StorageBytes: accountUsage.StoredBytes, HasStorageUsage: usageErr == nil && storageGrantErr == nil, StorageCapacity: formatBytes(storageLimit), EgressUsed: formatBytes(egress.Bytes), EgressCapacity: formatBytes(egress.Limit), EgressStatus: egress.Status, HasEgressUsage: egressErr == nil, EgressMeasured: egress.Measured, EgressEnforced: egress.Enforced, EgressPeriod: egress.Period, EgressRequests: egress.Requests, ShowBillingPreviewLink: s.billingEnabled(), BillingMode: string(billingMode), BillingPeriod: string(billingSnapshot.Period), StorageHighWater: formatBytes(billingPreview.StorageHighWaterBytes), HasBillingPreview: billingRequested && billingErr == nil, ShowSandboxPurchase: showSandboxPurchase})
 }
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -285,6 +302,70 @@ func (s *server) accountPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.web(w, r)
 }
+func (s *server) accountSSHCredentialsPage(w http.ResponseWriter, r *http.Request) {
+	if !normalAccountSession(r) {
+		bad(w, http.StatusForbidden, "normal account session required")
+		return
+	}
+	if r.Method != http.MethodPost || !s.webAuth(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.webError(w, r, "Invalid credential form.")
+		return
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(r.FormValue("public_key")))
+	if err != nil {
+		s.webError(w, r, "Invalid SSH public key.")
+		return
+	}
+	c := store.SSHCredential{ID: newID(), AccountID: accountID(r), CredentialType: "ssh", PublicKey: ssh.MarshalAuthorizedKey(key), Fingerprint: sshFingerprint(key), Label: strings.TrimSpace(r.FormValue("label")), CreatedAt: s.currentTime().UTC().Format(time.RFC3339Nano)}
+	if err := s.db.CreateSSHCredentialAudited(r.Context(), c); err != nil {
+		s.webError(w, r, "That SSH key is already registered.")
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+func (s *server) accountSSHCredentialPage(w http.ResponseWriter, r *http.Request) {
+	if !normalAccountSession(r) {
+		bad(w, http.StatusForbidden, "normal account session required")
+		return
+	}
+	if !s.webAuth(w, r) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/account/ssh-credentials/")
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			s.webError(w, r, "Invalid credential form.")
+			return
+		}
+		if r.FormValue("action") == "revoke" {
+			_ = s.db.RevokeSSHCredentialAudited(r.Context(), accountID(r), id, s.currentTime().UTC().Format(time.RFC3339Nano))
+			http.Redirect(w, r, "/account", 303)
+			return
+		}
+		c, err := s.db.SSHCredentialByID(r.Context(), accountID(r), id)
+		if err != nil {
+			s.webError(w, r, "Credential not found.")
+			return
+		}
+		flags := c.Flags
+		for name, bit := range map[string]store.CredentialFlags{"enabled": store.CredentialEnabled, "list": store.CredentialList, "read": store.CredentialRead, "write": store.CredentialWrite} {
+			if r.FormValue(name) == "on" {
+				flags = flags.With(bit)
+			} else {
+				flags = flags.Without(bit)
+			}
+		}
+		label := strings.TrimSpace(r.FormValue("label"))
+		_ = s.db.UpdateSSHCredentialAudited(r.Context(), accountID(r), id, label, flags, credentialMutationAction(c.Flags, flags, c.Label != label), s.currentTime().UTC().Format(time.RFC3339Nano))
+		http.Redirect(w, r, "/account", 303)
+		return
+	}
+	bad(w, http.StatusMethodNotAllowed, "method not allowed")
+}
+
 func (s *server) browserLogout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("tpahub_session"); e == nil {
 		_ = s.db.RevokeSession(r.Context(), store.HashToken(c.Value))

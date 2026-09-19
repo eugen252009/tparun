@@ -17,7 +17,10 @@ import (
 
 type ctxKey int
 
-const accountKey ctxKey = 1
+const (
+	accountKey         ctxKey = 1
+	credentialFlagsKey ctxKey = 2
+)
 
 func randomToken(prefix string) (string, error) {
 	b := make([]byte, 32)
@@ -27,6 +30,14 @@ func randomToken(prefix string) (string, error) {
 	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 func accountID(r *http.Request) string { v, _ := r.Context().Value(accountKey).(string); return v }
+func credentialFlags(r *http.Request) (store.CredentialFlags, bool) {
+	v, ok := r.Context().Value(credentialFlagsKey).(store.CredentialFlags)
+	return v, ok
+}
+func allowsCredential(r *http.Request, flag store.CredentialFlags) bool {
+	f, ok := credentialFlags(r)
+	return !ok || f.Has(flag)
+}
 func bearer(r *http.Request) (string, bool) {
 	p := strings.Fields(r.Header.Get("Authorization"))
 	return func() (string, bool) {
@@ -76,11 +87,14 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"account_id": a.ID, "email": a.Email, "token": out})
 }
 func (s *server) issue(c context.Context, account string) (string, error) {
+	return s.issueWithCredential(c, account, "")
+}
+func (s *server) issueWithCredential(c context.Context, account, credential string) (string, error) {
 	t, e := randomToken("tph_s_")
 	if e != nil {
 		return "", e
 	}
-	return t, s.db.CreateSession(c, store.Session{ID: newID(), AccountID: account, TokenPrefix: t[:10]}, store.HashToken(t))
+	return t, s.db.CreateSession(c, store.Session{ID: newID(), AccountID: account, TokenPrefix: t[:10], CredentialID: credential}, store.HashToken(t))
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -115,6 +129,8 @@ func (s *server) customerAuthAllowed(r *http.Request) bool {
 	}
 	return s.customerAuthRate.allow(r.RemoteAddr, s.currentTime())
 }
+func normalAccountSession(r *http.Request) bool { _, ssh := credentialFlags(r); return !ssh }
+
 func (s *server) accountSummary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		bad(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -160,11 +176,15 @@ func (s *server) authHandler(fn http.HandlerFunc) http.HandlerFunc {
 			bad(w, 401, "authentication required")
 			return
 		}
-		id, e := s.db.AccountByToken(r.Context(), store.HashToken(tok))
+		principal, e := s.db.SessionPrincipalByToken(r.Context(), store.HashToken(tok))
 		if e != nil {
 			bad(w, 401, "authentication required")
 			return
 		}
-		fn(w, r.WithContext(context.WithValue(r.Context(), accountKey, id)))
+		ctx := context.WithValue(r.Context(), accountKey, principal.AccountID)
+		if principal.CredentialID != "" {
+			ctx = context.WithValue(ctx, credentialFlagsKey, principal.CredentialFlags)
+		}
+		fn(w, r.WithContext(ctx))
 	}
 }

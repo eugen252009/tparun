@@ -272,6 +272,8 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/ops/recover/register", s.operatorRegisterPage)
 	m.HandleFunc("/ops/passkeys/add", s.operatorRegisterPage)
 	m.HandleFunc("/account/billing/nano/purchase", s.accountNanoPurchase)
+	m.HandleFunc("/account/ssh-credentials", s.accountSSHCredentialsPage)
+	m.HandleFunc("/account/ssh-credentials/", s.accountSSHCredentialPage)
 	m.HandleFunc("/logout", s.browserLogout)
 	m.HandleFunc("/docs", s.web)
 	m.HandleFunc("/how-to", s.web)
@@ -401,6 +403,10 @@ func (s *server) publicRepositories(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
+		if !allowsCredential(r, store.CredentialList) {
+			bad(w, http.StatusForbidden, "SSH credential lacks list capability")
+			return
+		}
 		repos, e := s.db.Repositories(r.Context(), accountID(r))
 		if e != nil {
 			bad(w, 500, "repository lookup failed")
@@ -416,6 +422,10 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 			out = append(out, view)
 		}
 		jsonOut(w, out)
+		return
+	}
+	if !allowsCredential(r, store.CredentialWrite) {
+		bad(w, http.StatusForbidden, "SSH credential lacks write capability")
 		return
 	}
 	if r.Method != "POST" || r.URL.Path != "/v1/repositories" {
@@ -492,7 +502,11 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) repositoryRoute(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/signing-key") {
-		s.repository(w, r)
+		if r.Header.Get("Authorization") != "" {
+			s.authHandler(s.repository)(w, r)
+		} else {
+			s.repository(w, r)
+		}
 		return
 	}
 	if r.Method == "GET" && r.Header.Get("Authorization") == "" {
@@ -502,6 +516,16 @@ func (s *server) repositoryRoute(w http.ResponseWriter, r *http.Request) {
 	s.authHandler(s.repository)(w, r)
 }
 func (s *server) repository(w http.ResponseWriter, r *http.Request) {
+	if accountID(r) != "" {
+		if r.Method == http.MethodGet && !allowsCredential(r, store.CredentialRead) {
+			bad(w, http.StatusForbidden, "SSH credential lacks read capability")
+			return
+		}
+		if r.Method != http.MethodGet && !allowsCredential(r, store.CredentialWrite) {
+			bad(w, http.StatusForbidden, "SSH credential lacks write capability")
+			return
+		}
+	}
 	p := strings.TrimPrefix(r.URL.Path, "/v1/repositories/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
 	if len(parts) < 1 || !idRE.MatchString(parts[0]) {
@@ -862,6 +886,17 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, j)
 }
 func (s *server) files(w http.ResponseWriter, r *http.Request) {
+	if token, ok := bearer(r); ok {
+		principal, err := s.db.SessionPrincipalByToken(r.Context(), store.HashToken(token))
+		if err != nil {
+			bad(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if principal.CredentialID != "" && !principal.CredentialFlags.Has(store.CredentialRead) {
+			bad(w, http.StatusForbidden, "SSH credential lacks read capability")
+			return
+		}
+	}
 	rest := strings.TrimPrefix(r.URL.Path, "/r/")
 	parts := strings.Split(rest, "/")
 	if len(parts) < 2 {

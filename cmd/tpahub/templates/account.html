@@ -56,6 +56,20 @@
       </div>
     </section>
     {{end}}
+    <section class="section" aria-labelledby="ssh-credentials">
+      <h2 id="ssh-credentials">SSH account credentials</h2>
+      <p class="fine">Keys are disabled and have no capabilities until you explicitly configure them. SSH credentials never grant entitlements, ownership, or operator access.</p>
+      {{range .SSHCredentials}}
+      <form class="account-card" method="post" action="/account/ssh-credentials/{{.ID}}">
+        <p><strong>{{.Label}}</strong> · {{.Fingerprint}}</p>
+        <p class="fine">Created {{.CreatedAt}} · {{if .Revoked}}revoked{{else if .Enabled}}enabled{{else}}disabled{{end}} · {{range .Capabilities}}{{.}} {{end}}</p>
+        {{if not .Revoked}}<label>Label <input name="label" value="{{.Label}}"></label><label><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> enabled</label><label><input type="checkbox" name="list" {{if .List}}checked{{end}}> list</label><label><input type="checkbox" name="read" {{if .Read}}checked{{end}}> read</label><label><input type="checkbox" name="write" {{if .Write}}checked{{end}}> write</label><button class="button secondary" type="submit">Save credential</button><button class="button secondary" name="action" value="revoke" type="submit">Revoke</button>{{end}}
+      </form>
+      {{end}}
+      <form class="account-card" method="post" action="/account/ssh-credentials">
+        <h3>Register public key</h3><label>Label <input name="label"></label><label>OpenSSH public key <textarea name="public_key" rows="3" required></textarea></label><button class="button" type="submit">Register disabled key</button>
+      </form>
+    </section>
     {{if .ShowBillingPreviewLink}}
     <p class="fine"><a href="/account?billing=preview">View billing preview</a></p>
     {{end}}

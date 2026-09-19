@@ -1,6 +1,6 @@
 # Persistent schema and upgrades
 
-**Schema 5 is the first supported persistent schema; Schema 6 is the current schema.** Schemas 1–4 were internal,
+**Schema 5 is the first supported persistent schema; Schema 7 is the current schema.** Schemas 1–4 were internal,
 disposable development schemas, with no supported user data or upgrade contract.
 They are rejected, not migrated, reinterpreted or automatically deleted.
 
@@ -8,9 +8,9 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 
 | State | `serve` / Store.Open | `migrate` |
 |---|---|---|
-| Fresh empty state | Creates current Schema 6 directly, atomically | Requires an initialized database |
+| Fresh empty state | Creates current Schema 7 directly, atomically | Requires an initialized database |
 | Schemas 1–4 | Reject: unsupported pre-release state | Same rejection, no mutation |
-| Schema 5 | Reject until explicitly migrated to Schema 6 | Explicit atomic 5 → 6 migration |
+| Schema 5/6 | Reject until explicitly migrated to Schema 7 | Explicit atomic forward migration |
 | Newer than this binary | Reject: use compatible binary/backup | Same rejection, no mutation |
 | Missing/malformed metadata, unrelated or partial database | Reject without repair | Same rejection, no mutation |
 
@@ -18,7 +18,7 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 version and application/package version are separate, unrelated numbers.
 `internal/store/schema.sql` defines the durable structures; `CurrentSchemaVersion`
 is the version authority. Fresh initialization installs this definition and records
-6 in one transaction. Schema 5 upgrades add account SSH credential storage without changing existing account, grant, repository, or operator rows. Startup validates tables, columns, constraints, foreign keys,
+7 in one transaction. Schema 5/6 upgrades add SSH credential flags, audit history, and session credential binding without changing existing account, grant, repository, or operator rows. Startup validates tables, columns, constraints, foreign keys,
 indexes and triggers, not just the version integer.
 
 The singleton/version metadata header remains stable so older release binaries
@@ -26,7 +26,7 @@ can recognize and reject newer versions without modifying them.
 
 Forward-compatibility guarantees begin at 5: future schema changes must provide
 qualified, atomic, monotonic migrations **5 → 6 → 7 → …**. Schema 6 provides the
-first supported migration, adding only account SSH credential records. Never downgrade the version row or
+supported migrations, adding account SSH credential records, stable flags, audit history, and session credential binding. Never downgrade the version row or
 run an older binary against a newer database. Restore a coherent matching backup
 and compatible binary instead. Unpatched pre-release binaries are not subject to
 this new compatibility contract and must not be used on release state.

@@ -218,8 +218,11 @@ func cli(cfg config.Config, args []string) error {
 	case "add", "remove", "show", "create", "edit", "delete":
 		return repositoryCommand(c, args)
 	case "account":
+		if len(args) >= 2 && args[1] == "credentials" {
+			return credentialsCLI(c, args[2:])
+		}
 		if len(args) != 1 {
-			return fmt.Errorf("usage: tpahub account")
+			return fmt.Errorf("usage: tpahub account [credentials]")
 		}
 		if c.Token == "" {
 			return fmt.Errorf("authentication required; run tpahub login")
