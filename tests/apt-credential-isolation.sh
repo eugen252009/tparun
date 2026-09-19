@@ -19,9 +19,13 @@ docker exec "$CONTAINER" sh -eu -c '
  chmod 755 /usr/local/bin/tpahub
  rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
  tpahub add "$A" --server "$ORIGIN" --token "$READER_A"
- tpahub add "$B" --server "$ORIGIN" --token unavailable-reader
- rm /etc/apt/auth.conf.d/tpahub-"$B"
- if apt-get update -o APT::Update::Error-Mode=any >/tmp/apt.log 2>&1; then echo "B authenticated without its credential" >&2; exit 1; fi
+ if tpahub add "$B" --server "$ORIGIN" --token unavailable-reader >/tmp/add-b-wrong.log 2>&1; then
+   echo "wrong B credential was accepted by tpahub add" >&2
+   exit 1
+ fi
+ test ! -e /etc/apt/auth.conf.d/tpahub-"$B"
+ test ! -e /etc/apt/sources.list.d/tpahub-"$B".list
+ apt-get update -o APT::Update::Error-Mode=any >/tmp/apt.log 2>&1
 '
 python3 - "$TMP/requests.jsonl" "$A" "$B" <<'PY'
 import json,sys
@@ -29,7 +33,7 @@ rows=[json.loads(x) for x in open(sys.argv[1])]
 a=[r for r in rows if r['path'].startswith('/r/'+sys.argv[2]+'/')]
 b=[r for r in rows if r['path'].startswith('/r/'+sys.argv[3]+'/')]
 assert any(r['a'] and r['status']==200 for r in a),a
-assert b and all(not r['auth'] and r['status']==401 for r in b),b
+assert any(r['auth'] and not r['a'] and not r['b'] and r['status'] in (401,403) for r in b),b
 PY
 printf '%s\n' both >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
@@ -46,6 +50,18 @@ for key,repo in [('a',sys.argv[2]),('b',sys.argv[3])]:
     observed=[r for r in rows if r['path'].startswith('/r/'+repo+'/')]
     assert observed and all(r[key] and r['status']==200 for r in observed),observed
     assert any(r['path'].endswith('.deb') for r in observed),observed
+PY
+printf '%s\n' missing >"$TMP/phase"
+docker exec "$CONTAINER" sh -eu -c '
+ rm /etc/apt/auth.conf.d/tpahub-"$B"
+ if apt-get update -o APT::Update::Error-Mode=any >/tmp/apt-missing.log 2>&1; then echo "B authenticated without its auth file" >&2; exit 1; fi
+ rm /etc/apt/sources.list.d/tpahub-"$B".list
+'
+python3 - "$TMP/requests.jsonl" "$B" <<'PY'
+import json,sys
+rows=[json.loads(x) for x in open(sys.argv[1]) if json.loads(x)['phase']=='missing']
+b=[r for r in rows if r['path'].startswith('/r/'+sys.argv[2]+'/')]
+assert b and all(not r['auth'] and r['status'] in (401,403) for r in b),b
 PY
 printf '%s\n' public >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
