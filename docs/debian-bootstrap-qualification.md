@@ -141,16 +141,27 @@ under:
 /home/eugen/vms/tpahub-bootstrap-debian12/final/
 ```
 
-## Known issue and boundary
+## Subsequent Mema/Bun qualification
 
-The optional `mema-bun` path is a known non-blocking issue. Its recipe/archive
-download path was exercised, but activation produced an invalid executable path;
-the failed optional installation was removed from the final qualification VM.
-This is recorded only for a separate future Mema/Bun task. It does not weaken
-the qualified Go path or the core bootstrap verdict.
+The previously documented `mema-bun` activation defect was repaired in the
+Mema recipe/package layer without changing TPA Hub, Schema 5, repository
+authority, signing, or the Debian VM harness.
 
-The earlier Docker DNS failure and the old VM reset failure were test-harness
-issues, not evidence of a public TPA bootstrap failure.
+```text
+mema-bun package: 1.3.14-1
+package SHA-256:   db684fd69cc32e0abd2f06bf9fcb2b352c282abb44c946d218203ec242391a5c
+runtime:           Bun 1.3.14
+```
+
+The corrected package was published through the existing public bootstrap
+repository, consumed by APT, and qualified on the preserved VM. The corrected
+recipe resolves the upstream archive layout `bun-linux-x64/bun`, activates
+`/usr/local/bin/bun`, survives fresh login and reboot, and coexists with
+Mema-managed Go 1.26.5. A trivial Bun program and the existing Bloom discovery
+check both passed after reboot.
+
+The earlier Docker DNS failure and old VM reset failure remain historical
+test-harness issues; neither was evidence of a public TPA bootstrap failure.
 
 **Core bootstrap qualification: PASS.**  
-**Mema/Bun repair: intentionally deferred.**
+**Mema/Bun installation and activation: PASS.**
