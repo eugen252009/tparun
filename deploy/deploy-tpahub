@@ -60,6 +60,26 @@ grep -Fq "TPAHUB_RELEASE_DIR=$RELEASE_ROOT" <<<"$unit" || fail "service release 
 grep -Fq "TPAHUB_OPERATOR_RP_ID=tpa.run" <<<"$unit" || fail 'operator RP ID is not tpa.run'
 grep -Fq "TPAHUB_OPERATOR_ORIGIN=https://tpa.run" <<<"$unit" || fail 'operator origin is not https://tpa.run'
 
+package_file=$(git show "$commit:install.sh" | grep -oE 'tpahub-release_[0-9][^/" ]*_all\.deb' | head -1)
+package_sha=$(git show "$commit:install.sh" | sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' | head -1)
+dest_package="$RELEASE_ROOT/$package_file"
+current_body=$(mktemp)
+if $CURL -fsS --max-time 3 "$HEALTH_URL" >"$current_body" 2>/dev/null && "$PYTHON" - "$current_body" "$commit" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as f:
+    value = json.load(f)
+assert value.get('revision') == sys.argv[2]
+assert value.get('schema') == '5'
+PY
+then
+  if [[ -f "$dest_package" ]] && [[ "$(sha256sum "$dest_package" | awk '{print $1}')" == "$package_sha" ]] && $CURL -fsSL --max-time 5 "$PUBLIC_ORIGIN/$package_file" -o "$current_body.public" && [[ "$(sha256sum "$current_body.public" | awk '{print $1}')" == "$package_sha" ]]; then
+    rm -f "$current_body" "$current_body.public"
+    echo "Already deployed $short"
+    exit 0
+  fi
+fi
+rm -f "$current_body" "$current_body.public"
+
 rollback="$HOME_DIR/tpahub-public-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -m 700 "$rollback"
 cp -p "$BINARY" "$rollback/tpahub"
@@ -78,8 +98,9 @@ trap cleanup EXIT
 archive="$stage/source"
 mkdir "$archive"
 git --git-dir="$REPO" archive "$commit" | tar -x -C "$archive"
-package_file=$(grep -oE 'tpahub-release_[0-9][^/" ]*_all\.deb' "$archive/install.sh" | head -1)
-package_sha=$(sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' "$archive/install.sh" | head -1)
+built_package_file=$(grep -oE 'tpahub-release_[0-9][^/" ]*_all\.deb' "$archive/install.sh" | head -1)
+built_package_sha=$(sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' "$archive/install.sh" | head -1)
+[[ "$built_package_file" == "$package_file" && "$built_package_sha" == "$package_sha" ]] || fail 'installer release metadata changed during archive extraction'
 [[ -n "$package_file" && -n "$package_sha" ]] || fail 'could not derive release package and checksum from installer'
 
 candidate="$stage/tpahub"
@@ -100,7 +121,6 @@ grep -Fq 'Signed-By: /usr/share/keyrings/tpahub-archive-keyring.gpg' "$package_e
 actual_package_sha=$(sha256sum "$package" | awk '{print $1}')
 [[ "$actual_package_sha" == "$package_sha" ]] || fail "installer/package checksum mismatch: installer=$package_sha built=$actual_package_sha"
 
-dest_package="$RELEASE_ROOT/$package_file"
 mkdir -p "$RELEASE_ROOT"
 chmod 0755 "$RELEASE_ROOT"
 old_package="$stage/old-package"
