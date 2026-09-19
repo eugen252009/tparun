@@ -100,22 +100,30 @@ bloom describe math.min.u32</code></pre>
         <p>After reboot, the runtimes, <code>templ</code>, Bloom discovery, dependency installation, tests, and builds continued to work. See the beta support matrix below before choosing this path.</p>
       </section>
       <section id="publish">
-        <h2>Publish your package</h2>
-        <p>Publishing requires an account with an active publishing entitlement. Account creation alone does not promise
-          paid capacity. Check your <a href="/account">account</a> and <a href="/pricing">plan availability</a>.</p>
+        <h2>Publish packages</h2>
+        <p>Publishing requires an account with available repository capacity. Account creation alone does not promise publishing capacity; check your <a href="/account">account</a> and <a href="/pricing">plan availability</a>.</p>
+        <h3>One-time setup</h3>
         <pre><code>tpahub register --server https://tpa.run
 tpahub login --server https://tpa.run
-tpahub create tools
-tpahub edit https://tpa.run/REPOSITORY_ID visibility
-tpahub publish tools ./my-package_1.0.0_amd64.deb
-tpahub status JOB_ID</code></pre>
-        <p>Replace the package path with your build output and <code>JOB_ID</code> with the returned job ID. Wait for
-          successful publication before configuring consumers.</p>
+tpahub create tools</code></pre>
+        <p>The create command returns the repository identity. Make it public separately when that is appropriate:</p>
+        <pre><code>tpahub edit https://tpa.run/REPOSITORY_ID visibility</code></pre>
+        <h3>Daily publishing</h3>
+        <pre><code>tpahub stage ./my-package_1.0.0_amd64.deb
+tpahub status
+tpahub publish https://tpa.run/REPOSITORY_ID</code></pre>
+        <p>TPA Hub snapshots the package bytes locally. Before upload, it shows the current repository usage, staged packages, projected storage, and remaining capacity. A confirmation is required by default.</p>
+        <p>For multiple packages, stage the complete set and remove an item before publishing if needed:</p>
+        <pre><code>tpahub stage ./app_1.0.0_amd64.deb ./cli_1.0.0_amd64.deb
+tpahub unstage ./cli_1.0.0_amd64.deb
+tpahub publish -y https://tpa.run/REPOSITORY_ID</code></pre>
+        <p><code>-y</code> or <code>--yes</code> only accepts the confirmation; authentication, authorization, package validation, and capacity checks still apply. Successful publication clears local staging. Failed or cancelled publication preserves it for retry. Staging lives under <code>/tmp</code> and may be removed by reboot or system cleanup.</p>
+        <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
+        <p>For compatibility, the existing direct form <code>tpahub publish REPOSITORY package.deb</code> remains available; the staged form is the recommended workflow.</p>
         <p>On the consuming machine, add the repository's ID, then install:</p>
         <pre><code>sudo tpahub add https://tpa.run/REPOSITORY_ID
 sudo apt update
 sudo apt install my-package</code></pre>
-        <p>The CLI saves the server selected during login. It also accepts <code>TPAHUB_SERVER</code>; an explicit <code>--server</code> takes precedence. Local development servers remain supported.</p>
       </section>
       <section id="private">
         <h2>Private repositories</h2>
