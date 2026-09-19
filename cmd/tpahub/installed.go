@@ -103,7 +103,7 @@ func parseAPTList(path string) ([]installedRepository, error) {
 		return nil, err
 	}
 	defer file.Close()
-	managed := strings.HasPrefix(filepath.Base(path), "tpahub-")
+	managed := strings.HasPrefix(filepath.Base(path), "tpahub-") || filepath.Base(path) == "tpahub.sources"
 	marker := false
 	var result []installedRepository
 	scanner := bufio.NewScanner(file)
@@ -144,7 +144,7 @@ func parseAPTSources(path string) ([]installedRepository, error) {
 		return nil, err
 	}
 	defer file.Close()
-	managed := strings.HasPrefix(filepath.Base(path), "tpahub-")
+	managed := strings.HasPrefix(filepath.Base(path), "tpahub-") || filepath.Base(path) == "tpahub.sources"
 	marker := false
 	values := map[string]string{}
 	var result []installedRepository
