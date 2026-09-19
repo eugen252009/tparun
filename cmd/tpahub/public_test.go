@@ -39,7 +39,7 @@ func TestInstallEndpointIsIndependentOfWorkingDirectory(t *testing.T) {
 
 func TestReleasePackageEndpointServesConfiguredArtifact(t *testing.T) {
 	dir := t.TempDir()
-	name := "tpahub-release_0.1.2_all.deb"
+	name := "tpahub-release_0.1.3_all.deb"
 	want := []byte("qualified release package")
 	if err := os.WriteFile(filepath.Join(dir, name), want, 0644); err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 	if !bytes.Equal(rootSource, source) {
 		t.Fatal("root installer must match the embedded installer source")
 	}
-	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.2_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
+	if r.StatusCode != 200 || string(b) != string(source) || !strings.Contains(string(b), "tpahub-release_0.1.3_all.deb") || !strings.Contains(string(b), string(bootstrapChecksum[1])) {
 		t.Fatalf("installer status/content: %d", r.StatusCode)
 	}
 	r, e = http.Get(h.URL + "/tpahub.asc")

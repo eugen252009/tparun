@@ -131,17 +131,17 @@ have an explicit negative migration test rather than an implicit repair path.
 
 ## Installer identity
 
-`install.sh` remains the single source of the installer repository identity:
-`a0d8fd0f82235ee431c41581aa253ec8`. Commit
-`a962a8ddbd8d45b2dfda200ef14ec3ab29d92b73` intentionally selected the published CLI
-repository; it is not interchangeable with the historical global bootstrap role.
+Historically, `install.sh` selected the published CLI repository
+`a0d8fd0f82235ee431c41581aa253ec8` in commit
+`a962a8ddbd8d45b2dfda200ef14ec3ab29d92b73`; that identity was not interchangeable
+with the historical global bootstrap role. The current Schema 5 release authority
+uses the internal-owned public bootstrap repository recorded by its release
+package; this section preserves the historical rationale only.
 
-The public endpoint test validates the canonical ID's format and the complete
-served installer body against that source. The public-bootstrap qualification
-script derives its expected APT repository from the same file and passes it as a
-Docker build argument. No installer target, trust key or public artifact changed.
-The public-network bootstrap script was syntax-checked, **not executed**, because
-this task prohibits production access.
+Historical qualification validated the old ID's format and the complete served
+installer body against that source. Current release qualification derives the
+APT repository from the generated release package and validates its public
+metadata and signing identity.
 
 ## Qualification obtained
 

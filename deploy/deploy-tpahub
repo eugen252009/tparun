@@ -112,7 +112,9 @@ chmod 0755 "$candidate"
 package="$stage/$package_file"
 (cd "$archive" && SOURCE_DATE_EPOCH=0 packaging/tpahub-release/build.sh "$package")
 [[ "$(dpkg-deb -f "$package" Package)" == tpahub-release ]] || fail 'release package name mismatch'
-[[ "$(dpkg-deb -f "$package" Version)" == 0.1.2 ]] || fail 'release package version mismatch'
+package_version=${package_file#tpahub-release_}
+package_version=${package_version%_all.deb}
+[[ "$(dpkg-deb -f "$package" Version)" == "$package_version" ]] || fail 'release package version mismatch'
 [[ "$(dpkg-deb -f "$package" Architecture)" == all ]] || fail 'release package architecture mismatch'
 package_extract="$stage/package-root"
 dpkg-deb -x "$package" "$package_extract" >/dev/null

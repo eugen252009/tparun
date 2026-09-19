@@ -13,8 +13,8 @@ The public deployment marker is available at `https://tpa.run/version` and retur
 The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -LO https://tpa.run/tpahub-release_0.1.2_all.deb
-sudo apt install ./tpahub-release_0.1.2_all.deb
+curl -LO https://tpa.run/tpahub-release_0.1.3_all.deb
+sudo apt install ./tpahub-release_0.1.3_all.deb
 sudo apt update
 sudo apt install tpahub
 ```
@@ -27,8 +27,9 @@ uses the same bootstrap path and verifies the bootstrap package checksum before
 installing it. Candidate qualification may override the package path and
 checksum with `TPAHUB_RELEASE_PACKAGE_PATH` and
 `TPAHUB_RELEASE_PACKAGE_SHA256`; both are required together. See
-[Debian bootstrap packaging](docs/debian-bootstrap.md). Mema support is not
-currently provided.
+[Debian bootstrap packaging](docs/debian-bootstrap.md). The public bootstrap
+repository also carries the qualified `mema` and `bloom` packages used by the
+clean Debian qualification.
 
 ## Build and run
 
@@ -227,7 +228,7 @@ Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys
 
 ## VServer deployment
 
-The production deployment uses the live Schema 5 root `/home/eugen/vserver-tpahub-qualification`: the binary is `bin/tpahub`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` and served at `https://tpa.run/tpahub-release_0.1.2_all.deb`. The deployment script validates Schema 5, stages the binary and package, creates rollback material, and checks the public installer/package pair. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`. The old `/home/eugen/tpahub_current` and `/home/eugen/data/tpahub` paths are legacy and are not migration sources.
+The production deployment uses the live Schema 5 root `/home/eugen/vserver-tpahub-qualification`: the binary is `bin/tpahub`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` and served at `https://tpa.run/tpahub-release_0.1.3_all.deb`. The deployment script validates Schema 5, stages the binary and package, creates rollback material, and checks the public installer/package pair. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`. The old `/home/eugen/tpahub_current` and `/home/eugen/data/tpahub` paths are legacy and are not migration sources.
 
 ## Development and qualification
 
