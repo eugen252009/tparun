@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
@@ -39,6 +40,7 @@ type ReaderCredential struct{ ID, RepositoryID, Name, TokenPrefix, CreatedAt str
 type Store struct{ db *sql.DB }
 
 var ErrNotFound = sql.ErrNoRows
+var ErrRepositoryBusy = errors.New("repository has an active publication lifecycle")
 var migrationFault func(string) error
 var providerEventFault func(string) error
 
@@ -1354,6 +1356,75 @@ func (s *Store) CreateRepository(c context.Context, r Repository) error {
 	}
 	_, e := s.db.ExecContext(c, "INSERT INTO repositories(id,account_id,name,visibility,created_at) VALUES(?,?,?,?,?)", r.ID, r.AccountID, r.Name, r.Visibility, r.CreatedAt)
 	return e
+}
+
+func (s *Store) SetRepositoryVisibility(c context.Context, id, visibility string) error {
+	if visibility != "private" && visibility != "public" {
+		return fmt.Errorf("invalid repository visibility")
+	}
+	result, err := s.db.ExecContext(c, "UPDATE repositories SET visibility=? WHERE id=?", visibility, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteRepository removes all repository-owned durable rows in one
+// transaction. The caller must hold the server publication lock and remove
+// the validated filesystem root after this succeeds.
+func (s *Store) DeleteRepository(c context.Context, id string) error {
+	tx, err := s.db.BeginTx(c, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRowContext(c, "SELECT 1 FROM repositories WHERE id=?", id).Scan(&exists); err != nil {
+		return err
+	}
+	var active int
+	if err = tx.QueryRowContext(c, `SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND (state NOT IN ('succeeded','failed') OR cleanup_state='pending')`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active != 0 {
+		return ErrRepositoryBusy
+	}
+	var uncertain int
+	if err = tx.QueryRowContext(c, "SELECT COUNT(*) FROM egress_accounting_uncertain WHERE repository_id=?", id).Scan(&uncertain); err != nil {
+		return err
+	}
+	if uncertain != 0 {
+		return fmt.Errorf("repository has uncertain egress accounting")
+	}
+	var bootstrap int
+	if err = tx.QueryRowContext(c, "SELECT COUNT(*) FROM global_bootstrap_repository WHERE repository_id=?", id).Scan(&bootstrap); err != nil {
+		return err
+	}
+	if bootstrap != 0 {
+		return fmt.Errorf("global bootstrap repository cannot be deleted")
+	}
+	for _, statement := range []string{
+		"DELETE FROM egress_accounting_uncertain WHERE repository_id=?",
+		"DELETE FROM generation_cleanup_tasks WHERE repository_id=?",
+		"DELETE FROM reader_credentials WHERE repository_id=?",
+		"DELETE FROM repository_egress_daily WHERE repository_id=?",
+		"DELETE FROM repository_egress_usage WHERE repository_id=?",
+		"DELETE FROM repository_publications WHERE repository_id=?",
+		"DELETE FROM publish_jobs WHERE repository_id=?",
+		"DELETE FROM repositories WHERE id=?",
+	} {
+		if _, err = tx.ExecContext(c, statement, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) SetActiveGeneration(c context.Context, repositoryID, generation, updatedAt string) error {
 	_, err := s.db.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, generation, updatedAt)

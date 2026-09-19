@@ -464,6 +464,48 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, repo)
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		var in struct {
+			Visibility string `json:"visibility"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in) != nil {
+			bad(w, http.StatusBadRequest, "invalid visibility request")
+			return
+		}
+		if in.Visibility != "private" && in.Visibility != "public" {
+			bad(w, http.StatusBadRequest, "visibility must be private or public")
+			return
+		}
+		if _, err := s.repositoryPolicy().AuthorizeMutation(r.Context(), accountID(r), id); err != nil {
+			s.repositoryAuthorizationError(w, err)
+			return
+		}
+		if err := s.db.SetRepositoryVisibility(r.Context(), id, in.Visibility); err != nil {
+			bad(w, http.StatusInternalServerError, "repository visibility update failed")
+			return
+		}
+		repo, err := s.db.Repository(r.Context(), id)
+		if err != nil {
+			bad(w, http.StatusInternalServerError, "repository lookup failed")
+			return
+		}
+		jsonOut(w, repo)
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if _, err := s.repositoryPolicy().AuthorizeMutation(r.Context(), accountID(r), id); err != nil {
+			s.repositoryAuthorizationError(w, err)
+			return
+		}
+		s.stagingMu.Lock()
+		defer s.stagingMu.Unlock()
+		if err := s.deleteRepository(r.Context(), id); err != nil {
+			s.repositoryDeletionError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "signing-key" {
 		s.key(w, r, id)
 		return
@@ -494,6 +536,58 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 	}
 	bad(w, 404, "not found")
 }
+func (s *server) repositoryAuthorizationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) || strings.Contains(err.Error(), "repository not found") {
+		bad(w, http.StatusNotFound, "repository not found")
+		return
+	}
+	if errors.Is(err, ErrRepositoryOwnerMismatch) {
+		bad(w, http.StatusForbidden, "repository management is owner-only")
+		return
+	}
+	bad(w, http.StatusForbidden, "repository management is not authorized")
+}
+
+func (s *server) repositoryDeletionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrRepositoryBusy) {
+		bad(w, http.StatusConflict, "repository has an active publication lifecycle")
+		return
+	}
+	if strings.Contains(err.Error(), "not found") {
+		bad(w, http.StatusNotFound, "repository not found")
+		return
+	}
+	if strings.Contains(err.Error(), "storage cleanup") || strings.Contains(err.Error(), "storage sync") {
+		bad(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bad(w, http.StatusConflict, err.Error())
+}
+
+func (s *server) deleteRepository(ctx context.Context, id string) error {
+	if !idRE.MatchString(id) {
+		return store.ErrNotFound
+	}
+	dataRoot := filepath.Clean(s.cfg.DataDir)
+	reposRoot := filepath.Join(dataRoot, "repos")
+	repoRoot := filepath.Join(reposRoot, id)
+	if filepath.Dir(repoRoot) != reposRoot || filepath.Base(repoRoot) != id {
+		return fmt.Errorf("repository storage path is unsafe")
+	}
+	if err := s.db.DeleteRepository(ctx, id); err != nil {
+		return err
+	}
+	for _, path := range []string{repoRoot, filepath.Join(dataRoot, "artifacts", id)} {
+		if err := s.removePath(path); err != nil {
+			return fmt.Errorf("repository storage cleanup failed")
+		}
+	}
+	if err := syncDirectory(reposRoot); err != nil {
+		return fmt.Errorf("repository storage sync failed")
+	}
+	return nil
+}
+
 func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	s.stagingMu.Lock()
 	locked := true
