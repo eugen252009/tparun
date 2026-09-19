@@ -227,7 +227,7 @@ Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys
 
 ## VServer deployment
 
-The production deployment uses a bare Git receive repository and user systemd services. The deployed source releases live under `/home/eugen/tpahub_releases`, `/home/eugen/tpahub_current` points at the active release, and persistent state remains in `/home/eugen/data/tpahub`. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`.
+The production deployment uses the live Schema 5 root `/home/eugen/vserver-tpahub-qualification`: the binary is `bin/tpahub`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` and served at `https://tpa.run/tpahub-release_0.1.2_all.deb`. The deployment script validates Schema 5, stages the binary and package, creates rollback material, and checks the public installer/package pair. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`. The old `/home/eugen/tpahub_current` and `/home/eugen/data/tpahub` paths are legacy and are not migration sources.
 
 ## Development and qualification
 
