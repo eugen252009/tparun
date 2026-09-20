@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 )
 
 type AccountLifecycleState string
@@ -32,14 +34,9 @@ func ParseAccountTTLProfile(value string) (AccountTTLProfile, bool) {
 	return "", false
 }
 
-const (
-	minEphemeralLifetime   = 5 * time.Minute
-	minEphemeralPurgeDelay = 10 * time.Minute
-)
-
 func MinEphemeralDeadlines(created time.Time) (membershipExpiresAt, purgeAfter string) {
 	created = created.UTC()
-	return created.Add(minEphemeralLifetime).Format(time.RFC3339Nano), created.Add(minEphemeralPurgeDelay).Format(time.RFC3339Nano)
+	return created.Add(tpahubproduct.MinEphemeralLifetime).Format(time.RFC3339Nano), created.Add(tpahubproduct.MinEphemeralPurgeDelay).Format(time.RFC3339Nano)
 }
 
 // EvaluateAccountLifecycle derives lifecycle state from persisted timestamps.

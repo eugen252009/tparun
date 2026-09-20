@@ -21,6 +21,11 @@ const (
 	NanoStorageBytes          int64 = 5_000_000
 	NanoEgressBytes           int64 = 12_000_000_000
 	NanoOverageBytesPerSecond int64 = 128_000
+
+	MinEphemeralLifetime         = 5 * time.Minute
+	MinEphemeralPurgeDelay       = 10 * time.Minute
+	MinEphemeralStorage    int64 = 10 * 1024
+	MinEphemeralEgress     int64 = 20 * 1024
 )
 
 func ValidCapability(capability commerce.CapabilityID) bool {
@@ -45,8 +50,8 @@ func MinEphemeralGrants(created time.Time) []commerce.Grant {
 	now := created.UTC()
 	return []commerce.Grant{
 		{ProductID: ProductID, CapabilityID: CapabilityRepositoryCreate, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Source: "local", CreatedAt: now, UpdatedAt: now},
-		{ProductID: ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{StorageBytes: 10 * 1024}, Source: "local", CreatedAt: now, UpdatedAt: now},
-		{ProductID: ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{EgressBytes: 20 * 1024}, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{StorageBytes: MinEphemeralStorage}, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{EgressBytes: MinEphemeralEgress}, Source: "local", CreatedAt: now, UpdatedAt: now},
 		{ProductID: ProductID, CapabilityID: CapabilityRepositoryReadPrivate, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Source: "local", CreatedAt: now, UpdatedAt: now},
 	}
 }

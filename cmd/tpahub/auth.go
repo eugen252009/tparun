@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
+
 	"github.com/eugen252009/tpahub/internal/commerce"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
@@ -50,6 +54,72 @@ func bearer(r *http.Request) (string, bool) {
 
 var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
+type accountCreationRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	TTL      string `json:"ttl"`
+}
+
+// UnmarshalJSON rejects duplicate and unknown account-creation fields. In
+// particular, duplicate ttl keys must not select a profile by decoder order.
+func (r *accountCreationRequest) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	token, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if token != json.Delim('{') {
+		return fmt.Errorf("account request must be an object")
+	}
+	seen := make(map[string]bool)
+	for dec.More() {
+		keyToken, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("invalid account field")
+		}
+		if seen[key] {
+			return fmt.Errorf("duplicate account field %q", key)
+		}
+		seen[key] = true
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
+		switch key {
+		case "email":
+			if err := json.Unmarshal(raw, &r.Email); err != nil {
+				return err
+			}
+		case "password":
+			if err := json.Unmarshal(raw, &r.Password); err != nil {
+				return err
+			}
+		case "ttl":
+			if err := json.Unmarshal(raw, &r.TTL); err != nil {
+				return err
+			}
+		default:
+			// Preserve the existing endpoint's forward-compatible ignored-field behavior.
+			// Unknown fields never participate in profile selection.
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple account values")
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || !s.cfg.RegistrationEnabled {
 		bad(w, 403, "registration disabled")
@@ -59,11 +129,7 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusTooManyRequests, "too many authentication attempts")
 		return
 	}
-	var in struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		TTL      string `json:"ttl"`
-	}
+	var in accountCreationRequest
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil || !emailRE.MatchString(strings.TrimSpace(strings.ToLower(in.Email))) || len(in.Password) < 10 {
 		bad(w, 400, "valid email and password of at least 10 characters required")
 		return

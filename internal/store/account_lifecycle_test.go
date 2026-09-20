@@ -51,6 +51,30 @@ func TestAccountLifecycleDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func FuzzParseAccountTTLProfile(f *testing.F) {
+	for _, seed := range []string{"", "min", "MIN", " min", "min ", "5m", "\\x00min", "ｍｉｎ"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		profile, valid := ParseAccountTTLProfile(value)
+		if value == "" {
+			if !valid || profile != "" {
+				t.Fatalf("empty profile=%q valid=%v", profile, valid)
+			}
+			return
+		}
+		if value == "min" {
+			if !valid || profile != AccountTTLMin {
+				t.Fatalf("min profile=%q valid=%v", profile, valid)
+			}
+			return
+		}
+		if valid {
+			t.Fatalf("accepted non-contract value %q as %q", value, profile)
+		}
+	})
+}
+
 func TestLifecycleEvaluationAndRenewal(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

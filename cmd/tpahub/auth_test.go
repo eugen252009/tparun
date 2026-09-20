@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,10 +69,46 @@ func TestRegistrationTTLMinCreatesFixedEphemeralProfile(t *testing.T) {
 	}
 }
 
-func TestRegistrationRejectsArbitraryTTL(t *testing.T) {
-	for _, ttl := range []string{`5`, `"5m"`, `"short"`, `5`} {
+func TestRegistrationTTLNormalValuesRemainCustomers(t *testing.T) {
+	for i, ttl := range []string{"omitted", "null", ""} {
 		s, h := testServer(t)
-		body := `{"email":"bad-ttl@example.invalid","password":"long-enough-password","ttl":` + ttl + `}`
+		email := fmt.Sprintf("normal-ttl-%d@example.invalid", i)
+		field := ""
+		if ttl == "null" {
+			field = `,"ttl":null`
+		} else if ttl == "" {
+			field = `,"ttl":""`
+		}
+		body := `{"email":"` + email + `","password":"long-enough-password"` + field + `}`
+		req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("ttl %s status=%d", ttl, response.StatusCode)
+		}
+		a, err := s.db.AccountByEmail(context.Background(), email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.LifecycleKind != store.AccountLifecycleCustomer {
+			t.Fatalf("ttl %s kind=%q", ttl, a.LifecycleKind)
+		}
+	}
+}
+
+func TestRegistrationTTLContract(t *testing.T) {
+	rejected := []string{`"MIN"`, `"Min"`, `"mIn"`, `" min"`, `"min "`, `" min "`, `"minimum"`, `"minimal"`, `"short"`, `"5"`, `"5m"`, `"300s"`, `"0"`, `"-1"`, `"null"`, `"\\tmin"`, `"min\\t"`, `"\\nmin"`, `"min\\n"`, `"\\u00a0min"`, `"min\\u00a0"`, `"ｍｉｎ"`, `5`, `0`, `-1`, `true`, `false`, `[]`, `["min"]`, `{}`, `{"value":"min"}`}
+	for i, ttl := range rejected {
+		s, h := testServer(t)
+		email := fmt.Sprintf("bad-ttl-%d@example.invalid", i)
+		body := `{"email":"` + email + `","password":"long-enough-password","ttl":` + ttl + `}`
 		req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
@@ -85,9 +122,49 @@ func TestRegistrationRejectsArbitraryTTL(t *testing.T) {
 		if response.StatusCode != http.StatusBadRequest {
 			t.Fatalf("ttl %s status=%d", ttl, response.StatusCode)
 		}
-		if _, err := s.db.AccountByEmail(context.Background(), "bad-ttl@example.invalid"); err == nil {
+		if _, err := s.db.AccountByEmail(context.Background(), email); err == nil {
 			t.Fatalf("ttl %s created an account", ttl)
 		}
+	}
+}
+
+func TestRegistrationTTLDuplicateAndUnknownFields(t *testing.T) {
+	for i, body := range []string{
+		`{"email":"duplicate-one@example.invalid","password":"long-enough-password","ttl":"min","ttl":"5m"}`,
+		`{"email":"duplicate-two@example.invalid","password":"long-enough-password","ttl":"5m","ttl":"min"}`,
+	} {
+		_, h := testServer(t)
+		req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("duplicate case %d status=%d", i, response.StatusCode)
+		}
+	}
+	s, h := testServer(t)
+	req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(`{"email":"unknown@example.invalid","password":"long-enough-password","ttl":"min","membership_expires_at":"2099-01-01T00:00:00Z","purge_after":"2099-01-02T00:00:00Z","lifecycle_kind":"internal","storage":999999999,"egress":999999999,"grants":["anything"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("ignored override fields status=%d", response.StatusCode)
+	}
+	a, err := s.db.AccountByEmail(context.Background(), "unknown@example.invalid")
+	if err != nil || a.LifecycleKind != store.AccountLifecycleEphemeral || a.MembershipExpiresAt == "2099-01-01T00:00:00Z" {
+		t.Fatalf("override influenced profile: %+v err=%v", a, err)
 	}
 }
 

@@ -45,3 +45,33 @@ func TestNanoOfferCreatesProductCapabilityGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestMinEphemeralProfileContract(t *testing.T) {
+	created := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	grants := MinEphemeralGrants(created)
+	if len(grants) != 4 {
+		t.Fatalf("grant count=%d", len(grants))
+	}
+	want := map[string]struct{ storage, egress int64 }{
+		string(CapabilityRepositoryCreate):      {0, 0},
+		string(CapabilityRepositoryPublish):     {10240, 0},
+		string(CapabilityRepositoryDownload):    {0, 20480},
+		string(CapabilityRepositoryReadPrivate): {0, 0},
+	}
+	for _, grant := range grants {
+		limits, ok := want[string(grant.CapabilityID)]
+		if !ok {
+			t.Fatalf("unexpected capability %q", grant.CapabilityID)
+		}
+		if grant.OfferID != "ephemeral-min" || grant.Limits.StorageBytes != limits.storage || grant.Limits.EgressBytes != limits.egress || !grant.Enabled || grant.Source != "local" {
+			t.Fatalf("unexpected grant %+v", grant)
+		}
+		delete(want, string(grant.CapabilityID))
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing capabilities=%v", want)
+	}
+	if MinEphemeralLifetime != 5*time.Minute || MinEphemeralPurgeDelay != 10*time.Minute || MinEphemeralStorage != 10240 || MinEphemeralEgress != 20480 {
+		t.Fatal("fixed ephemeral-min constants changed")
+	}
+}
