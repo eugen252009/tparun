@@ -46,38 +46,38 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		CapabilitySource:         os.Getenv("TPAHUB_CAPABILITY_SOURCE"),
-		Profile:                  os.Getenv("TPAHUB_PROFILE"),
-		BillingIntegration:       os.Getenv("TPAHUB_BILLING"),
-		CheckoutSuccessURL:       os.Getenv("TPAHUB_CHECKOUT_SUCCESS_URL"),
-		CheckoutCancelURL:        os.Getenv("TPAHUB_CHECKOUT_CANCEL_URL"),
-		DeliveryMode:             env("TPAHUB_DELIVERY_MODE", DeliveryStrictAccounted),
-		EgressEnforcement:        os.Getenv("TPAHUB_EGRESS_ENFORCEMENT"),
-		Listen:                   env("TPAHUB_LISTEN", "127.0.0.1:8080"),
-		DataDir:                  env("TPAHUB_DATA_DIR", "./data"),
+		CapabilitySource:         CanonicalEnv("TPARUN_CAPABILITY_SOURCE"),
+		Profile:                  CanonicalEnv("TPARUN_PROFILE"),
+		BillingIntegration:       CanonicalEnv("TPARUN_BILLING"),
+		CheckoutSuccessURL:       CanonicalEnv("TPARUN_CHECKOUT_SUCCESS_URL"),
+		CheckoutCancelURL:        CanonicalEnv("TPARUN_CHECKOUT_CANCEL_URL"),
+		DeliveryMode:             envCompat("TPARUN_DELIVERY_MODE", DeliveryStrictAccounted),
+		EgressEnforcement:        CanonicalEnv("TPARUN_EGRESS_ENFORCEMENT"),
+		Listen:                   envCompat("TPARUN_LISTEN", "127.0.0.1:8080"),
+		DataDir:                  envCompat("TPARUN_DATA_DIR", "./data"),
 		TPABin:                   env("TPA_BIN", "tpa"),
 		GPGHome:                  os.Getenv("GNUPGHOME"),
-		GPGFingerprint:           os.Getenv("TPAHUB_GPG_FINGERPRINT"),
-		PublishTimeout:           duration("TPAHUB_PUBLISH_TIMEOUT", 10*time.Minute),
-		UploadReadTimeout:        duration("TPAHUB_UPLOAD_READ_TIMEOUT", 15*time.Minute),
-		ShutdownTimeout:          duration("TPAHUB_SHUTDOWN_TIMEOUT", 20*time.Second),
-		MaxUpload:                integer("TPAHUB_MAX_UPLOAD_BYTES", 512<<20),
-		MaxStagingBytes:          integer("TPAHUB_MAX_STAGING_BYTES", 4<<30),
-		MaxAccountStagingBytes:   integer("TPAHUB_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
-		MaxCandidateInodes:       integer("TPAHUB_MAX_CANDIDATE_INODES", 65536),
-		MinDiskFreeBytes:         integer("TPAHUB_MIN_DISK_FREE_BYTES", 100<<20),
-		MinFreeInodes:            integer("TPAHUB_MIN_FREE_INODES", 1024),
-		MaxGenerations:           integer("TPAHUB_MAX_GENERATIONS", 5),
-		RegistrationEnabled:      os.Getenv("TPAHUB_REGISTRATION_ENABLED") == "true",
-		LocalProvisioningEnabled: os.Getenv("TPAHUB_LOCAL_PROVISIONING_ENABLED") == "true",
-		BillingProvider:          env("TPAHUB_BILLING_PROVIDER", "mock"),
-		BillingEnvironment:       env("TPAHUB_BILLING_ENVIRONMENT", "mock"),
-		BillingRateCard:          env("TPAHUB_BILLING_RATE_CARD", "mock-rate-card-v1"),
-		StripeTestSecret:         os.Getenv("TPAHUB_STRIPE_TEST_SECRET"),
-		StripeWebhookSecret:      os.Getenv("TPAHUB_STRIPE_WEBHOOK_SECRET"),
-		BillingPurchasesEnabled:  os.Getenv("TPAHUB_BILLING_PURCHASES_ENABLED") == "true",
-		OperatorRelyingPartyID:   env("TPAHUB_OPERATOR_RP_ID", "tpa.run"),
-		OperatorOrigin:           env("TPAHUB_OPERATOR_ORIGIN", "https://tpa.run"),
+		GPGFingerprint:           CanonicalEnv("TPARUN_GPG_FINGERPRINT"),
+		PublishTimeout:           durationCompat("TPARUN_PUBLISH_TIMEOUT", 10*time.Minute),
+		UploadReadTimeout:        durationCompat("TPARUN_UPLOAD_READ_TIMEOUT", 15*time.Minute),
+		ShutdownTimeout:          durationCompat("TPARUN_SHUTDOWN_TIMEOUT", 20*time.Second),
+		MaxUpload:                integerCompat("TPARUN_MAX_UPLOAD_BYTES", 512<<20),
+		MaxStagingBytes:          integerCompat("TPARUN_MAX_STAGING_BYTES", 4<<30),
+		MaxAccountStagingBytes:   integerCompat("TPARUN_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
+		MaxCandidateInodes:       integerCompat("TPARUN_MAX_CANDIDATE_INODES", 65536),
+		MinDiskFreeBytes:         integerCompat("TPARUN_MIN_DISK_FREE_BYTES", 100<<20),
+		MinFreeInodes:            integerCompat("TPARUN_MIN_FREE_INODES", 1024),
+		MaxGenerations:           integerCompat("TPARUN_MAX_GENERATIONS", 5),
+		RegistrationEnabled:      CanonicalEnv("TPARUN_REGISTRATION_ENABLED") == "true",
+		LocalProvisioningEnabled: CanonicalEnv("TPARUN_LOCAL_PROVISIONING_ENABLED") == "true",
+		BillingProvider:          envCompat("TPARUN_BILLING_PROVIDER", "mock"),
+		BillingEnvironment:       envCompat("TPARUN_BILLING_ENVIRONMENT", "mock"),
+		BillingRateCard:          envCompat("TPARUN_BILLING_RATE_CARD", "mock-rate-card-v1"),
+		StripeTestSecret:         CanonicalEnv("TPARUN_STRIPE_TEST_SECRET"),
+		StripeWebhookSecret:      CanonicalEnv("TPARUN_STRIPE_WEBHOOK_SECRET"),
+		BillingPurchasesEnabled:  CanonicalEnv("TPARUN_BILLING_PURCHASES_ENABLED") == "true",
+		OperatorRelyingPartyID:   envCompat("TPARUN_OPERATOR_RP_ID", "tpa.run"),
+		OperatorOrigin:           envCompat("TPARUN_OPERATOR_ORIGIN", "https://tpa.run"),
 	}
 }
 
@@ -95,7 +95,7 @@ func ResolveDeliveryMode(mode string) (string, error) {
 	case DeliveryUnmetered, DeliveryMetricsOnly:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("invalid TPAHUB_DELIVERY_MODE %q", mode)
+		return "", fmt.Errorf("invalid TPARUN_DELIVERY_MODE %q", mode)
 	}
 }
 
@@ -127,7 +127,7 @@ func ResolveEgressEnforcement(delivery, selected string) (string, error) {
 		}
 		return selected, nil
 	default:
-		return "", fmt.Errorf("unsupported TPAHUB_EGRESS_ENFORCEMENT %q", selected)
+		return "", fmt.Errorf("unsupported TPARUN_EGRESS_ENFORCEMENT %q", selected)
 	}
 }
 
@@ -137,16 +137,23 @@ func env(k, fallback string) string {
 	}
 	return fallback
 }
-func duration(k string, d time.Duration) time.Duration {
-	if v := os.Getenv(k); v != "" {
+
+func envCompat(k, fallback string) string {
+	if v := CanonicalEnv(k); v != "" {
+		return v
+	}
+	return fallback
+}
+func durationCompat(k string, d time.Duration) time.Duration {
+	if v := CanonicalEnv(k); v != "" {
 		if x, e := time.ParseDuration(v); e == nil && x > 0 {
 			return x
 		}
 	}
 	return d
 }
-func integer(k string, d int64) int64 {
-	if v := os.Getenv(k); v != "" {
+func integerCompat(k string, d int64) int64 {
+	if v := CanonicalEnv(k); v != "" {
 		if x, e := strconv.ParseInt(v, 10, 64); e == nil && x > 0 {
 			return x
 		}

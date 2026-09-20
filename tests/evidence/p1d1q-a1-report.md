@@ -132,7 +132,7 @@ The following passed after remediation:
 bash -n deploy/deploy-tpahub
 ./tests/deploy-rollback-integration.sh
 python3 tests/p1d1-structural-qualification.py
-go test ./cmd/tpahub -count=1
+go test ./cmd/tparun -count=1
 go test ./internal/store -count=1
 go test ./internal/commerce -count=1
 go test ./internal/payments/... -count=1

@@ -2,9 +2,10 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BASE=${TPAHUB_PUBLIC_REPOSITORY_URL:-https://tpa.run/r/tpahub-bootstrap/tpahub-bootstrap}
-EXPECTED_VERSION=${TPAHUB_PUBLIC_VERSION:-}
-EXPECTED_SHA256=${TPAHUB_PUBLIC_SHA256:-}
+BASE=${TPARUN_PUBLIC_REPOSITORY_URL:-https://tpa.run/r/tparun/bootstrap}
+EXPECTED_VERSION=${TPARUN_PUBLIC_VERSION:-}
+EXPECTED_SHA256=${TPARUN_PUBLIC_SHA256:-}
+EXPECTED_SOURCES_SHA256=${TPARUN_PUBLIC_SOURCES_SHA256:-}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -31,29 +32,28 @@ gzip_size=$(wc -c <"$TMP/Packages.gz")
 awk -v hash="$sha256" -v size="$size" '$1 == hash && $2 == size && $3 == "main/binary-amd64/Packages" { found=1 } END { exit found ? 0 : 1 }' "$TMP/Release"
 awk -v hash="$gzip_sha256" -v size="$gzip_size" '$1 == hash && $2 == size && $3 == "main/binary-amd64/Packages.gz" { found=1 } END { exit found ? 0 : 1 }' "$TMP/Release"
 
-pkg_block=$(awk 'BEGIN{RS=""} $1 == "Package:" && $2 == "tpahub" {print; exit}' "$TMP/Packages")
-[[ -n "$pkg_block" ]] || { echo 'public repository does not contain Package: tpahub' >&2; exit 1; }
+pkg_block=$(awk 'BEGIN{RS=""} $1 == "Package:" && $2 == "tparun" {print; exit}' "$TMP/Packages")
+[[ -n "$pkg_block" ]] || { echo 'public repository does not contain Package: tparun' >&2; exit 1; }
 version=$(printf '%s\n' "$pkg_block" | sed -n 's/^Version: //p')
 filename=$(printf '%s\n' "$pkg_block" | sed -n 's/^Filename: //p')
 package_sha=$(printf '%s\n' "$pkg_block" | sed -n 's/^SHA256: //p')
-[[ -n "$version" && -n "$filename" && -n "$package_sha" ]] || { echo 'tpahub package metadata is incomplete' >&2; exit 1; }
-curl -fsSL "$BASE/$filename" -o "$TMP/tpahub.deb"
-[[ "$(sha256sum "$TMP/tpahub.deb" | awk '{print $1}')" == "$package_sha" ]] || { echo 'published package hash mismatch' >&2; exit 1; }
-[[ "$(dpkg-deb -f "$TMP/tpahub.deb" Package)" == tpahub ]] || { echo 'published package identity mismatch' >&2; exit 1; }
-[[ "$(dpkg-deb -f "$TMP/tpahub.deb" Architecture)" == amd64 ]] || { echo 'published package architecture mismatch' >&2; exit 1; }
+[[ -n "$version" && -n "$filename" && -n "$package_sha" ]] || { echo 'tparun package metadata is incomplete' >&2; exit 1; }
+curl -fsSL "$BASE/$filename" -o "$TMP/tparun.deb"
+[[ "$(sha256sum "$TMP/tparun.deb" | awk '{print $1}')" == "$package_sha" ]] || { echo 'published package hash mismatch' >&2; exit 1; }
+[[ "$(dpkg-deb -f "$TMP/tparun.deb" Package)" == tparun ]] || { echo 'published package identity mismatch' >&2; exit 1; }
+[[ "$(dpkg-deb -f "$TMP/tparun.deb" Architecture)" == amd64 ]] || { echo 'published package architecture mismatch' >&2; exit 1; }
 [[ -z "$EXPECTED_VERSION" || "$version" == "$EXPECTED_VERSION" ]] || { echo "version mismatch: $version" >&2; exit 1; }
 [[ -z "$EXPECTED_SHA256" || "$package_sha" == "$EXPECTED_SHA256" ]] || { echo "SHA-256 mismatch: $package_sha" >&2; exit 1; }
 
 server=${BASE%%/r/*}
-installer=$(curl -fsSL "$server/install.sh")
-release_url=$(printf '%s\n' "$installer" | sed -n 's/^RELEASE_PACKAGE_URL=\${[^}]*:-\(.*\)}$/\1/p' | head -1)
-release_sha=$(printf '%s\n' "$installer" | sed -n 's/^RELEASE_PACKAGE_SHA256=\${[^}]*:-\([0-9a-f]*\)}$/\1/p' | head -1)
-[[ -n "$release_url" && -n "$release_sha" ]] || { echo 'public installer release pin is incomplete' >&2; exit 1; }
-release_url=${release_url//\$SERVER/$server}
-curl -fsSL "$release_url" -o "$TMP/tpahub-release.deb"
-[[ "$(sha256sum "$TMP/tpahub-release.deb" | awk '{print $1}')" == "$release_sha" ]] || { echo 'public root release package hash mismatch' >&2; exit 1; }
-[[ "$(dpkg-deb -f "$TMP/tpahub-release.deb" Package)" == tpahub-release ]] || { echo 'public root release package identity mismatch' >&2; exit 1; }
-dpkg-deb --extract "$TMP/tpahub-release.deb" "$TMP/release-root"
-grep -Fq 'URIs: https://tpa.run/r/tpahub-bootstrap/tpahub-bootstrap' "$TMP/release-root/etc/apt/sources.list.d/tpahub.sources" || { echo 'public release package uses non-canonical repository URL' >&2; exit 1; }
+curl -fsSL "$server/tparun.sources" -o "$TMP/tparun.sources"
+sources_sha=$(sha256sum "$TMP/tparun.sources" | awk '{print $1}')
+[[ -z "$EXPECTED_SOURCES_SHA256" || "$sources_sha" == "$EXPECTED_SOURCES_SHA256" ]] || { echo "sources SHA-256 mismatch: $sources_sha" >&2; exit 1; }
+grep -Fq 'Signed-By:' "$TMP/tparun.sources" || { echo 'public sources file does not embed a signing key' >&2; exit 1; }
+key_start=$(grep -n '^ -----BEGIN PGP PUBLIC KEY BLOCK-----$' "$TMP/tparun.sources" | cut -d: -f1)
+key_end=$(grep -n '^ -----END PGP PUBLIC KEY BLOCK-----$' "$TMP/tparun.sources" | cut -d: -f1)
+sed -n "${key_start},${key_end}p" "$TMP/tparun.sources" | sed 's/^ //' | sed 's/^\.$//' >"$TMP/public.asc"
+fingerprint=$(gpg --show-keys --with-colons "$TMP/public.asc" | awk -F: '$1=="fpr"{print $10; exit}')
+[[ "$fingerprint" == EDCEE63AA803737C8ABBC1E4A34190A2829D5E54 ]] || { echo "sources signing fingerprint mismatch: $fingerprint" >&2; exit 1; }
 
-echo "PUBLIC DIST PASS: tpahub $version $package_sha"
+echo "PUBLIC DIST PASS: tparun $version $package_sha"

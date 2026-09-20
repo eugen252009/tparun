@@ -1,28 +1,28 @@
 services:
-  tpahub:
-    image: ${TPAHUB_IMAGE:?set TPAHUB_IMAGE to a pinned image tag or digest}
+  tparun:
+    image: ${TPARUN_IMAGE:?set TPARUN_IMAGE to a pinned image tag or digest}
     restart: unless-stopped
-    user: "${TPAHUB_UID:-10001}:${TPAHUB_GID:-10001}"
+    user: "${TPARUN_UID:-10001}:${TPARUN_GID:-10001}"
     ports:
-      - "${TPAHUB_BIND:-127.0.0.1:8080}:8080"
+      - "${TPARUN_BIND:-127.0.0.1:8080}:8080"
     volumes:
-      - "${TPAHUB_CONFIG_DIR:?set TPAHUB_CONFIG_DIR}:/config"
-      - "${TPAHUB_DATA_DIR:?set TPAHUB_DATA_DIR}:/data"
+      - "${TPARUN_CONFIG_DIR:?set TPARUN_CONFIG_DIR}:/config"
+      - "${TPARUN_DATA_DIR:?set TPARUN_DATA_DIR}:/data"
     environment:
       HOME: /config/home
-      TPAHUB_PROFILE: self-hosted
-      TPAHUB_LISTEN: 0.0.0.0:8080
-      TPAHUB_DATA_DIR: /data
+      TPARUN_PROFILE: self-hosted
+      TPARUN_LISTEN: 0.0.0.0:8080
+      TPARUN_DATA_DIR: /data
       TPA_BIN: /usr/local/bin/tpa
       GNUPGHOME: /config/gnupg
-      TPAHUB_REGISTRATION_ENABLED: "true"
-      TPAHUB_CAPABILITY_SOURCE: local
-      TPAHUB_BILLING: none
-      TPAHUB_BILLING_PROVIDER: none
-      TPAHUB_DELIVERY_MODE: metrics-only
-      TPAHUB_EGRESS_ENFORCEMENT: none
-      TPAHUB_OPERATOR_RP_ID: ${TPAHUB_OPERATOR_RP_ID:?set public hostname}
-      TPAHUB_OPERATOR_ORIGIN: ${TPAHUB_EXTERNAL_ORIGIN:?set https external origin}
+      TPARUN_REGISTRATION_ENABLED: "true"
+      TPARUN_CAPABILITY_SOURCE: local
+      TPARUN_BILLING: none
+      TPARUN_BILLING_PROVIDER: none
+      TPARUN_DELIVERY_MODE: metrics-only
+      TPARUN_EGRESS_ENFORCEMENT: none
+      TPARUN_OPERATOR_RP_ID: ${TPARUN_OPERATOR_RP_ID:?set public hostname}
+      TPARUN_OPERATOR_ORIGIN: ${TPARUN_EXTERNAL_ORIGIN:?set https external origin}
     # TPA's existing publication runner creates a nested user/mount namespace
     # and a bounded tmpfs. Docker's default seccomp/AppArmor profiles reject
     # that operation even for this non-root UID; these are the narrow runtime

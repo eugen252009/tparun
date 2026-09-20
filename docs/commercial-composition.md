@@ -26,10 +26,10 @@ Before changes, ordinary tests and race tests failed only the inherited
 For a NEW empty data directory:
 
 ```sh
-export TPAHUB_DATA_DIR=./data
-./tpahub init
+export TPARUN_DATA_DIR=./data
+./tparun init
 # Supply the existing TPA/signing configuration as usual.
-./tpahub serve
+./tparun serve
 ```
 
 `init` acquires the existing data-directory lock, refuses any existing content
@@ -67,7 +67,7 @@ Thus a bare `serve` without initialization also remains legacy-compatible. The
 natural new self-hosted entry point is `init` followed by `serve`.
 
 Explicit environment configuration overrides profile defaults. A deployment may
-also explicitly select `TPAHUB_PROFILE=self-hosted` or `legacy`. That is an
+also explicitly select `TPARUN_PROFILE=self-hosted` or `legacy`. That is an
 operator configuration decision, not an inferred migration. Invalid/corrupt
 profile content fails startup; it is not silently ignored. The profile file
 stores only the selector, not duplicated resolved configuration or grant limits.
@@ -78,7 +78,7 @@ state. Switching off accounting does not clear historical uncertainty or grants.
 
 ## Configuration
 
-`TPAHUB_BILLING` selects commercial integration independently of delivery:
+`TPARUN_BILLING` selects commercial integration independently of delivery:
 
 | Value | Meaning |
 |---|---|
@@ -87,36 +87,36 @@ state. Switching off accounting does not clear historical uncertainty or grants.
 | `hosted` | Current co-located billing-service adapter; its installed payment backend is Stripe **test**. |
 | `remote` | Rejected: no remote billing transport is implemented. |
 
-When `TPAHUB_BILLING` is absent, explicitly supplied legacy
-`TPAHUB_BILLING_PROVIDER` remains compatible: `none` → none, `mock` → simulator,
+When `TPARUN_BILLING` is absent, explicitly supplied legacy
+`TPARUN_BILLING_PROVIDER` remains compatible: `none` → none, `mock` → simulator,
 `stripe` → hosted. The initialized profile supplies none only when neither
 commercial selector is explicitly set. A missing Stripe key never means none.
 
-Delivery remains independently selectable with `TPAHUB_DELIVERY_MODE`:
+Delivery remains independently selectable with `TPARUN_DELIVERY_MODE`:
 `unmetered`, `metrics-only`, or `strict-accounted`. Reported delivery is not added.
 
 Example non-commercial strict accounting:
 
 ```sh
-TPAHUB_DELIVERY_MODE=strict-accounted TPAHUB_BILLING=none tpahub serve
+TPARUN_DELIVERY_MODE=strict-accounted TPARUN_BILLING=none tparun serve
 ```
 
 Example current hosted test composition:
 
 ```text
-TPAHUB_DELIVERY_MODE=strict-accounted
-TPAHUB_BILLING=hosted
-TPAHUB_BILLING_PROVIDER=stripe
-TPAHUB_BILLING_ENVIRONMENT=test
-TPAHUB_BILLING_RATE_CARD=production-nano-v1
-TPAHUB_BILLING_PURCHASES_ENABLED=true
-TPAHUB_STRIPE_TEST_SECRET=<configured securely>
-TPAHUB_STRIPE_WEBHOOK_SECRET=<configured securely>
+TPARUN_DELIVERY_MODE=strict-accounted
+TPARUN_BILLING=hosted
+TPARUN_BILLING_PROVIDER=stripe
+TPARUN_BILLING_ENVIRONMENT=test
+TPARUN_BILLING_RATE_CARD=production-nano-v1
+TPARUN_BILLING_PURCHASES_ENABLED=true
+TPARUN_STRIPE_TEST_SECRET=<configured securely>
+TPARUN_STRIPE_WEBHOOK_SECRET=<configured securely>
 ```
 
 These are documented examples, not production configuration changes.
 
-`TPAHUB_CHECKOUT_SUCCESS_URL` and `TPAHUB_CHECKOUT_CANCEL_URL` configure the hosted
+`TPARUN_CHECKOUT_SUCCESS_URL` and `TPARUN_CHECKOUT_CANCEL_URL` configure the hosted
 adapter's return addresses. Only that adapter supplies the hosted public
 `https://tpa.run/` fallback. Generic purchase orchestration and self-hosted
 startup do not contain/use those defaults. Selected hosted configuration rejects
@@ -142,7 +142,7 @@ amount/currency/provider/environment, not current prices. Existing Stripe test
 idempotency keys remain identical. No second commercial database is introduced.
 
 The current hosted product/rate-card policy is composed in
-`cmd/tpahub/hosted_billing.go`. It remains Nano-specific. Mock billing in
+`cmd/tparun/hosted_billing.go`. It remains Nano-specific. Mock billing in
 `billing.go` remains an explicit local development simulator, not the semantic
 implementation of none. The account preview link labels it accordingly.
 
@@ -207,7 +207,7 @@ disabling billing. Startup still opens/validates the required local store and
 performs the existing recovery and runner checks.
 
 Stripe dependencies are confined to the existing `internal/payments/stripe`
-adapter and hosted wiring/webhook edge in `cmd/tpahub/stripe_wiring.go` and
+adapter and hosted wiring/webhook edge in `cmd/tparun/stripe_wiring.go` and
 `stripe_webhook.go`. `provider.go` retains composition-aware validation of the
 installed hosted adapter. Its legacy constructor name is retained for compatibility.
 

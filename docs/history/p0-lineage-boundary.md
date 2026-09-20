@@ -154,7 +154,7 @@ go vet ./...
 git diff --check
 node tests/ops-resource-test.js
 sh tests/lineage-authority-probe.sh
-TPA_DIR=/home/eugen/projekte/tpa TPAHUB_TEST_PORT=18175 sh tests/qualification.sh
+TPA_DIR=/home/eugen/projekte/tpa TPARUN_TEST_PORT=18175 sh tests/qualification.sh
 ```
 
 The final disposable APT run printed `REAL APT SELF-HOSTING QUALIFIED`: real
@@ -180,7 +180,7 @@ Separate observations, not silently fixed:
 ## Operational stop, backup and downgrade rules
 
 There is **no approved release upgrade command for Schema 4 in this tree**.
-`tpahub schema` reports 3. Historical unpatched Schema 3 migration binaries may
+`tparun schema` reports 3. Historical unpatched Schema 3 migration binaries may
 bypass future-version rejection: never run them against Schema 4 or newer state.
 A schema-number bump alone is not a repair, and Schema 5 does not yet exist here.
 

@@ -14,13 +14,13 @@ ORIGIN=$(python3 -c 'import pathlib,sys;print(pathlib.Path(sys.argv[1]).read_tex
 docker run -d --name "$CONTAINER" --network=host \
  -e ORIGIN="$ORIGIN" -e A="$A" -e B="$B" -e PUBLIC="$PUBLIC" \
  -e READER_A="$READER_A" -e READER_B="$READER_B" debian:bookworm-slim sleep infinity >/dev/null
-docker cp "$BIN" "$CONTAINER:/usr/local/bin/tpahub"
+docker cp "$BIN" "$CONTAINER:/usr/local/bin/tparun"
 docker exec "$CONTAINER" sh -eu -c '
- chmod 755 /usr/local/bin/tpahub
+ chmod 755 /usr/local/bin/tparun
  rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
- tpahub add "$A" --server "$ORIGIN" --token "$READER_A"
- if tpahub add "$B" --server "$ORIGIN" --token unavailable-reader >/tmp/add-b-wrong.log 2>&1; then
-   echo "wrong B credential was accepted by tpahub add" >&2
+ tparun add "$A" --server "$ORIGIN" --token "$READER_A"
+ if tparun add "$B" --server "$ORIGIN" --token unavailable-reader >/tmp/add-b-wrong.log 2>&1; then
+   echo "wrong B credential was accepted by tparun add" >&2
    exit 1
  fi
  test ! -e /etc/apt/auth.conf.d/tpahub-"$B"
@@ -37,7 +37,7 @@ assert any(r['auth'] and not r['a'] and not r['b'] and r['status'] in (401,403) 
 PY
 printf '%s\n' both >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
- tpahub add "$B" --server "$ORIGIN" --token "$READER_B"
+ tparun add "$B" --server "$ORIGIN" --token "$READER_B"
  rm -rf /var/lib/apt/lists/*
  apt-get update -o APT::Update::Error-Mode=any
  cd /tmp
@@ -65,7 +65,7 @@ assert b and all(not r['auth'] and r['status'] in (401,403) for r in b),b
 PY
 printf '%s\n' public >"$TMP/phase"
 docker exec "$CONTAINER" sh -eu -c '
- tpahub add "$PUBLIC" --server "$ORIGIN"
+ tparun add "$PUBLIC" --server "$ORIGIN"
  rm -rf /var/lib/apt/lists/*
  apt-get update -o APT::Update::Error-Mode=any
 '

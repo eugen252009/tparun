@@ -11,9 +11,9 @@ SQLite becomes writable. Recovery is an explicit administrative reconciliation
 for one exact marker:
 
 ```text
-tpahub admin egress list-uncertain --data-dir <data-dir>
-tpahub admin egress inspect <delivery-id> --data-dir <data-dir>
-tpahub admin egress recover <delivery-id> --version <version> \
+tparun admin egress list-uncertain --data-dir <data-dir>
+tparun admin egress inspect <delivery-id> --data-dir <data-dir>
+tparun admin egress recover <delivery-id> --version <version> \
   --usage-date <YYYY-MM-DD> --bytes <measured-bytes> --data-dir <data-dir>
 ```
 

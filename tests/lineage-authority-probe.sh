@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
-(cd "$ROOT" && go build -o "$TMP/candidate" ./cmd/tpahub)
+(cd "$ROOT" && go build -o "$TMP/candidate" ./cmd/tparun)
 test "$("$TMP/candidate" schema)" = 5
 check_rejection() {
   state=$1 expected=$2
@@ -16,7 +16,7 @@ print(json.dumps(sqlite3.connect(sys.argv[1]).execute('SELECT type,name,sql FROM
 PY
 )
   for command in serve migrate; do
-    if env -i PATH="$PATH" HOME="$TMP" TPAHUB_DATA_DIR="$state" "$TMP/candidate" "$command" > "$TMP/rejection.log" 2>&1; then
+    if env -i PATH="$PATH" HOME="$TMP" TPARUN_DATA_DIR="$state" "$TMP/candidate" "$command" > "$TMP/rejection.log" 2>&1; then
       echo "unexpected $command acceptance: $state" >&2; exit 1
     fi
     grep -q "$expected" "$TMP/rejection.log"
@@ -52,7 +52,7 @@ done
 test "$(cat "$TMP/current-version")" = 5
 before=$(sha256sum "$TMP/current/tpahub.db")
 for iteration in 1 2 3; do
- env -i PATH="$PATH" HOME="$TMP" TPAHUB_DATA_DIR="$TMP/current" "$TMP/candidate" migrate
+ env -i PATH="$PATH" HOME="$TMP" TPARUN_DATA_DIR="$TMP/current" "$TMP/candidate" migrate
  test "$before" = "$(sha256sum "$TMP/current/tpahub.db")"
 done
 printf 'PASS Schema 5 repeated public migrate no-op\n'

@@ -1,6 +1,6 @@
 # Provider checkout recovery authority
 
-TPA Hub persists the purchase ID, customer, product, offer identity, rate card,
+TPA.run persists the purchase ID, customer, product, offer identity, rate card,
 tax classification, amount, currency, provider/environment, entitlement
 validity, checkout request version, and grant snapshot set before calling the
 external checkout provider. The provider idempotency identity is derived

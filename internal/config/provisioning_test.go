@@ -7,8 +7,8 @@ import (
 
 func TestCapabilitySourceProfileAndCompatibility(t *testing.T) {
 	clearProfileEnv(t)
-	t.Setenv("TPAHUB_DATA_DIR", filepath.Join(t.TempDir(), "new"))
-	t.Setenv("TPAHUB_PROFILE", ProfileSelfHosted)
+	t.Setenv("TPARUN_DATA_DIR", filepath.Join(t.TempDir(), "new"))
+	t.Setenv("TPARUN_PROFILE", ProfileSelfHosted)
 	c, err := LoadServer()
 	if err != nil || c.CapabilitySource != CapabilitiesLocal {
 		t.Fatalf("fresh config: %+v %v", c, err)
@@ -36,13 +36,13 @@ func TestCapabilitySourceProfileAndCompatibility(t *testing.T) {
 			t.Fatalf("legacy selection: %s %v", source, err)
 		}
 	}
-	t.Setenv("TPAHUB_CAPABILITY_SOURCE", CapabilitiesHosted)
+	t.Setenv("TPARUN_CAPABILITY_SOURCE", CapabilitiesHosted)
 	c, err = LoadServer()
 	if err != nil || c.CapabilitySource != CapabilitiesHosted {
 		t.Fatal("explicit source lost", err)
 	}
-	t.Setenv("TPAHUB_CAPABILITY_SOURCE", "")
-	t.Setenv("TPAHUB_LOCAL_PROVISIONING_ENABLED", "false")
+	t.Setenv("TPARUN_CAPABILITY_SOURCE", "")
+	t.Setenv("TPARUN_LOCAL_PROVISIONING_ENABLED", "false")
 	c, err = LoadServer()
 	if err != nil || c.CapabilitySource != CapabilitiesHosted {
 		t.Fatal("legacy opt-out lost", err)
@@ -51,10 +51,10 @@ func TestCapabilitySourceProfileAndCompatibility(t *testing.T) {
 
 func TestLocalPolicyConfigurationValidation(t *testing.T) {
 	clearProfileEnv(t)
-	t.Setenv("TPAHUB_PROFILE", ProfileSelfHosted)
-	t.Setenv("TPAHUB_LOCAL_STORAGE_BYTES", "100000000000")
-	t.Setenv("TPAHUB_LOCAL_EGRESS_BYTES", "0")
-	t.Setenv("TPAHUB_LOCAL_PRIVATE_READ_ENABLED", "false")
+	t.Setenv("TPARUN_PROFILE", ProfileSelfHosted)
+	t.Setenv("TPARUN_LOCAL_STORAGE_BYTES", "100000000000")
+	t.Setenv("TPARUN_LOCAL_EGRESS_BYTES", "0")
+	t.Setenv("TPARUN_LOCAL_PRIVATE_READ_ENABLED", "false")
 	c, err := LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestLocalPolicyConfigurationValidation(t *testing.T) {
 	if err != nil || p.StorageBytes != 100000000000 || p.EgressBytes != 0 || p.PrivateRead {
 		t.Fatalf("configured policy: %+v %v", p, err)
 	}
-	for _, key := range []string{"TPAHUB_LOCAL_STORAGE_BYTES", "TPAHUB_LOCAL_EGRESS_BYTES"} {
+	for _, key := range []string{"TPARUN_LOCAL_STORAGE_BYTES", "TPARUN_LOCAL_EGRESS_BYTES"} {
 		for _, bad := range []string{"", "-1", "unlimited", "1.5", "9223372036854775807", "9223372036854775808"} {
 			t.Run(key+"/"+bad, func(t *testing.T) {
 				t.Setenv(key, bad)
@@ -73,7 +73,7 @@ func TestLocalPolicyConfigurationValidation(t *testing.T) {
 			})
 		}
 	}
-	for _, tc := range []struct{ key, value string }{{"TPAHUB_CAPABILITY_SOURCE", "remote"}, {"TPAHUB_CAPABILITY_SOURCE", "LOCAL"}, {"TPAHUB_LOCAL_PRIVATE_READ_ENABLED", "yes"}, {"TPAHUB_LOCAL_PRIVATE_READ_ENABLED", ""}} {
+	for _, tc := range []struct{ key, value string }{{"TPARUN_CAPABILITY_SOURCE", "remote"}, {"TPARUN_CAPABILITY_SOURCE", "LOCAL"}, {"TPARUN_LOCAL_PRIVATE_READ_ENABLED", "yes"}, {"TPARUN_LOCAL_PRIVATE_READ_ENABLED", ""}} {
 		t.Run(tc.key+tc.value, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 			if _, err := LoadServer(); err == nil {

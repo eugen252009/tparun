@@ -53,6 +53,11 @@ func (s *Store) EnableGlobalBootstrap(ctx context.Context, repositoryID, operato
 	return tx.Commit()
 }
 
+func (s *Store) RecordBootstrapPromotion(ctx context.Context, accountID, repositoryID, operator, artifactPath, sha256, version, promotedAt string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_audit_log(id,action,marker_id,account_id,repository_id,previous_state,previous_version,result,operator,created_at,details) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "bootstrap-promotion:"+sha256+":"+promotedAt, "bootstrap-promoted", "bootstrap-promotion", accountID, repositoryID, "", 0, "promoted", operator, promotedAt, "artifact="+artifactPath+";sha256="+sha256+";version="+version)
+	return err
+}
+
 func (s *Store) DisableGlobalBootstrap(ctx context.Context, operator, now string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

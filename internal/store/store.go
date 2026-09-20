@@ -22,7 +22,16 @@ import (
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
 type Job struct {
 	ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError, CleanupNextRetry string
+	GenerationID, VerificationState, VerifiedAt, VerificationError                                                               string
 	CleanupAttempts                                                                                                              int64
+}
+
+type PublicationArtifact struct {
+	Filename, Package, Version, Architecture string
+	UploadedSize, PublishedSize              int64
+	UploadedSHA256, PublishedSHA256          string
+	PublishedFilename                        string
+	VerificationState                        string
 }
 type Account struct {
 	ID, Email, PasswordHash, Status, CreatedAt, AccountClass string
@@ -74,16 +83,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 8 directly or opens the current supported schema.
+// Open initializes Schema 9 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit supported forward upgrade or validates Schema 8.
+// Migrate performs the explicit supported forward upgrade or validates Schema 9.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -422,7 +431,7 @@ func (s *Store) StorageHighWater(c context.Context, accountID, period string) (i
 }
 
 // LegacyTPAMockBillingEventPayload is a compatibility wrapper for the old
-// TPA Hub-only mock billing API. New callers must select a product explicitly.
+// TPA.run-only mock billing API. New callers must select a product explicitly.
 func (s *Store) LegacyTPAMockBillingEventPayload(c context.Context, accountID, period, eventType string) (string, error) {
 	return s.ProductMockBillingEventPayload(c, accountID, string(tpahubproduct.ProductID), period, eventType)
 }
@@ -1257,7 +1266,7 @@ func (s *Store) applyBillingProviderEvent(c context.Context, event billingProvid
 }
 
 // LegacyTPARecordMockBillingEvent is a compatibility wrapper for the old
-// TPA Hub-only mock billing API. New callers must select a product explicitly.
+// TPA.run-only mock billing API. New callers must select a product explicitly.
 func (s *Store) LegacyTPARecordMockBillingEvent(c context.Context, id, accountID, period, eventType, payload, createdAt string) error {
 	return s.RecordProductMockBillingEvent(c, id, accountID, string(tpahubproduct.ProductID), period, eventType, payload, createdAt)
 }
@@ -1523,7 +1532,7 @@ func (s *Store) CommitAuthorizedPublication(c context.Context, publication Autho
 	if _, err = tx.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, jobID, updatedAt); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(c, `UPDATE publish_jobs SET state='succeeded',error='',finished_at=?,cleanup_state='pending',cleanup_error='' WHERE id=? AND repository_id=? AND state='running'`, updatedAt, jobID, repositoryID)
+	result, err := tx.ExecContext(c, `UPDATE publish_jobs SET state='succeeded',error='',finished_at=?,cleanup_state='pending',cleanup_error='',generation_id=?,verification_state='match',verified_at=?,verification_error='' WHERE id=? AND repository_id=? AND state='running'`, updatedAt, jobID, updatedAt, jobID, repositoryID)
 	if err != nil {
 		return err
 	}
@@ -1711,7 +1720,7 @@ func (s *Store) TerminalJobIncomingPaths(c context.Context) ([]string, error) {
 
 func (s *Store) Job(c context.Context, id string) (Job, error) {
 	var j Job
-	e := s.db.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry)
+	e := s.db.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
 	return j, e
 }
 func (s *Store) Claim(c context.Context) (Job, error) {
@@ -1721,7 +1730,7 @@ func (s *Store) Claim(c context.Context) (Job, error) {
 	}
 	defer tx.Rollback()
 	var j Job
-	e = tx.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry)
+	e = tx.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
 	if e != nil {
 		return Job{}, e
 	}
@@ -1743,7 +1752,17 @@ func (s *Store) Finish(c context.Context, id, state, msg string) error {
 		cleanup = "pending"
 		nextRetry = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_, e := s.db.ExecContext(c, "UPDATE publish_jobs SET state=?,error=?,finished_at=?,cleanup_state=?,cleanup_error='',cleanup_attempts=0,cleanup_next_retry=? WHERE id=?", state, msg, time.Now().UTC().Format(time.RFC3339Nano), cleanup, nextRetry, id)
+	verification := ""
+	if state == "failed" {
+		verification = ",verification_state='mismatch',verification_error=?"
+	}
+	query := "UPDATE publish_jobs SET state=?,error=?,finished_at=?,cleanup_state=?,cleanup_error='',cleanup_attempts=0,cleanup_next_retry=?" + verification + " WHERE id=?"
+	args := []any{state, msg, time.Now().UTC().Format(time.RFC3339Nano), cleanup, nextRetry}
+	if state == "failed" {
+		args = append(args, msg)
+	}
+	args = append(args, id)
+	_, e := s.db.ExecContext(c, query, args...)
 	return e
 }
 

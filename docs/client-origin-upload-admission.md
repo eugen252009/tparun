@@ -10,7 +10,7 @@ Input archive SHA-256:
 This historical refinement used Schema 3. The current [Schema 5 contract](schema-upgrades.md)
 supersedes its lineage limitation; historical qualification below is not Schema 5 evidence.
 No deployment, production modification, TPA modification or commit was performed.
-Pre-change `go test ./cmd/tpahub ./internal/config` failed only the inherited
+Pre-change `go test ./cmd/tparun ./internal/config` failed only the inherited
 `TestPublicBootstrapAndVersionEndpoints` installer-ID assertion.
 
 ## Client origin invariant

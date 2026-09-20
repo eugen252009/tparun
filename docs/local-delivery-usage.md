@@ -22,7 +22,7 @@ scan, strict accounting lifecycle, grants, and dashboard queries.
 
 ## Configuration and composition
 
-`TPAHUB_DELIVERY_MODE` accepts exactly:
+`TPARUN_DELIVERY_MODE` accepts exactly:
 
 | Value | Egress observation | Local metrics | Required accounting/enforcement |
 |---|---|---|---|
@@ -52,10 +52,10 @@ is no new storage-enforcement toggle in this first extraction.
 ### Billing is independently optional
 
 ```sh
-TPAHUB_DELIVERY_MODE=metrics-only TPAHUB_BILLING_PROVIDER=none tpahub serve
+TPARUN_DELIVERY_MODE=metrics-only TPARUN_BILLING_PROVIDER=none tparun serve
 ```
 
-`TPAHUB_BILLING_PROVIDER=none` skips provider/rate-card validation and disables the
+`TPARUN_BILLING_PROVIDER=none` skips provider/rate-card validation and disables the
 server's billing-preview UI and purchase availability. It does **not** bypass the
 existing registration/provisioning guard. Purchases enabled with provider `none`
 are rejected. Default billing configuration is unchanged.

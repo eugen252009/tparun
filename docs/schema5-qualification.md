@@ -44,7 +44,7 @@ Log: `/tmp/schema5-rejection.log`.
 
 ## Fresh publication, APT and restart
 
-`TPA_DIR=/home/eugen/projekte/tpa TPAHUB_TEST_PORT=18176 sh tests/qualification.sh`
+`TPA_DIR=/home/eugen/projekte/tpa TPARUN_TEST_PORT=18176 sh tests/qualification.sh`
 passed with fresh Schema 5 state, real TPA/GPG, strict accounting, isolated CLI
 registration/login/repository creation/publication, public and private signed APT
 consumption, install/upgrade/downgrade/dependencies, reader revocation and restart.

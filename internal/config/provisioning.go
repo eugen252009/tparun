@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/eugen252009/tpahub/internal/provisioning"
@@ -27,7 +26,7 @@ func ResolveCapabilitySource(c Config) (string, error) {
 	case CapabilitiesLocal, CapabilitiesHosted, CapabilitiesLegacyLocal:
 		return c.CapabilitySource, nil
 	default:
-		return "", fmt.Errorf("unsupported TPAHUB_CAPABILITY_SOURCE %q", c.CapabilitySource)
+		return "", fmt.Errorf("unsupported TPARUN_CAPABILITY_SOURCE %q", c.CapabilitySource)
 	}
 }
 
@@ -55,10 +54,11 @@ func ValidateProvisioning(c Config) error {
 func loadLocalPolicy(c *Config) error {
 	p := provisioning.DefaultLocalPolicy()
 	for key, target := range map[string]*int64{
-		"TPAHUB_LOCAL_STORAGE_BYTES": &p.StorageBytes,
-		"TPAHUB_LOCAL_EGRESS_BYTES":  &p.EgressBytes,
+		"TPARUN_LOCAL_STORAGE_BYTES": &p.StorageBytes,
+		"TPARUN_LOCAL_EGRESS_BYTES":  &p.EgressBytes,
 	} {
-		if v, ok := os.LookupEnv(key); ok {
+		if HasCanonicalEnv(key) {
+			v := CanonicalEnv(key)
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
 				return fmt.Errorf("invalid %s: expected finite byte count", key)
@@ -66,9 +66,10 @@ func loadLocalPolicy(c *Config) error {
 			*target = n
 		}
 	}
-	if v, ok := os.LookupEnv("TPAHUB_LOCAL_PRIVATE_READ_ENABLED"); ok {
+	if HasCanonicalEnv("TPARUN_LOCAL_PRIVATE_READ_ENABLED") {
+		v := CanonicalEnv("TPARUN_LOCAL_PRIVATE_READ_ENABLED")
 		if v != "true" && v != "false" {
-			return fmt.Errorf("invalid TPAHUB_LOCAL_PRIVATE_READ_ENABLED: expected true or false")
+			return fmt.Errorf("invalid TPARUN_LOCAL_PRIVATE_READ_ENABLED: expected true or false")
 		}
 		p.PrivateRead = v == "true"
 	}

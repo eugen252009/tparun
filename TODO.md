@@ -1,4 +1,4 @@
-# TPA Hub Production Readiness Checklist
+# TPA.run Production Readiness Checklist
 
 ## Schema 5 release-cut status
 
@@ -32,14 +32,14 @@ present. Before implementation, follow capability discovery and reuse rules in
 ### Review Baseline
 
 - [ ] Restore a green current-revision test baseline. `go vet ./...` passed in this review; `go test -race ./...` failed on `TestPublicBootstrapAndVersionEndpoints`, and an isolated rerun reproduced the failure.
-- [ ] Resolve the installer/test repository identity mismatch: `cmd/tpahub/public_test.go:20` expects `748316a73ce0eff46f8888f956c5eeb0`, while `install.sh:9` selects `a0d8fd0f82235ee431c41581aa253ec8`. Establish the intended published repository and trust material before changing either side; a mismatch alone does not prove that the installer is broken.
+- [ ] Resolve the installer/test repository identity mismatch: `cmd/tparun/public_test.go:20` expects `748316a73ce0eff46f8888f956c5eeb0`, while `install.sh:9` selects `a0d8fd0f82235ee431c41581aa253ec8`. Establish the intended published repository and trust material before changing either side; a mismatch alone does not prove that the installer is broken.
 - [ ] Record qualification gaps explicitly: full Docker/APT qualification, historical-binary rollback qualification, deployed proxy/TLS settings, off-host backups, monitoring, and live Stripe configuration were not verified in this review.
 - [ ] Attach subsequent test and operational evidence to an exact source SHA, artifact identity, and environment. Do not reuse historical PASS claims as current release approval.
 
 ### L0.1 - Decide and Enforce the Nano Access Policy
 
 Priority: launch blocker. Depends on an explicit product-policy decision.
-References: `cmd/tpahub/plan.go:82-132`, `cmd/tpahub/auth.go:41-45`,
+References: `cmd/tparun/plan.go:82-132`, `cmd/tparun/auth.go:41-45`,
 `docs/migration-access-policy.md`, and historical P0.3 provisioning claims below.
 
 - [x] Decide whether Nano is permanently free, payment-gated, or a bounded trial. Hosted Nano is payment-gated after any active migration grant; local provisioning is an explicit persisted-grant mode. Document the decision before changing authorization; do not silently weaken an existing contract.
@@ -57,7 +57,7 @@ worker paths; a database-only grant assertion is insufficient.
 ### L0.2 - Protect All Customer Authentication Entry Points
 
 Priority: launch blocker for open signup/login.
-References: `cmd/tpahub/auth.go:48-104`, `cmd/tpahub/web.go:210-264`.
+References: `cmd/tparun/auth.go:48-104`, `cmd/tparun/web.go:210-264`.
 
 - [x] Apply consistent rate admission to API registration, API login, browser registration, and browser login before expensive password work. All four routes share the server-owned customer limiter.
 - [x] Define bounded limiter storage and concurrency behavior so an attacker cannot exhaust memory by varying identities or addresses. `authLimiter` serializes access and evicts old keys at its configured bound.
@@ -72,14 +72,14 @@ or unrestricted account creation through an alternate entry point.
 ### L0.3 - Bound Upload Time and Shared Resource Use
 
 Priority: launch blocker for untrusted multi-tenant publication.
-References: `cmd/tpahub/main.go:151`, `cmd/tpahub/main.go:425-553`,
-`cmd/tpahub/main.go:786-788`, `internal/tpa/tpa.go:110-134`.
+References: `cmd/tparun/main.go:151`, `cmd/tparun/main.go:425-553`,
+`cmd/tparun/main.go:786-788`, `internal/tpa/tpa.go:110-134`.
 
 - [x] Avoid holding the global staging mutex while reading an untrusted request body; preserve atomic capacity reservation and cleanup invariants when shortening the critical section. The body stream runs after physical reservation/incoming-directory creation; incomplete multipart reservations contribute observed partial bytes to same-account admission. `TestStalledUploadDoesNotBlockAnotherTenantUpload` proves a stalled tenant does not block another tenant upload.
-- [x] Define and enforce upload duration/body-read limits appropriate to supported package sizes, including cancellation and stalled clients. `TPAHUB_UPLOAD_READ_TIMEOUT` defaults to 15 minutes and is applied through the production HTTP-server constructor; `TestUploadReadTimeoutReleasesReservation` drives a stalled TCP body and verifies cleanup.
+- [x] Define and enforce upload duration/body-read limits appropriate to supported package sizes, including cancellation and stalled clients. `TPARUN_UPLOAD_READ_TIMEOUT` defaults to 15 minutes and is applied through the production HTTP-server constructor; `TestUploadReadTimeoutReleasesReservation` drives a stalled TCP body and verifies cleanup.
 - [ ] Test a real slow/stalled upload concurrently with another tenant's upload, repository creation, and publication worker. Observe that unrelated work progresses within a bounded time.
 - [ ] Verify timeout/disconnect cleanup releases reservations and temporary files without releasing authority for work still in use.
-- [x] Reduce multipart in-memory buffering from the configured maximum upload size; verify large admitted uploads do not require hundreds of MiB of application heap by default. Multipart parsing now has an 8 MiB memory threshold independent of `TPAHUB_MAX_UPLOAD_BYTES`; `TestMultipartUploadSpoolsFilesPastMemoryLimit` exercises the production upload path and verifies a larger file is spooled.
+- [x] Reduce multipart in-memory buffering from the configured maximum upload size; verify large admitted uploads do not require hundreds of MiB of application heap by default. Multipart parsing now has an 8 MiB memory threshold independent of `TPARUN_MAX_UPLOAD_BYTES`; `TestMultipartUploadSpoolsFilesPastMemoryLimit` exercises the production upload path and verifies a larger file is spooled.
 - [ ] Bound subprocess diagnostic capture and document process memory/CPU limits. Disk/tmpfs limits alone are not memory limits.
 - [ ] Review the package-processing trust boundary: the current namespace/tmpfs setup does not isolate all host files, environment secrets, or network access. Document and validate the intended containment rather than describing output limits as a complete security sandbox.
 
@@ -90,7 +90,7 @@ exhaust host resources within the documented service limits.
 
 Priority: launch blocker before relying on automated production deployments.
 References: `deploy/deploy-tpahub:47-56`, `deploy/deploy-tpahub:98-120`,
-`deploy/deploy-tpahub:143-214`, `cmd/tpahub/main.go:151-158`.
+`deploy/deploy-tpahub:143-214`, `cmd/tparun/main.go:151-158`.
 
 - [ ] Establish a write-quiescence boundary before the final rollback snapshot. Account for active HTTP requests, publication workers, payment callbacks, and usage accounting.
 - [ ] Prevent unaccounted customer/provider effects while a candidate is running but not yet accepted, or define a rollback strategy that preserves those effects.
@@ -107,7 +107,7 @@ reports every failed recovery assertion honestly.
 ### L0.5 - Qualify Real-Money Checkout and Activation
 
 Priority: paid-launch blocker. Depends on L0.1 and safe operational recovery.
-References: `cmd/tpahub/provider.go:49-72`, `cmd/tpahub/purchase.go`,
+References: `cmd/tparun/provider.go:49-72`, `cmd/tparun/purchase.go`,
 `internal/payments/stripe/stripe.go:33-45`.
 
 - [ ] Implement an explicitly supported production provider path; the existing code rejects live mode at multiple layers, so changing secrets is not sufficient.
@@ -144,7 +144,7 @@ term boundary without an avoidable access gap or duplicate charge.
 ### L1.2 - Complete Customer Purchase and Support Flows
 
 Priority: required before paid self-service launch.
-References: `cmd/tpahub/purchase.go:81`, `cmd/tpahub/web.go:96-134`,
+References: `cmd/tparun/purchase.go:81`, `cmd/tparun/web.go:96-134`,
 `docs/payment-checkout-recovery.md:28-46`.
 
 - [ ] Render persisted pending, active, failed/cancelled, expired, and reconciliation-required states on the account page, including useful next actions and validity dates.
@@ -162,7 +162,7 @@ active, and how a payment problem will be resolved.
 
 Priority: required before broad public launch.
 References: `internal/store/store.go:2331-2341`, `README.md:132`,
-`cmd/tpahub/credentials.go:19-64`.
+`cmd/tparun/credentials.go:19-64`.
 
 - [ ] Add server-enforced customer-session expiry with an explicit browser/CLI policy. Cookie expiry alone must not leave copied tokens valid indefinitely.
 - [ ] Test expiry at the exact boundary, logout, suspension, and reuse of a copied expired cookie as a bearer token.
@@ -194,8 +194,8 @@ service, not merely an integrity check on a local SQLite copy.
 ### L1.5 - Align Pricing, Terms, Tax, and Privacy
 
 Priority: required before collecting real money.
-References: `cmd/tpahub/templates/pricing.html`,
-`cmd/tpahub/templates/account.html`, `cmd/tpahub/templates/docs.html`,
+References: `cmd/tparun/templates/pricing.html`,
+`cmd/tparun/templates/account.html`, `cmd/tparun/templates/docs.html`,
 `privacy.html`, `legal.html`.
 
 - [ ] Publish one pre-signup offer describing price/currency, capacity, payment cadence, renewal, expiry, and test versus live availability.
@@ -213,7 +213,7 @@ the service customers receive. Engineering review is not legal certification.
 ### L1.6 - Make Releases and Operations Observable
 
 Priority: required for a supportable public service.
-References: `cmd/tpahub/main.go:253-260`, `deploy/deploy-tpahub:194-204`,
+References: `cmd/tparun/main.go:253-260`, `deploy/deploy-tpahub:194-204`,
 `deploy/deploy-tpahub:26-28`, `README.md:136-138`.
 
 - [ ] Expose immutable build/revision identity instead of `revision: unknown`, and validate the expected candidate during deployment.
@@ -287,7 +287,7 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | P0.1.7  | VERIFIED | Purchased cadence must be preserved                                                 | Persist and materialize exact cadence                                   | Monthly/annual tests                         | `internal/store/store.go`: `purchase_grant_snapshots.period_cadence` is persisted and materialized into grants; `internal/store/store_test.go`: `TestPurchaseGrantSnapshotIsPersistedAndActivatesExactTerms` asserts monthly cadence; `TestPurchaseGrantSnapshotsAreScopedToPurchase` asserts distinct monthly/annual cadence; `go test ./...` PASS |
 | P0.1.8  | DONE | Partial grant activation is forbidden                                               | Validate expected grant count/set before commit                         | Missing-capability transaction rollback test | Shared preflight checks exact count/digest and structural authority before recovery/activation; incomplete sets enter zero-access reconciliation: `TestRecoveryIncompleteCommercialAuthorityMatrix`; `TestCorruptedFinalizedSnapshotCannotActivatePartially`. |
 | P0.1.9  | VERIFIED | Payment success and grant activation are atomic                                     | Perform state transition and materialization in one transaction         | Failure injection inside transaction         | `internal/store/store.go`: `applyBillingProviderEvent` updates purchase, grants, compatibility projection, and provider-event state in one transaction; `internal/store/store_test.go`: `TestPaymentGrantActivationRollsBackPartialGrantSet` verifies an injected grant failure leaves the purchase pending and no partial grant; `go test ./...` PASS |
-| P0.1.10 | VERIFIED | Existing Standard/Pro state cannot leak into a Nano purchase                        | Replace inherited state with exact purchased snapshot semantics         | Legacy Standard/Pro → Nano test              | `cmd/tpahub/purchase_test.go`: `TestStripeTestNanoPurchaseAndWebhookActivatesOnce` seeds Standard-like storage/egress grants before webhook processing and asserts Nano offer, annual cadence, 5 MB storage, and 12 GB egress; `go test ./...` PASS |
+| P0.1.10 | VERIFIED | Existing Standard/Pro state cannot leak into a Nano purchase                        | Replace inherited state with exact purchased snapshot semantics         | Legacy Standard/Pro → Nano test              | `cmd/tparun/purchase_test.go`: `TestStripeTestNanoPurchaseAndWebhookActivatesOnce` seeds Standard-like storage/egress grants before webhook processing and asserts Nano offer, annual cadence, 5 MB storage, and 12 GB egress; `go test ./...` PASS |
 
 ---
 
@@ -296,13 +296,13 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 | ID     | Status | Requirement / Invariant                                                              | Required Work                                            | Required Verification            | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------------------ | -------------------------------------------------------- | -------------------------------- | -------- |
 | P0.2.1 | DONE    | A provider-payable checkout must always remain locally reconcilable                  | Define explicit checkout supersession policy             | Architecture review              | Complete authority activates; incomplete authority atomically retains correlated provider evidence and blocks another checkout: `TestRecoveryIncompleteCommercialAuthorityMatrix`; `TestStripeWebhookPersistsIncompleteAuthorityEvidenceWithoutActivation`; supersession remains covered by `TestPendingPurchaseIntentChangeGetsNewIdentity`. |
-| P0.2.2 | VERIFIED    | Changed purchase intent must not create paid-without-grant states                    | Reconcile, cancel, expire, or retain old checkout safely | Changed-intent E2E test          | `internal/store/store.go`: superseded purchases retain provider references and successful events materialize their snapshots; `cmd/tpahub/purchase_idempotency_test.go`: `TestPendingPurchaseIntentChangeGetsNewIdentity` processes the superseded checkout successfully and asserts no unreconcilable payment error; `go test ./...` PASS |
+| P0.2.2 | VERIFIED    | Changed purchase intent must not create paid-without-grant states                    | Reconcile, cancel, expire, or retain old checkout safely | Changed-intent E2E test          | `internal/store/store.go`: superseded purchases retain provider references and successful events materialize their snapshots; `cmd/tparun/purchase_idempotency_test.go`: `TestPendingPurchaseIntentChangeGetsNewIdentity` processes the superseded checkout successfully and asserts no unreconcilable payment error; `go test ./...` PASS |
 | P0.2.3 | DONE | Provider checkout and local purchase state must not silently diverge                 | Enforce provider/local lifecycle relationship            | State-machine test               | Complete commercial authority is preflighted before recovery finalization; every intrinsic snapshot defect enters durable `reconciliation_required` with correlated evidence and no grants: `TestRecoveryIncompleteCommercialAuthorityMatrix`; `TestReconciliationEvidencePrecedenceReplayAndRestart`; `TestProviderCheckoutProcessDeathRecoversExactPurchase`. |
-| P0.2.4 | VERIFIED | `UpdatePurchaseCheckout` must update exactly one expected pending purchase           | Check affected row count                                 | Unit/integration test            | `internal/store/store.go`: `UpdatePurchaseCheckout` checks `RowsAffected() == 1`; `cmd/tpahub/purchase_idempotency_test.go`: verifies a superseded purchase cannot be updated; `go test ./...` PASS |
+| P0.2.4 | VERIFIED | `UpdatePurchaseCheckout` must update exactly one expected pending purchase           | Check affected row count                                 | Unit/integration test            | `internal/store/store.go`: `UpdatePurchaseCheckout` checks `RowsAffected() == 1`; `cmd/tparun/purchase_idempotency_test.go`: verifies a superseded purchase cannot be updated; `go test ./...` PASS |
 | P0.2.5 | DONE | Success after local `failed` must have defined behavior                              | Define event precedence                                  | Out-of-order event test          | Success wins only for a provider-linked purchase with finalized validity/snapshots: `internal/store/store.go`; `internal/store/finalization_r3_test.go`. |
 | P0.2.6 | DONE | Success after local `expired` must have defined behavior                             | Define event precedence                                  | Out-of-order event test          | Provider-referenced expired purchases use the same finalized-term late-success rule; `TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase`. |
 | P0.2.7 | VERIFIED | Terminal event after success must not revoke paid grants unless explicitly supported | Protect paid terminal state                              | Success-then-expired/failed test | `internal/store/store.go`: terminal events mutate only pending purchases and paid purchases are marked processed without state changes; `internal/store/store_test.go`: `TestPaymentSuccessWinsOverEarlierFailedEventForPayablePurchase` sends a failed event after success and verifies the purchase remains paid; `go test ./...` PASS |
-| P0.2.8 | VERIFIED | Concurrent changed-intent requests must have deterministic results                   | Serialize/reconcile intent replacement                   | Concurrent purchase test         | `cmd/tpahub/main.go`/`cmd/tpahub/purchase.go`: per-server `purchaseMu` serializes the complete local/provider checkout transition; `cmd/tpahub/purchase_idempotency_test.go`: `TestConcurrentChangedIntentLeavesDeterministicPurchaseStates` verifies two concurrent intents produce one pending and one superseded purchase; `go test ./...` PASS |
+| P0.2.8 | VERIFIED | Concurrent changed-intent requests must have deterministic results                   | Serialize/reconcile intent replacement                   | Concurrent purchase test         | `cmd/tparun/main.go`/`cmd/tparun/purchase.go`: per-server `purchaseMu` serializes the complete local/provider checkout transition; `cmd/tparun/purchase_idempotency_test.go`: `TestConcurrentChangedIntentLeavesDeterministicPurchaseStates` verifies two concurrent intents produce one pending and one superseded purchase; `go test ./...` PASS |
 | P0.2.9 | DONE    | Paying any provider-returned valid checkout must never lose customer money           | Add full adversarial checkout race test                  | E2E provider simulation          | Provider success is either atomically activated from complete authority or durably correlated to zero-access reconciliation; unresolved reconciliation blocks duplicate checkout: `TestStripeWebhookPersistsIncompleteAuthorityEvidenceWithoutActivation`; `TestReconciliationEvidencePrecedenceReplayAndRestart`; valid superseded purchases remain independent in `TestReverseOrderPurchasesAreIndependentAndDeterministic`. |
 
 ---
@@ -311,12 +311,12 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                                            | Required Work                                            | Required Verification        | Evidence |
 | ------ | ------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------- | -------- |
-| P0.3.1 | VERIFIED | Hosted production accounts must not receive accidental permanent free grants       | Remove implicit permanent Nano provisioning              | Registration test            | `cmd/tpahub/auth.go`: `initialTPAGrants` returns no grants when billing purchases are enabled; `cmd/tpahub/web.go` uses the same policy; `cmd/tpahub/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants`; `go test ./...` PASS |
-| P0.3.2 | VERIFIED | New hosted accounts must not be labeled `legacy`                                   | Introduce explicit provisioning source/policy            | Persistence assertion        | `cmd/tpahub/auth.go`: hosted provisioning passes no legacy grants; `internal/store/store.go`: no entitlement row is created when no grants are supplied; `cmd/tpahub/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants` asserts no active grant and `sql.ErrNoRows` for entitlement; `go test ./...` PASS |
-| P0.3.3 | VERIFIED | Development/local mode provisioning must be explicit                               | Define development/self-host policy                      | Config test                  | `cmd/tpahub/auth.go`: `initialTPAGrants` explicitly selects local defaults only when billing is disabled; `cmd/tpahub/auth_test.go`: `TestLocalRegistrationExplicitlyProvisionsTPAGrants` verifies the local legacy grant policy; `go test ./...` PASS |
+| P0.3.1 | VERIFIED | Hosted production accounts must not receive accidental permanent free grants       | Remove implicit permanent Nano provisioning              | Registration test            | `cmd/tparun/auth.go`: `initialTPAGrants` returns no grants when billing purchases are enabled; `cmd/tparun/web.go` uses the same policy; `cmd/tparun/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants`; `go test ./...` PASS |
+| P0.3.2 | VERIFIED | New hosted accounts must not be labeled `legacy`                                   | Introduce explicit provisioning source/policy            | Persistence assertion        | `cmd/tparun/auth.go`: hosted provisioning passes no legacy grants; `internal/store/store.go`: no entitlement row is created when no grants are supplied; `cmd/tparun/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants` asserts no active grant and `sql.ErrNoRows` for entitlement; `go test ./...` PASS |
+| P0.3.3 | VERIFIED | Development/local mode provisioning must be explicit                               | Define development/self-host policy                      | Config test                  | `cmd/tparun/auth.go`: `initialTPAGrants` explicitly selects local defaults only when billing is disabled; `cmd/tparun/auth_test.go`: `TestLocalRegistrationExplicitlyProvisionsTPAGrants` verifies the local legacy grant policy; `go test ./...` PASS |
 | P0.3.4 | DONE | Historical migrated accounts must have explicit grandfathering semantics           | Separate legacy migration policy                         | Migration test               | Policy is a one-time six-calendar-month `migration` grant, never permanent legacy authorization: `docs/migration-access-policy.md`; `TestHistoricalAccountsReceiveOneBoundedNanoMigrationGrant`; `TestBoundedMigrationEligibilityIsTPAScopedAndActive`. |
 | P0.3.5 | DONE | Buying a product must not reduce pre-existing grandfathered rights unintentionally | Define precedence/merge behavior                         | Grandfathered purchase test  | Migration and purchase grant instances remain independent contributors in both orders; `TestMigrationAndPurchasesUseOnlyActiveEnabledContributors`; `TestPurchaseExpiryDoesNotResetOrRemoveMigration`; `TestPurchaseBeforeBoundedMigrationRemainsIndependent`. |
-| P0.3.6 | VERIFIED    | Production access policy must be explicit                                          | Choose no grant, disabled grant, or bounded trial        | Product policy documentation | Policy: hosted production accounts receive no product grant by default; access begins only after successful purchase activation. `cmd/tpahub/auth.go`: billing-enabled provisioning is fail-closed; `cmd/tpahub/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants`; `go test ./...` PASS |
+| P0.3.6 | VERIFIED    | Production access policy must be explicit                                          | Choose no grant, disabled grant, or bounded trial        | Product policy documentation | Policy: hosted production accounts receive no product grant by default; access begins only after successful purchase activation. `cmd/tparun/auth.go`: billing-enabled provisioning is fail-closed; `cmd/tparun/auth_test.go`: `TestHostedRegistrationDoesNotProvisionPermanentTPAGrants`; `go test ./...` PASS |
 | P0.3.7 | DONE | Paying customer access must not be less durable than non-paying access by accident | Validate post-purchase state against provisioning policy | Lifecycle test               | Historical paid grants are atomically materialized as immutable purchase instances before bounded migration replaces compatibility rows; active instances block duplicate checkout: `TestHistoricalPaidGrantSurvivesOverlappingBoundedMigration`. |
 
 ---
@@ -325,16 +325,16 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID      | Status | Requirement / Invariant                                                    | Required Work                              | Required Verification | Evidence |
 | ------- | ------ | -------------------------------------------------------------------------- | ------------------------------------------ | --------------------- | -------- |
-| P0.4.1  | VERIFIED | Publication artifacts must be immutable per generation                     | Introduce versioned artifact generations   | Source inspection     | `cmd/tpahub/main.go`: successful publication writes to `repos/<id>/generations/<job-id>` and readers resolve the active generation through `current`; prior generations are retained; `cmd/tpahub/main_test.go`: `TestRepositoryGenerationsUseActivePointer`; `go test ./...` PASS |
+| P0.4.1  | VERIFIED | Publication artifacts must be immutable per generation                     | Introduce versioned artifact generations   | Source inspection     | `cmd/tparun/main.go`: successful publication writes to `repos/<id>/generations/<job-id>` and readers resolve the active generation through `current`; prior generations are retained; `cmd/tparun/main_test.go`: `TestRepositoryGenerationsUseActivePointer`; `go test ./...` PASS |
 | P0.4.2  | DONE | Candidate generation must be complete before publication                   | Build full candidate generation first      | Publish test          | `verifyPublicationCandidate` requires signed Release architectures to exactly match `binary-*` trees and package stanzas (`Architecture: all` is accepted only in a valid declared index), in addition to indexes, checksums, and package history; `TestPublicationCandidateSemanticVerification`. |
 | P0.4.3  | DONE | Candidate repository must be verified before live swap                     | Add explicit verification boundary         | Failure test          | Verification checks the configured signer fingerprint and is time-bounded; `TestSuccessfulRunnerMalformedCandidatesNeverActivate`. |
-| P0.4.4  | VERIFIED | Live repository switch must remain atomic                                  | Preserve atomic directory exchange         | Qualification test    | `cmd/tpahub/main.go`: `atomicReplaceSymlink` uses Linux `renameat2(RENAME_EXCHANGE)` when replacing an active generation pointer and a single rename for first publication; readers resolve `current`; `go test ./...` PASS |
+| P0.4.4  | VERIFIED | Live repository switch must remain atomic                                  | Preserve atomic directory exchange         | Qualification test    | `cmd/tparun/main.go`: `atomicReplaceSymlink` uses Linux `renameat2(RENAME_EXCHANGE)` when replacing an active generation pointer and a single rename for first publication; readers resolve `current`; `go test ./...` PASS |
 | P0.4.5  | DONE | Active artifact generation must be durably recorded                        | Persist active generation identity         | DB assertion          | First-publication repository/generation directory entries and pointer swaps are fsynced before `Store.CommitPublication`; generation deletion is fsynced before persisted cleanup retry state is cleared. |
 | P0.4.6  | DONE | Job success must correspond to the same committed generation               | Bind job completion to active generation   | Crash/restart test    | Generation authority and job success share one SQLite transaction; `TestPostCommitFailureLeavesActiveGenerationAndJobConsistent`; `TestPublicationProcessDeathRecoveryMatrix`. |
-| P0.4.7  | VERIFIED | Old authoritative artifacts must not be deleted before durable replacement | Reorder publication cleanup                | Fault injection       | `cmd/tpahub/main.go`: old artifact cleanup runs only after candidate verification, active-pointer replacement, durable generation recording, and job-success binding; `go test ./...` PASS |
-| P0.4.8  | VERIFIED | Old generations may be garbage-collected only after durable success        | Add post-commit GC                         | Source/test evidence  | `cmd/tpahub/main.go`: `collectOldGenerations` runs only after durable activation/job-success binding and excludes the active generation; `cmd/tpahub/main_test.go`: `TestGenerationRetentionPreservesActiveAndRecentHistory`; `generation_cleanup_failure_test.go`: failure/retry and partial-GC tests preserve active authority |
+| P0.4.7  | VERIFIED | Old authoritative artifacts must not be deleted before durable replacement | Reorder publication cleanup                | Fault injection       | `cmd/tparun/main.go`: old artifact cleanup runs only after candidate verification, active-pointer replacement, durable generation recording, and job-success binding; `go test ./...` PASS |
+| P0.4.8  | VERIFIED | Old generations may be garbage-collected only after durable success        | Add post-commit GC                         | Source/test evidence  | `cmd/tparun/main.go`: `collectOldGenerations` runs only after durable activation/job-success binding and excludes the active generation; `cmd/tparun/main_test.go`: `TestGenerationRetentionPreservesActiveAndRecentHistory`; `generation_cleanup_failure_test.go`: failure/retry and partial-GC tests preserve active authority |
 | P0.4.9  | VERIFIED    | Startup must reconcile incomplete publication generations                  | Implement restart reconciliation           | Restart fault test    | Startup enumerates durable repository rows before filesystem roots, reconstructs unpublished roots, fails closed on missing recorded generations, and resumes persisted old-generation cleanup: `TestPublicationReconciliationEnumeratesDurableRepositoriesBeforeFilesystem`, `TestGenerationCleanupRetriesAutonomouslyAndAfterReopen`. |
-| P0.4.10 | VERIFIED | Startup must detect stale staging/work directories                         | Scan and reconcile stale state             | Startup cleanup test  | `cmd/tpahub/main.go`: startup removes transient entries under `work` while preserving durable incoming/job state; `cmd/tpahub/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `go test ./...` PASS |
+| P0.4.10 | VERIFIED | Startup must detect stale staging/work directories                         | Scan and reconcile stale state             | Startup cleanup test  | `cmd/tparun/main.go`: startup removes transient entries under `work` while preserving durable incoming/job state; `cmd/tparun/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `go test ./...` PASS |
 | P0.4.11 | DONE | Crash after candidate build must be recoverable                            | Fault-injection point                      | Restart assertion     | `TestPublicationProcessDeathRecoveryMatrix/candidate-built` uses subprocess `os.Exit`, reopens, reconciles, and publishes a successful retry. |
 | P0.4.12 | DONE | Crash before live swap must preserve previous repo                         | Fault-injection point                      | Restart assertion     | `TestPublicationProcessDeathRecoveryMatrix/before-live-swap` proves old durable authority and removes the failed orphan generation. |
 | P0.4.13 | DONE | Crash immediately after live swap must be recoverable                      | Fault-injection point                      | Restart assertion     | `TestPublicationProcessDeathRecoveryMatrix/after-live-swap`; `TestDurableGenerationControlsReadsDuringPointerSwapWindow`. |
@@ -351,14 +351,14 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                     | Required Work                                    | Required Verification | Evidence |
 | ------ | ------ | ----------------------------------------------------------- | ------------------------------------------------ | --------------------- | -------- |
-| P0.5.1 | VERIFIED | Suspended accounts must fail bearer authentication          | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: bearer token lookup joins active accounts; `cmd/tpahub/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
-| P0.5.2 | VERIFIED | Suspended accounts must fail browser session authentication | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: session lookup joins active accounts; `cmd/tpahub/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
-| P0.5.3 | VERIFIED | Suspended accounts must fail reader-token private access    | Join reader token → repository → account status  | Test                  | `internal/store/store.go`: `ReaderRepository` joins credentials through repository ownership and requires `accounts.status='active'`; `cmd/tpahub/auth_test.go`: reader access is denied after account suspension; `go test ./...` PASS |
-| P0.5.4 | VERIFIED | Reader authorization must verify token is not revoked       | Preserve token revocation validation             | Test                  | `internal/store/store.go`: reader query requires `revoked_at IS NULL`; `cmd/tpahub/auth_test.go`: `TestAuthenticationAndPrivateReader` revokes a credential and verifies 401; `go test ./...` PASS |
+| P0.5.1 | VERIFIED | Suspended accounts must fail bearer authentication          | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: bearer token lookup joins active accounts; `cmd/tparun/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
+| P0.5.2 | VERIFIED | Suspended accounts must fail browser session authentication | Preserve/verify active-account join              | Test                  | `internal/store/store.go`: session lookup joins active accounts; `cmd/tparun/auth_test.go`: `TestAccountStatusEnforcedAcrossAuthenticationPaths`; `go test ./...` PASS |
+| P0.5.3 | VERIFIED | Suspended accounts must fail reader-token private access    | Join reader token → repository → account status  | Test                  | `internal/store/store.go`: `ReaderRepository` joins credentials through repository ownership and requires `accounts.status='active'`; `cmd/tparun/auth_test.go`: reader access is denied after account suspension; `go test ./...` PASS |
+| P0.5.4 | VERIFIED | Reader authorization must verify token is not revoked       | Preserve token revocation validation             | Test                  | `internal/store/store.go`: reader query requires `revoked_at IS NULL`; `cmd/tparun/auth_test.go`: `TestAuthenticationAndPrivateReader` revokes a credential and verifies 401; `go test ./...` PASS |
 | P0.5.5 | VERIFIED | Reader authorization must verify repository ownership       | Validate ownership/customer relationship         | Test                  | `internal/store/store.go`: reader lookup joins credential to its repository and account; credential management uses ownership-scoped queries; `go test ./...` PASS |
-| P0.5.6 | VERIFIED | Reader authorization must verify required grant             | Check active private/read grant                  | Test                  | `cmd/tpahub/main.go`/`cmd/tpahub/credentials.go`: private delivery and credential management require the active `repository.read.private` grant; existing private-reader integration coverage; `go test ./...` PASS |
-| P0.5.7 | VERIFIED    | Queued jobs must not publish after account suspension       | Recheck account immediately before publication   | Worker test           | `cmd/tpahub/main.go`: `ensurePublishAuthorized` runs immediately before pointer activation; `cmd/tpahub/main_test.go`: `TestSuspendedAccountCannotRunQueuedPublication`, `TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication`, and `TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication`. |
-| P0.5.8 | DONE | Re-activating account must follow explicit policy           | Verify reader/worker behavior after reactivation | Test                  | Reactivation restores reader and queued-worker behavior only when grants remain authoritative; `cmd/tpahub/reactivation_r3_test.go`. |
+| P0.5.6 | VERIFIED | Reader authorization must verify required grant             | Check active private/read grant                  | Test                  | `cmd/tparun/main.go`/`cmd/tparun/credentials.go`: private delivery and credential management require the active `repository.read.private` grant; existing private-reader integration coverage; `go test ./...` PASS |
+| P0.5.7 | VERIFIED    | Queued jobs must not publish after account suspension       | Recheck account immediately before publication   | Worker test           | `cmd/tparun/main.go`: `ensurePublishAuthorized` runs immediately before pointer activation; `cmd/tparun/main_test.go`: `TestSuspendedAccountCannotRunQueuedPublication`, `TestSuspensionImmediatelyBeforeLiveSwapBlocksPublication`, and `TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication`. |
+| P0.5.8 | DONE | Re-activating account must follow explicit policy           | Verify reader/worker behavior after reactivation | Test                  | Reactivation restores reader and queued-worker behavior only when grants remain authoritative; `cmd/tparun/reactivation_r3_test.go`. |
 
 ---
 
@@ -384,16 +384,16 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID      | Status | Requirement / Invariant                                        | Required Work                        | Required Verification | Evidence |
 | ------- | ------ | -------------------------------------------------------------- | ------------------------------------ | --------------------- | -------- |
-| P0.7.1  | VERIFIED    | Small storage grants must not allow unbounded staging usage    | Add staging quota                    | Test                  | `cmd/tpahub/main.go`: upload staging is checked against the active publish storage grant before queueing; `cmd/tpahub/main_test.go`: `TestUploadStagingRespectsStorageGrant`; `go test ./...` PASS |
+| P0.7.1  | VERIFIED    | Small storage grants must not allow unbounded staging usage    | Add staging quota                    | Test                  | `cmd/tparun/main.go`: upload staging is checked against the active publish storage grant before queueing; `cmd/tparun/main_test.go`: `TestUploadStagingRespectsStorageGrant`; `go test ./...` PASS |
 | P0.7.2  | DONE | Outstanding incoming bytes must be bounded per account         | Track pending incoming bytes         | Test                  | Incoming reservations round files and directory/file-count metadata to physical filesystem allocation; `TestConcurrentUploadsUseRealReservationPath`. |
 | P0.7.3  | DONE | Outstanding work bytes must be bounded per account             | Track work bytes                     | Test                  | Commercial storage admission counts exact logical active/incoming payload bytes, while global and per-account transient staging use physical block/inode reservations; `TestHTTPUploadUsesLogicalBytesForCommercialQuota`, `TestPerAccountLogicalQuotaAndPhysicalTransientLimitAreIndependent`. |
-| P0.7.4  | VERIFIED | Clearly impossible uploads should be rejected before queueing  | Compare upload size against policy   | Request test          | `cmd/tpahub/main.go`: upload is rejected with 413 before `CreateJob` when grant capacity cannot contain it; `go test ./...` PASS |
-| P0.7.5  | VERIFIED | Pending jobs must count toward staging pressure                | Add queued-byte accounting           | Queue saturation test | `cmd/tpahub/main.go`: all bytes present under `incoming` are counted, including queued jobs, while the staging mutex prevents concurrent bypass; `go test ./...` PASS |
+| P0.7.4  | VERIFIED | Clearly impossible uploads should be rejected before queueing  | Compare upload size against policy   | Request test          | `cmd/tparun/main.go`: upload is rejected with 413 before `CreateJob` when grant capacity cannot contain it; `go test ./...` PASS |
+| P0.7.5  | VERIFIED | Pending jobs must count toward staging pressure                | Add queued-byte accounting           | Queue saturation test | `cmd/tparun/main.go`: all bytes present under `incoming` are counted, including queued jobs, while the staging mutex prevents concurrent bypass; `go test ./...` PASS |
 | P0.7.6  | DONE | Global staging usage must be bounded                           | Add global configured limit          | Test                  | Global admission uses physical filesystem allocation plus reservations; `TestConcurrentUploadsUseRealReservationPath`; `TestCapacityReservationReconstructsFromFilesystemAfterRestart`; `TestPerAccountStagingUsesPhysicalAllocation`. |
 | P0.7.7  | VERIFIED    | Global disk headroom must be protected                         | Add disk-free threshold              | ENOSPC/headroom test  | Upload, candidate, and repository creation reserve disk and inode resources; failed repository DB insertion removes and fsyncs its root, with DB-orphaned roots retried live/startup: `TestRepositoryCreationUsesResourceAdmissionAndRollsBackRoot`. |
-| P0.7.8  | VERIFIED    | Terminal jobs must remove incoming data                        | Cleanup success/failure/cancel paths | Test                  | `cmd/tpahub/main.go`: success/failure remove incoming; `cmd/tpahub/cleanup_recovery_test.go`: `TestStartupCleanupMatrixIsIdempotentAndProtectsAuthoritativeState`; `cleanup_failure_test.go`: terminal-removal failure and retry coverage. |
-| P0.7.9  | VERIFIED    | Terminal jobs must remove work data                            | Cleanup success/failure/cancel paths | Test                  | `cmd/tpahub/main.go`: `process` defers work/candidate removal; `cmd/tpahub/cleanup_failure_test.go`: `TestPartialCleanupResumesAfterRestart` proves interrupted cleanup retries idempotently. |
-| P0.7.10 | VERIFIED    | Startup must clean abandoned job directories                   | Startup reconciliation               | Restart test          | `cmd/tpahub/main.go`: `reconcileStagingState`; `cmd/tpahub/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `cmd/tpahub/cleanup_failure_test.go`: `TestPartialCleanupResumesAfterRestart` proves retry after partial removal |
+| P0.7.8  | VERIFIED    | Terminal jobs must remove incoming data                        | Cleanup success/failure/cancel paths | Test                  | `cmd/tparun/main.go`: success/failure remove incoming; `cmd/tparun/cleanup_recovery_test.go`: `TestStartupCleanupMatrixIsIdempotentAndProtectsAuthoritativeState`; `cleanup_failure_test.go`: terminal-removal failure and retry coverage. |
+| P0.7.9  | VERIFIED    | Terminal jobs must remove work data                            | Cleanup success/failure/cancel paths | Test                  | `cmd/tparun/main.go`: `process` defers work/candidate removal; `cmd/tparun/cleanup_failure_test.go`: `TestPartialCleanupResumesAfterRestart` proves interrupted cleanup retries idempotently. |
+| P0.7.10 | VERIFIED    | Startup must clean abandoned job directories                   | Startup reconciliation               | Restart test          | `cmd/tparun/main.go`: `reconcileStagingState`; `cmd/tparun/main_test.go`: `TestStartupCleansAbandonedStagingWorkspaces`; `cmd/tparun/cleanup_failure_test.go`: `TestPartialCleanupResumesAfterRestart` proves retry after partial removal |
 | P0.7.11 | DONE | Many queued large jobs cannot exhaust filesystem beyond policy | Adversarial queue test               | Disk-usage assertion  | Physical reservations, bounded multipart file count, and hard-bounded candidate tmpfs prevent sparse/metadata/candidate bypass; direct concurrency and ENOSPC tests cover denial. |
 
 ---
@@ -402,14 +402,14 @@ A checklist entry should only be marked `VERIFIED` if the evidence demonstrates 
 
 | ID     | Status | Requirement / Invariant                                                  | Required Work                     | Required Verification | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------ | --------------------------------- | --------------------- | -------- |
-| P0.8.1 | VERIFIED | Grant lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject error test     | `cmd/tpahub/main.go`: known grant denial is rate-limited and unexpected grant-authority failure returns 503; `cmd/tpahub/egress_enforcement_test.go`: injected authority failure is denied; `go test ./...` PASS |
+| P0.8.1 | VERIFIED | Grant lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject error test     | `cmd/tparun/main.go`: known grant denial is rate-limited and unexpected grant-authority failure returns 503; `cmd/tparun/egress_enforcement_test.go`: injected authority failure is denied; `go test ./...` PASS |
 | P0.8.2 | DONE | Usage lookup failure must not result in unrestricted download            | Conservative deny/throttle policy | Inject DB error test  | Durable delivery uncertainty blocks future authorization across restart until explicit recovery; `TestEgressUncertaintySurvivesRestartUntilExplicitRecovery`; `TestUnownedRepositoryUncertaintyFailsClosedAfterRestart`. |
 | P0.8.3 | DONE | Accounting persistence failure must be observable                        | Structured failure logging        | Test/log evidence     | Failed completion records durable uncertainty and logs repository/bytes/date context; `docs/egress-recovery.md`. |
-| P0.8.4 | VERIFIED | Missing grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Policy: missing grant is conservatively rate-limited; `cmd/tpahub/egress_enforcement_test.go`: `ErrGrantNotFound` coverage; `go test ./...` PASS |
-| P0.8.5 | VERIFIED    | Disabled grant behavior must be explicit                                 | Document deny/throttle policy     | Test                  | Policy: disabled grants are conservatively limited; `cmd/tpahub/egress_enforcement_test.go`: `TestEgressEnforcementUsesGrantLimit` injects `commerce.ErrGrantDisabled` and asserts the limited response. |
-| P0.8.6 | VERIFIED | Expired grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Expired/inactive grants follow the same conservative limited path through `grantDenied`; `cmd/tpahub/egress_enforcement_test.go`; `go test ./...` PASS |
+| P0.8.4 | VERIFIED | Missing grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Policy: missing grant is conservatively rate-limited; `cmd/tparun/egress_enforcement_test.go`: `ErrGrantNotFound` coverage; `go test ./...` PASS |
+| P0.8.5 | VERIFIED    | Disabled grant behavior must be explicit                                 | Document deny/throttle policy     | Test                  | Policy: disabled grants are conservatively limited; `cmd/tparun/egress_enforcement_test.go`: `TestEgressEnforcementUsesGrantLimit` injects `commerce.ErrGrantDisabled` and asserts the limited response. |
+| P0.8.6 | VERIFIED | Expired grant behavior must be explicit                                  | Document deny/throttle policy     | Test                  | Expired/inactive grants follow the same conservative limited path through `grantDenied`; `cmd/tparun/egress_enforcement_test.go`; `go test ./...` PASS |
 | P0.8.7 | VERIFIED    | Malformed period must fail conservatively                                | Validate period                   | Test                  | Bounded egress markers, settlement, recovery, and aggregation retain fixed-width nanosecond UTC instants with exact half-open comparisons; legacy daily buckets are counted conservatively at non-midnight boundaries: `TestEgressReservationUsesExactHalfOpenInstants`, `TestEgressWindowSortsFractionalInstantsAndConservativelyCountsLegacyDays`. |
-| P0.8.8 | VERIFIED | Private repository behavior on egress-authority failure must be explicit | Decide deny vs throttle           | Test                  | Policy: private repository delivery returns 503 when egress authority is unavailable; `cmd/tpahub/egress_enforcement_test.go` verifies this with valid private credentials; `go test ./...` PASS |
+| P0.8.8 | VERIFIED | Private repository behavior on egress-authority failure must be explicit | Decide deny vs throttle           | Test                  | Policy: private repository delivery returns 503 when egress authority is unavailable; `cmd/tparun/egress_enforcement_test.go` verifies this with valid private credentials; `go test ./...` PASS |
 
 ---
 
@@ -422,8 +422,8 @@ immutability, migration eligibility and timestamp parsing, package identity and
 history preservation, process/inode capacity and incoming-orphan cleanup,
 marker-specific egress recovery, superseded terminal events, commit-boundary
 expiry, and reactivation behavior. Direct evidence is in
-`internal/store/r4_regression_test.go`, `cmd/tpahub/r4_regression_test.go`, the
-package identity case in `cmd/tpahub/main_test.go`, and the updated egress
+`internal/store/r4_regression_test.go`, `cmd/tparun/r4_regression_test.go`, the
+package identity case in `cmd/tparun/main_test.go`, and the updated egress
 recovery test.
 
 # P0-R10 — Provider Recovery Commercial Authority
@@ -469,9 +469,9 @@ restart replay. Direct evidence is in
 
 | ID     | Status | Requirement / Invariant                                        | Required Work                                            | Required Verification     | Evidence |
 | ------ | ------ | -------------------------------------------------------------- | -------------------------------------------------------- | ------------------------- | -------- |
-| P1.1.1 | DONE — READY FOR INDEPENDENT REVIEW | `internal/commerce` must not define a concrete TPA Hub product | Move `ProductTPAHub` into product-owned package | Dependency inspection | `internal/tpahubproduct/product.go` owns `ProductID`; `internal/commerce/commerce.go` defines no concrete product identity; repository search confirms no `commerce.ProductTPAHub` references. |
+| P1.1.1 | DONE — READY FOR INDEPENDENT REVIEW | `internal/commerce` must not define a concrete TPA.run product | Move `ProductTPAHub` into product-owned package | Dependency inspection | `internal/tpahubproduct/product.go` owns `ProductID`; `internal/commerce/commerce.go` defines no concrete product identity; repository search confirms no `commerce.ProductTPAHub` references. |
 | P1.1.2 | DONE — READY FOR INDEPENDENT REVIEW | Generic APIs must reject empty product IDs | Add validation | Unit test | `internal/store/store.go`: product-aware account/grant, purchase, provider-submission, and mock-event APIs reject empty product IDs; `internal/store/p1_architecture_test.go`: focused missing-identity, atomic account, and mock round-trip tests. |
-| P1.1.3 | DONE — READY FOR INDEPENDENT REVIEW | Missing product ID must never silently default to TPA Hub | Remove fallback behavior | Product #2 test | Generic account/grant, purchase, provider-submission, and mock-event persistence no longer supplies a TPA Hub fallback or persists an empty identity; missing identity is rejected by the focused architecture tests. |
+| P1.1.3 | DONE — READY FOR INDEPENDENT REVIEW | Missing product ID must never silently default to TPA.run | Remove fallback behavior | Product #2 test | Generic account/grant, purchase, provider-submission, and mock-event persistence no longer supplies a TPA.run fallback or persists an empty identity; missing identity is rejected by the focused architecture tests. |
 | P1.1.4 | DONE — READY FOR INDEPENDENT REVIEW | Legacy TPA behavior must be explicitly named | Restrict compatibility wrappers to migration/legacy code | Source inspection | TPA-specific migration and compatibility projection logic references `tpahubproduct.ProductID`; generic product-aware APIs are explicit; legacy mock and entitlement wrappers are explicitly named (`LegacyTPA*`) and delegate to product-aware methods. |
 | P1.1.5 | DONE — READY FOR INDEPENDENT REVIEW | Shared persistence must not contain runtime TPA defaults | Remove/search generic store defaults | Repository search + tests | `CreateAccount`, `CreatePendingPurchase`, `SaveProviderSubmission`, and product-aware mock-event APIs no longer default or persist missing product identity; `SetLegacyTPAEntitlement` explicitly owns the TPA compatibility path, with current product selection otherwise explicit. |
 
@@ -481,7 +481,7 @@ restart replay. Direct evidence is in
 
 | ID     | Status | Requirement / Invariant                                                                    | Required Work                           | Required Verification    | Evidence |
 | ------ | ------ | ------------------------------------------------------------------------------------------ | --------------------------------------- | ------------------------ | -------- |
-| P1.2.1 | DONE — READY FOR INDEPENDENT REVIEW | Price must have one authoritative source | Consolidate rate card/offer price | Checkout amount test | `tpahubproduct.NanoOffer().AmountMinor` is the authoritative current Nano price; production rate-card and checkout amounts derive from it. Mock rate-card amounts remain explicitly virtual/test-only. `cmd/tpahub/production_rate_card_test.go` and `purchase_test.go` verify consistency. |
+| P1.2.1 | DONE — READY FOR INDEPENDENT REVIEW | Price must have one authoritative source | Consolidate rate card/offer price | Checkout amount test | `tpahubproduct.NanoOffer().AmountMinor` is the authoritative current Nano price; production rate-card and checkout amounts derive from it. Mock rate-card amounts remain explicitly virtual/test-only. `cmd/tparun/production_rate_card_test.go` and `purchase_test.go` verify consistency. |
 | P1.2.2 | DONE — READY FOR INDEPENDENT REVIEW | Cadence must have one authoritative source | Consolidate cadence | Offer snapshot test | `tpahubproduct.NanoCadence` is the current Nano cadence authority; `commerce.Offer.Cadence`, Nano grants, production rate-card cadence, fresh validity construction, and production finalization derive from or validate against it. Calendar cadence tests cover annual and monthly behavior; persisted purchase terms remain historical. |
 | P1.2.3 | DONE — READY FOR INDEPENDENT REVIEW | Grant limits must have one authoritative source | Consolidate limits | Grant assertion | `tpahubproduct.NanoOffer().Grants` owns current Nano capability limits; local grants and the Nano plan catalog derive from those terms, purchase snapshots persist them, and activation/enforcement use persisted grant terms.`
 | P1.2.4 | DONE — READY FOR INDEPENDENT RE-REVIEW | Offer versions must be immutable once purchased | Preserve captured version across historical lifecycle; add fixed version-keyed commercial snapshot | Historical purchase and drift-guard tests | `tpahubproduct.NanoOffer().Version` is captured on fresh Nano purchases and persisted as purchase authority; historical checkout/finalization preserves its captured version without comparing to today's offer; legacy rows remain explicitly `legacy-unversioned`, finalized version identity remains immutable; `TestHistoricalNanoPurchaseSurvivesCurrentOfferVersionChange` and the fixed `nano-v1` commercial snapshot guardrail cover the remediation.`
@@ -549,7 +549,7 @@ restart replay. Direct evidence is in
 | ID     | Status | Requirement / Invariant                                                                        | Required Work                        | Required Verification  | Evidence |
 | ------ | ------ | ---------------------------------------------------------------------------------------------- | ------------------------------------ | ---------------------- | -------- |
 | P1.7.1 | TODO   | Current deployment model must explicitly be single-instance if multi-instance safety is absent | Document invariant                   | Documentation          |          |
-| P1.7.2 | TODO   | One data directory may have only one active TPA Hub process                                    | Add process/data-dir lock            | Second-process test    |          |
+| P1.7.2 | TODO   | One data directory may have only one active TPA.run process                                    | Add process/data-dir lock            | Second-process test    |          |
 | P1.7.3 | TODO   | Authorization must be rechecked immediately before live publish switch                         | Recheck grant/account status         | Expiry/suspension test |          |
 | P1.7.4 | TODO   | Storage capacity must be rechecked immediately before live switch                              | Re-evaluate canonical storage policy | Race test              |          |
 | P1.7.5 | TODO   | Multi-instance support must not be implied until explicitly implemented                        | Documentation/config guard           | Review                 |          |
@@ -590,7 +590,7 @@ restart replay. Direct evidence is in
 
 | ID        | Status | Test                                     | Expected Invariant                           | Evidence |
 | --------- | ------ | ---------------------------------------- | -------------------------------------------- | -------- |
-| P2.PROD.1 | TODO   | TPA Hub + product #2 for same customer   | No cross-product mutation                    |          |
+| P2.PROD.1 | TODO   | TPA.run + product #2 for same customer   | No cross-product mutation                    |          |
 | P2.PROD.2 | TODO   | Product #2 with no storage/egress        | Paid lifecycle works without TPA semantics   |          |
 | P2.PROD.3 | TODO   | Product #3 with different metric/cadence | Shared layers require no TPA-specific change |          |
 | P2.PROD.4 | TODO   | Empty product ID                         | Generic API fails closed                     |          |
@@ -738,10 +738,10 @@ Commercial shape:
 | P5.5  | TODO   | Product #2 checkout uses shared payment layer              | Dependency inspection          |          |
 | P5.6  | TODO   | Product #2 payment activates exact product #2 grants       | E2E webhook test               |          |
 | P5.7  | TODO   | Product #2 usage does not require storage/egress semantics | Runtime test                   |          |
-| P5.8  | TODO   | TPA Hub grants remain untouched                            | Cross-product test             |          |
+| P5.8  | TODO   | TPA.run grants remain untouched                            | Cross-product test             |          |
 | P5.9  | TODO   | Stripe adapter requires no TPA/product-specific change     | Git diff / dependency evidence |          |
 | P5.10 | TODO   | `internal/tpa` requires no change                          | Git diff evidence              |          |
-| P5.11 | TODO   | TPA Hub repository runtime requires no change              | Git diff evidence              |          |
+| P5.11 | TODO   | TPA.run repository runtime requires no change              | Git diff evidence              |          |
 | P5.12 | TODO   | Shared commerce does not gain product #2 special cases     | Repository search              |          |
 
 ---
@@ -751,7 +751,7 @@ Commercial shape:
 | ID    | Status | Requirement / Invariant                                                              | Required Verification             | Evidence |
 | ----- | ------ | ------------------------------------------------------------------------------------ | --------------------------------- | -------- |
 | P6.1  | TODO   | A second redirect-style provider can be added as an adapter                          | Fake/provider implementation test |          |
-| P6.2  | TODO   | TPA Hub repository domain code requires no change                                    | Git diff evidence                 |          |
+| P6.2  | TODO   | TPA.run repository domain code requires no change                                    | Git diff evidence                 |          |
 | P6.3  | TODO   | Product #2 domain code requires no provider-specific change                          | Git diff evidence                 |          |
 | P6.4  | TODO   | Provider-specific webhook verification remains adapter-owned                         | Dependency review                 |          |
 | P6.5  | TODO   | Provider-specific tax mapping remains adapter-owned                                  | Dependency review                 |          |
@@ -777,8 +777,8 @@ Commercial shape:
 | P7.8  | TODO   | TPA signs using user-controlled GPG keys                          | Qualification test             |          |
 | P7.9  | TODO   | TPA performs atomic repository publication independently          | Qualification test             |          |
 | P7.10 | TODO   | Standard APT client can install from self-hosted output           | Offline APT qualification      |          |
-| P7.11 | TODO   | TPA Hub can disappear without breaking TPA workflows              | Architecture/repository review |          |
-| P7.12 | TODO   | Generic future APT cache remains independent from TPA and TPA Hub | Architecture review            |          |
+| P7.11 | TODO   | TPA.run can disappear without breaking TPA workflows              | Architecture/repository review |          |
+| P7.12 | TODO   | Generic future APT cache remains independent from TPA and TPA.run | Architecture review            |          |
 
 ---
 
@@ -807,7 +807,7 @@ Commercial shape:
 | P9.2  | DONE   | `go test -race ./...`                                         | PASS                             | 2026-09-04 local run PASS after final P0-R3 code changes. |
 | P9.3  | DONE   | `go vet ./...`                                                | PASS                             | 2026-09-04 local run PASS. |
 | P9.4  | DONE   | `git diff --check`                                            | PASS                             | 2026-09-04 local run PASS. |
-| P9.5  | DONE   | TPA Hub qualification suite                                   | PASS                             | `tests/qualification.sh`: `REAL APT SELF-HOSTING QUALIFIED`. |
+| P9.5  | DONE   | TPA.run qualification suite                                   | PASS                             | `tests/qualification.sh`: `REAL APT SELF-HOSTING QUALIFIED`. |
 | P9.6  | DONE   | Local bootstrap qualification                                 | PASS                             | `tests/local-bootstrap-qualification.sh`: PASS. |
 | P9.7  | DONE   | Bootstrap key qualification                                   | PASS                             | Fingerprint `42313D9F5F1F319AB5A18F6122380CEE20D731C6` matched. |
 | P9.8  | DONE   | Bootstrap qualification                                       | PASS                             | `tests/bootstrap-qualification.sh`: PASS. |
@@ -899,7 +899,7 @@ These items are intentionally not blockers unless a concrete requirement changes
 
 # Final Production Gate
 
-TPA Hub must not be considered production-ready until all of the following are true:
+TPA.run must not be considered production-ready until all of the following are true:
 
 | Gate                                                                           | Status | Evidence |
 | ------------------------------------------------------------------------------ | ------ | -------- |
@@ -913,7 +913,7 @@ TPA Hub must not be considered production-ready until all of the following are t
 | Repository publication is crash-recoverable                                    | TODO   |          |
 | Product #2 completes a full paid lifecycle without TPA-specific shared changes | TODO   |          |
 | TPA remains fully independent and self-hostable                                | TODO   |          |
-| All qualification suites pass                                                  | DONE   | TPA Hub and sibling TPA Go/race/vet, signed APT, dependency, bootstrap, key, and local-bootstrap runs passed 2026-09-04. |
+| All qualification suites pass                                                  | DONE   | TPA.run and sibling TPA Go/race/vet, signed APT, dependency, bootstrap, key, and local-bootstrap runs passed 2026-09-04. |
 | Final full re-audit finds no unresolved production blocker                     | TODO   |          |
 
 ---
@@ -924,16 +924,16 @@ Before declaring the architecture complete, answer each with concrete evidence.
 
 |  # | Question                                                          | Answer | Evidence |
 | -: | ----------------------------------------------------------------- | ------ | -------- |
-|  1 | Is TPA Hub product #1 on a genuinely reusable commerce boundary?  |        |          |
-|  2 | Can product #2 reuse commerce without knowing TPA Hub?            |        |          |
+|  1 | Is TPA.run product #1 on a genuinely reusable commerce boundary?  |        |          |
+|  2 | Can product #2 reuse commerce without knowing TPA.run?            |        |          |
 |  3 | Can product #2 use payments without knowing Stripe?               |        |          |
-|  4 | Can Stripe be replaced without rewriting TPA Hub domain logic?    |        |          |
+|  4 | Can Stripe be replaced without rewriting TPA.run domain logic?    |        |          |
 |  5 | Are product grants the actual runtime source of truth?            |        |          |
 |  6 | Are storage and egress enforcement consistent with grants?        |        |          |
 |  7 | Are product-scoped purchases and idempotency correct?             |        |          |
 |  8 | Are migrations safe, fail-closed, and repeatable?                 |        |          |
 |  9 | Is repository publication atomic and crash-recoverable?           |        |          |
-| 10 | Can TPA function independently if TPA Hub disappears permanently? |        |          |
+| 10 | Can TPA function independently if TPA.run disappears permanently? |        |          |
 | 11 | Is self-hosting still a first-class supported path?               |        |          |
 | 12 | Is the architecture still appropriate for a small real business?  |        |          |
 | 13 | Are there any unresolved production blockers?                     |        |          |

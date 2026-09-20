@@ -63,10 +63,10 @@ generation, strict accounting and rooted-file guards are unchanged.
 ## Policy and configuration
 
 ```
-TPAHUB_CAPABILITY_SOURCE=local|hosted-commercial|legacy-local
-TPAHUB_LOCAL_STORAGE_BYTES=5000000
-TPAHUB_LOCAL_EGRESS_BYTES=12000000000
-TPAHUB_LOCAL_PRIVATE_READ_ENABLED=true
+TPARUN_CAPABILITY_SOURCE=local|hosted-commercial|legacy-local
+TPARUN_LOCAL_STORAGE_BYTES=5000000
+TPARUN_LOCAL_EGRESS_BYTES=12000000000
+TPARUN_LOCAL_PRIVATE_READ_ENABLED=true
 ```
 
 The local source provisions the existing identities under product `tpa-hub`:
@@ -111,9 +111,9 @@ remain in the durable row; configuration is not consulted to reinterpret it.
 ## Initialization and compatibility
 
 ```
-TPAHUB_DATA_DIR=./data ./tpahub init
+TPARUN_DATA_DIR=./data ./tparun init
 # Existing TPA/GPG/signing configuration is still required.
-TPAHUB_DATA_DIR=./data ./tpahub serve
+TPARUN_DATA_DIR=./data ./tparun serve
 ```
 
 Fresh initialized self-hosted configuration selects local policy, metrics-only,
@@ -127,20 +127,20 @@ or duplicated persistent copy of resolved policy is needed.
 | Existing durable local/Nano/purchase/historical grants | unchanged; no automatic reprovisioning |
 | Unprofiled or legacy profile, no explicit source | old switch behavior: legacy-local only if local provisioning enabled and purchases disabled; otherwise hosted-commercial |
 | Fresh or already initialized self-hosted profile | new accounts use local policy by default; existing accounts stay unchanged |
-| Self-hosted with legacy `TPAHUB_LOCAL_PROVISIONING_ENABLED=false` and no explicit source | hosted-commercial, preserving provisioning opt-out |
+| Self-hosted with legacy `TPARUN_LOCAL_PROVISIONING_ENABLED=false` and no explicit source | hosted-commercial, preserving provisioning opt-out |
 | Explicit capability source | overrides profile/legacy provisioning selection, independent of billing/purchases |
 | Explicit `legacy-local` | intentional historical Nano-derived initial facts for new accounts |
 | Operator changes local limits | affects subsequently created accounts only |
 | Explicit reprovision | no new command, endpoint, or automatic conversion implemented |
 
-`TPAHUB_LOCAL_PROVISIONING_ENABLED` remains a compatibility selector, not a second
+`TPARUN_LOCAL_PROVISIONING_ENABLED` remains a compatibility selector, not a second
 veto on an explicit source. Setting an explicit local source with billing none
 allows registration even when that old switch is false. Selecting hosted-commercial
 with registration on still requires purchases enabled, retaining the no-unusable-
 public-registration guard. Billing none still rejects enabled purchases.
 
 Local provisioning does not imply disabled strict accounting or unlimited egress.
-For intentional local accounting, select `TPAHUB_DELIVERY_MODE=strict-accounted`
+For intentional local accounting, select `TPARUN_DELIVERY_MODE=strict-accounted`
 (and optionally the explicit enforcement selector). The same durable grant facts
 feed the existing strict strategy; none does not consult egress allowance at all.
 Changing measurement or billing does not change explicit local grant facts.
@@ -214,7 +214,7 @@ Final validation:
 | `go vet ./...` | passes |
 | `git diff --check` | passes |
 | `go test -race ./... -count=1 -timeout=60s -skip '^TestPublicBootstrapAndVersionEndpoints$' -json` | 330 top-level tests/examples pass; no additional skipped tests (packages without tests are reported separately by Go) |
-| `go test -race ./cmd/tpahub -run '^TestRepositoryEgressHTTPSemantics$' -count=10 -timeout=60s` | passes all ten repetitions; pre-change intermittent observation is not claimed fixed |
+| `go test -race ./cmd/tparun -run '^TestRepositoryEgressHTTPSemantics$' -count=10 -timeout=60s` | passes all ten repetitions; pre-change intermittent observation is not claimed fixed |
 
 Seven new top-level tests were added; existing Nano/purchase/strict tests were
 preserved. Only the existing self-hosted process test gained grant assertions and

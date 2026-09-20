@@ -204,7 +204,7 @@ All requested existing commands returned exit 0:
 ```
 bash -n deploy/deploy-tpahub
 ./tests/deploy-rollback-integration.sh
-go test ./cmd/tpahub -count=1
+go test ./cmd/tparun -count=1
 go test ./internal/store -count=1
 go test ./internal/commerce -count=1
 go test ./internal/payments/... -count=1

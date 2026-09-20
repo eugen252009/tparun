@@ -52,14 +52,14 @@ func LoadServer() (Config, error) {
 	case "", ProfileLegacy:
 		c.Profile = ProfileLegacy
 	case ProfileSelfHosted:
-		if os.Getenv("TPAHUB_DELIVERY_MODE") == "" {
+		if CanonicalEnv("TPARUN_DELIVERY_MODE") == "" {
 			c.DeliveryMode = DeliveryMetricsOnly
 		}
-		if c.BillingIntegration == "" && os.Getenv("TPAHUB_BILLING_PROVIDER") == "" {
+		if c.BillingIntegration == "" && CanonicalEnv("TPARUN_BILLING_PROVIDER") == "" {
 			c.BillingIntegration = BillingNone
 			c.BillingProvider = "none"
 		}
-		if _, ok := os.LookupEnv("TPAHUB_LOCAL_PROVISIONING_ENABLED"); !ok {
+		if !HasCanonicalEnv("TPARUN_LOCAL_PROVISIONING_ENABLED") {
 			c.LocalProvisioningEnabled = true
 		}
 		if c.CapabilitySource == "" {
@@ -69,13 +69,13 @@ func LoadServer() (Config, error) {
 			}
 		}
 		host, port, _ := net.SplitHostPort(c.Listen)
-		if _, ok := os.LookupEnv("TPAHUB_REGISTRATION_ENABLED"); !ok {
+		if !HasCanonicalEnv("TPARUN_REGISTRATION_ENABLED") {
 			c.RegistrationEnabled = host == "localhost" || net.ParseIP(host).IsLoopback()
 		}
-		if os.Getenv("TPAHUB_OPERATOR_RP_ID") == "" {
+		if CanonicalEnv("TPARUN_OPERATOR_RP_ID") == "" {
 			c.OperatorRelyingPartyID = "localhost"
 		}
-		if os.Getenv("TPAHUB_OPERATOR_ORIGIN") == "" {
+		if CanonicalEnv("TPARUN_OPERATOR_ORIGIN") == "" {
 			c.OperatorOrigin = "http://localhost:" + port
 		}
 	default:
@@ -143,7 +143,7 @@ func ResolveBillingMode(c Config) (string, error) {
 		case BillingNone, BillingHosted, BillingSimulator:
 			return c.BillingIntegration, nil
 		}
-		return "", fmt.Errorf("unsupported TPAHUB_BILLING %q (remote transport is not implemented)", c.BillingIntegration)
+		return "", fmt.Errorf("unsupported TPARUN_BILLING %q (remote transport is not implemented)", c.BillingIntegration)
 	}
 	switch c.BillingProvider {
 	case "none":

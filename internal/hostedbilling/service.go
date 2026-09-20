@@ -83,7 +83,7 @@ func (s *Service) Checkout(ctx context.Context, p commerce.Purchase, description
 	if p.ProductID == string(tpahubproduct.ProductID) {
 		key = "tpahub:purchase:" + p.ID + ":" + p.Provider + ":" + p.BillingEnvironment + ":checkout:v2"
 	}
-	checkout, err := s.Payment.CreateCheckout(ctx, payments.Operation{OperationID: p.ID, IdempotencyKey: key, CustomerID: commerce.CustomerID(p.AccountID), ProductID: commerce.ProductID(p.ProductID), Description: description, CustomerDescription: "TPA Hub account " + p.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": p.AccountID}, Currency: p.Currency, AmountMinor: p.AmountMinor, TaxClass: payments.TaxClass(p.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": p.ID}, SuccessURL: s.SuccessURL, CancelURL: s.CancelURL, Environment: payments.Environment(p.BillingEnvironment)})
+	checkout, err := s.Payment.CreateCheckout(ctx, payments.Operation{OperationID: p.ID, IdempotencyKey: key, CustomerID: commerce.CustomerID(p.AccountID), ProductID: commerce.ProductID(p.ProductID), Description: description, CustomerDescription: "TPA.run account " + p.AccountID, CustomerMetadata: map[string]string{"tpahub_account_id": p.AccountID}, Currency: p.Currency, AmountMinor: p.AmountMinor, TaxClass: payments.TaxClass(p.TaxClassification), Metadata: map[string]string{"tpahub_purchase_id": p.ID}, SuccessURL: s.SuccessURL, CancelURL: s.CancelURL, Environment: payments.Environment(p.BillingEnvironment)})
 	if err != nil {
 		return payments.CheckoutSession{}, err
 	}

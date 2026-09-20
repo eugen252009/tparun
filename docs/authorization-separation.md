@@ -1,6 +1,6 @@
 # Authorization separation
 
-TPA Hub keeps three authorities independent:
+TPA.run keeps three authorities independent:
 
 ```text
 account identity/session  -> who is authenticated

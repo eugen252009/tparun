@@ -1,16 +1,16 @@
 # Offline backup and restore boundary
 
 A supported backup is a **stopped, whole-instance** copy. There is no online
-SQLite-only backup command: stop TPA Hub, wait for process exit, and verify the
+SQLite-only backup command: stop TPA.run, wait for process exit, and verify the
 data-directory lock is released before copying.
 
 ## Required recovery set
 
 Keep these items together under one backup identity:
 
-- the complete `TPAHUB_DATA_DIR` (SQLite database, journals, profile,
+- the complete `TPARUN_DATA_DIR` (SQLite database, journals, profile,
   `repos/`, active generations, staging and queued publication input);
-- the exact TPA Hub binary and exact compatible TPA binary, each with a
+- the exact TPA.run binary and exact compatible TPA binary, each with a
   SHA-256 digest and build identity;
 - the environment/configuration needed to start the instance, including
   listener, limits, profile, delivery/enforcement and billing selections;
@@ -31,7 +31,7 @@ SQLite/profile files are `0600`, and signing material must remain private.
 2. Stop the service and restore the complete data directory, configuration,
    signing material and compatible TPA binary into private paths. Do not merge
    with an existing data directory.
-3. Set `TPAHUB_DATA_DIR` and all recorded non-secret configuration explicitly;
+3. Set `TPARUN_DATA_DIR` and all recorded non-secret configuration explicitly;
    restore secrets through the secret manager. Start the matching binary.
 4. Require startup schema/integrity validation and `GET /ready` before opening
    traffic. A schema mismatch or missing signing material is a failed restore,

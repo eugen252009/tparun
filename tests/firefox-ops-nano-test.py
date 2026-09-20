@@ -2,14 +2,14 @@
 """Marionette smoke fixture for a real local /ops candidate.
 
 The candidate URL and operator session are supplied out of band through
-TPAHUB_BROWSER_URL and TPAHUB_BROWSER_SESSION. The fixture intentionally
+TPARUN_BROWSER_URL and TPARUN_BROWSER_SESSION. The fixture intentionally
 asserts effective finite persisted entitlement values.
 """
 import json, os, socket, sys
 
-url = os.environ["TPAHUB_BROWSER_URL"].rstrip("/")
-session = os.environ["TPAHUB_BROWSER_SESSION"]
-expected = json.loads(os.environ.get("TPAHUB_BROWSER_EXPECTED", "{}"))
+url = os.environ["TPARUN_BROWSER_URL"].rstrip("/")
+session = os.environ["TPARUN_BROWSER_SESSION"]
+expected = json.loads(os.environ.get("TPARUN_BROWSER_EXPECTED", "{}"))
 host, port = os.environ.get("MARIONETTE", "127.0.0.1:2828").split(":")
 s = socket.create_connection((host, int(port)), 10)
 

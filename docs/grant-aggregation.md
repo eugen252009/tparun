@@ -2,7 +2,7 @@
 
 Runtime authorization uses only enabled grant rows active at the evaluation
 time. Historical `legacy` rows are audit-only after the bounded migration and
-never authorize TPA Hub access. `migration`, `purchase`, and explicit `local`
+never authorize TPA.run access. `migration`, `purchase`, and explicit `local`
 grants use the same activity rule.
 
 For one customer/product/capability:

@@ -1,28 +1,28 @@
 # Debian repository bootstrap
 
-TPA Hub uses two Debian package identities:
+TPA.run uses two Debian package identities:
 
-- `tpahub-release` (`Architecture: all`) establishes the repository source and
+- `tparun-release` (`Architecture: all`) establishes the repository source and
   archive keyring;
-- `tpahub` is the application package delivered by that repository.
+- `tparun` is the application package delivered by that repository.
 
 The bootstrap package contains:
 
 ```text
-/usr/share/keyrings/tpahub-archive-keyring.gpg
-/etc/apt/sources.list.d/tpahub.sources
+/usr/share/keyrings/tparun-archive-keyring.gpg
+/etc/apt/sources.list.d/tparun.sources
 ```
 
 The source uses Debian's deb822 format and scopes trust with:
 
 ```text
-Signed-By: /usr/share/keyrings/tpahub-archive-keyring.gpg
+Signed-By: /usr/share/keyrings/tparun-archive-keyring.gpg
 ```
 
 It contains no application binary, private key, Hub state, credentials or
-runtime dependency. It has no dependency on `tpahub` and does not invoke APT
+runtime dependency. It has no dependency on `tparun` and does not invoke APT
 from a maintainer script. Removing it removes only the source configuration
-and keyring; it never removes `tpahub` or application data. Purging has the
+and keyring; it never removes `tparun` or application data. Purging has the
 same package-owned cleanup semantics.
 
 ## Build
@@ -30,8 +30,8 @@ same package-owned cleanup semantics.
 The project-owned build is:
 
 ```sh
-SOURCE_DATE_EPOCH=0 packaging/tpahub-release/build.sh \
-  dist/tpahub-release_0.1.3_all.deb
+SOURCE_DATE_EPOCH=0 packaging/tparun-release/build.sh \
+  dist/tparun-release_0.1.3_all.deb
 ```
 
 The version changes when repository bootstrap configuration changes, such as
@@ -47,11 +47,11 @@ Download and install the bootstrap package, then let APT discover the
 application:
 
 ```sh
-curl -LO https://tpa.run/tpahub-release_0.1.3_all.deb
-sudo apt install ./tpahub-release_0.1.3_all.deb
+curl -LO https://tpa.run/tparun-release_0.1.3_all.deb
+sudo apt install ./tparun-release_0.1.3_all.deb
 sudo apt update
-apt policy tpahub
-sudo apt install tpahub
+apt policy tparun
+sudo apt install tparun
 ```
 
 Afterwards, application upgrades use normal Debian behavior:
@@ -62,7 +62,7 @@ sudo apt upgrade
 ```
 
 `install.sh` is only a convenience wrapper around this flow. It downloads or
-accepts a candidate-local `tpahub-release` package, verifies its SHA-256, then
+accepts a candidate-local `tparun-release` package, verifies its SHA-256, then
 runs the two explicit APT steps. It never recursively installs the application
 from the bootstrap package.
 

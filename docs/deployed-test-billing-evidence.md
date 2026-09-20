@@ -10,10 +10,10 @@ endpoint reported version `0.1.1`, startup `2026-09-08T15:51:52Z`, and revision
 The non-secret runtime billing settings were:
 
 ```text
-TPAHUB_BILLING_PROVIDER=stripe
-TPAHUB_BILLING_ENVIRONMENT=test
-TPAHUB_BILLING_RATE_CARD=production-nano-v1
-TPAHUB_BILLING_PURCHASES_ENABLED=true
+TPARUN_BILLING_PROVIDER=stripe
+TPARUN_BILLING_ENVIRONMENT=test
+TPARUN_BILLING_RATE_CARD=production-nano-v1
+TPARUN_BILLING_PURCHASES_ENABLED=true
 ```
 
 An isolated account was registered against the loopback service, then used to

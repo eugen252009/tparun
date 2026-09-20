@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Firefox layout smoke test against a locally running TPA Hub.
+"""Read-only Firefox layout smoke test against a locally running TPA.run.
 
 Requires selenium and Firefox. Does not submit forms or create accounts.
 Authenticated page contracts are covered by website_layout_test.go.

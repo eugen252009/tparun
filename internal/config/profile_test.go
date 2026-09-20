@@ -9,11 +9,11 @@ import (
 
 func clearProfileEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"TPAHUB_CAPABILITY_SOURCE", "TPAHUB_PROFILE", "TPAHUB_DELIVERY_MODE", "TPAHUB_EGRESS_ENFORCEMENT", "TPAHUB_BILLING", "TPAHUB_BILLING_PROVIDER", "TPAHUB_OPERATOR_RP_ID", "TPAHUB_OPERATOR_ORIGIN"} {
+	for _, k := range []string{"TPARUN_CAPABILITY_SOURCE", "TPARUN_PROFILE", "TPARUN_DELIVERY_MODE", "TPARUN_EGRESS_ENFORCEMENT", "TPARUN_BILLING", "TPARUN_BILLING_PROVIDER", "TPARUN_OPERATOR_RP_ID", "TPARUN_OPERATOR_ORIGIN"} {
 		t.Setenv(k, "")
 	}
 	// Empty boolean envs are explicit false. Remove them and restore on cleanup.
-	for _, k := range []string{"TPAHUB_LOCAL_STORAGE_BYTES", "TPAHUB_LOCAL_EGRESS_BYTES", "TPAHUB_LOCAL_PRIVATE_READ_ENABLED", "TPAHUB_LOCAL_PROVISIONING_ENABLED", "TPAHUB_REGISTRATION_ENABLED"} {
+	for _, k := range []string{"TPARUN_LOCAL_STORAGE_BYTES", "TPARUN_LOCAL_EGRESS_BYTES", "TPARUN_LOCAL_PRIVATE_READ_ENABLED", "TPARUN_LOCAL_PROVISIONING_ENABLED", "TPARUN_REGISTRATION_ENABLED"} {
 		value, exists := os.LookupEnv(k)
 		os.Unsetenv(k)
 		t.Cleanup(func() {
@@ -24,12 +24,12 @@ func clearProfileEnv(t *testing.T) {
 			}
 		})
 	}
-	t.Setenv("TPAHUB_LISTEN", "127.0.0.1:8080")
+	t.Setenv("TPARUN_LISTEN", "127.0.0.1:8080")
 }
 func TestInitializedSelfHostedProfileAndLegacyCompatibility(t *testing.T) {
 	clearProfileEnv(t)
 	dir := t.TempDir()
-	t.Setenv("TPAHUB_DATA_DIR", dir)
+	t.Setenv("TPARUN_DATA_DIR", dir)
 	legacy, err := LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -55,9 +55,9 @@ func TestInitializedSelfHostedProfileAndLegacyCompatibility(t *testing.T) {
 	if err := InitializeSelfHosted(dir); err == nil {
 		t.Fatal("initialization overwrote profile")
 	}
-	t.Setenv("TPAHUB_DELIVERY_MODE", DeliveryStrictAccounted)
-	t.Setenv("TPAHUB_BILLING", BillingHosted)
-	t.Setenv("TPAHUB_BILLING_PROVIDER", "stripe")
+	t.Setenv("TPARUN_DELIVERY_MODE", DeliveryStrictAccounted)
+	t.Setenv("TPARUN_BILLING", BillingHosted)
+	t.Setenv("TPARUN_BILLING_PROVIDER", "stripe")
 	explicit, err := LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestProfileInitializationHonorsPrivateModesUnderPermissiveUmask(t *testing.
 func TestProfileInitializationRejectsExistingStateAndMalformedProfiles(t *testing.T) {
 	clearProfileEnv(t)
 	dir := t.TempDir()
-	t.Setenv("TPAHUB_DATA_DIR", dir)
+	t.Setenv("TPARUN_DATA_DIR", dir)
 	db := filepath.Join(dir, "tpahub.db")
 	if err := os.WriteFile(db, []byte("existing-state"), 0600); err != nil {
 		t.Fatal(err)
@@ -111,8 +111,8 @@ func TestProfileInitializationRejectsExistingStateAndMalformedProfiles(t *testin
 }
 func TestSelfHostedProfileDoesNotOpenPublicRegistrationImplicitly(t *testing.T) {
 	clearProfileEnv(t)
-	t.Setenv("TPAHUB_PROFILE", ProfileSelfHosted)
-	t.Setenv("TPAHUB_LISTEN", "0.0.0.0:8080")
+	t.Setenv("TPARUN_PROFILE", ProfileSelfHosted)
+	t.Setenv("TPARUN_LISTEN", "0.0.0.0:8080")
 	c, err := LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestSelfHostedProfileDoesNotOpenPublicRegistrationImplicitly(t *testing.T) 
 	if c.RegistrationEnabled {
 		t.Fatal("public registration enabled implicitly")
 	}
-	t.Setenv("TPAHUB_REGISTRATION_ENABLED", "true")
+	t.Setenv("TPARUN_REGISTRATION_ENABLED", "true")
 	c, err = LoadServer()
 	if err != nil || !c.RegistrationEnabled {
 		t.Fatal("explicit registration not honored")

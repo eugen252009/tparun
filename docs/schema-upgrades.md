@@ -14,7 +14,7 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 | Newer than this binary | Reject: use compatible binary/backup | Same rejection, no mutation |
 | Missing/malformed metadata, unrelated or partial database | Reject without repair | Same rejection, no mutation |
 
-`tpahub schema` reports the supported database version. The configuration profile
+`tparun schema` reports the supported database version. The configuration profile
 version and application/package version are separate, unrelated numbers.
 `internal/store/schema.sql` defines the durable structures; `CurrentSchemaVersion`
 is the version authority. Fresh initialization installs this definition and records
@@ -70,7 +70,7 @@ The existing billing, provisioning, publication and accounting boundaries remain
 
 For disposable Schema 1–4 state: **stop Hub and all writers**, back up anything
 wanted, then manually move/remove the old state directory and initialize a fresh
-one with `TPAHUB_DATA_DIR=… tpahub init`, followed by `serve`. Configure signing,
+one with `TPARUN_DATA_DIR=… tparun init`, followed by `serve`. Configure signing,
 TLS and operator access normally. Hub never performs this destructive step.
 
 For supported release state, take a stopped, coherent whole-instance backup:

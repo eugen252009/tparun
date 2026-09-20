@@ -1,6 +1,6 @@
 # Capacity reservation policy
 
-TPA Hub serializes allocation decisions through `server.stagingMu` and uses
+TPA.run serializes allocation decisions through `server.stagingMu` and uses
 `reserveCapacity` before Hub-controlled filesystem growth. An upload releases
 that mutex only after its physical reservation and incoming directory exist;
 the untrusted body stream does not hold the global allocator lock. In-flight

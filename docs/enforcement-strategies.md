@@ -132,8 +132,8 @@ settlement timestamps and recovery semantics remain unchanged.
 ## Configuration and compatibility
 
 ```text
-TPAHUB_EGRESS_ENFORCEMENT=none
-TPAHUB_EGRESS_ENFORCEMENT=strict-accounted
+TPARUN_EGRESS_ENFORCEMENT=none
+TPARUN_EGRESS_ENFORCEMENT=strict-accounted
 ```
 
 When absent/empty, enforcement inherits the existing delivery preset:
@@ -149,12 +149,12 @@ For example:
 
 ```sh
 # Local metering + strict local enforcement; billing is still optional.
-TPAHUB_DELIVERY_MODE=metrics-only TPAHUB_EGRESS_ENFORCEMENT=strict-accounted \
-  TPAHUB_BILLING=none tpahub serve
+TPARUN_DELIVERY_MODE=metrics-only TPARUN_EGRESS_ENFORCEMENT=strict-accounted \
+  TPARUN_BILLING=none tparun serve
 
 # Explicitly unenforced, measured delivery, even with the old strict preset.
-TPAHUB_DELIVERY_MODE=strict-accounted TPAHUB_EGRESS_ENFORCEMENT=none \
-  TPAHUB_BILLING=none tpahub serve
+TPARUN_DELIVERY_MODE=strict-accounted TPARUN_EGRESS_ENFORCEMENT=none \
+  TPARUN_BILLING=none tparun serve
 ```
 
 The second example is an intentional operator change, not an upgrade default.

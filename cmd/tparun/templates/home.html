@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Debian package distribution for your fleet"}}</head>
+<body>
+{{template "header" "home"}}
+<main id="main" tabindex="-1">
+  <section class="hero">
+    <p class="eyebrow">TPA.run</p>
+    <h1>CLI-first package distribution for Debian systems.</h1>
+    <p class="lead">TPA.run is a CLI-first platform for building, managing, and distributing APT packages across Debian-based systems.</p>
+    <div class="hero-apt">
+      <h2><span translate="no">Nur APT</span></h2>
+      <pre><code># install
+sudo tparun add tpa.run/r/you/my-repo
+sudo apt update
+sudo apt install my-app</code></pre>
+    </div>
+    <div class="actions"><a class="button" href="#start">Get Started</a></div>
+  </section>
+
+  <section class="section quickstart" id="start" aria-labelledby="quickstart-heading">
+    <p class="eyebrow">Build, publish, install</p>
+    <h2 id="quickstart-heading">One package path, three steps.</h2>
+    <p>Use TPA or your existing build tooling to create a <code>.deb</code>, publish it to a TPA.run repository, and install it on your systems through standard APT tooling.</p>
+    <pre><code># build
+tpa build ./my-app
+
+# publish
+tparun stage ./my-app_1.0.0_amd64.deb
+tparun publish tpa.run/r/you/my-repo
+
+# install
+sudo tparun add tpa.run/r/you/my-repo
+sudo apt update
+sudo apt install my-app</code></pre>
+    <p class="fine">A TPA.run account is required to publish packages. Public repositories can be used without registration, while private repositories use repository-scoped credentials.</p>
+  </section>
+
+  <section class="section" aria-labelledby="why-heading">
+    <p class="eyebrow">Why packages</p>
+    <h2 id="why-heading">Small repositories can still be serious infrastructure.</h2>
+    <p>You do not need a huge software catalog to benefit from package-based distribution.</p>
+    <p>A small repository can give internal tools, personal infrastructure, utilities, and custom applications a repeatable installation and update path through standard APT tooling.</p>
+    <p>For workflows that need more than installing a single package, tools such as Mema can use the same package infrastructure to provision runtimes and development tooling in a reproducible way.</p>
+    <p>Nano is designed for exactly these smaller repositories: a handful of packages, proper repository metadata, signed distribution, and a standard APT workflow without maintaining a large software catalog.</p>
+    <p><a href="/nano">See Nano resources and limits →</a></p>
+  </section>
+
+  <section class="section" aria-labelledby="trust">
+
+  <section class="section" aria-labelledby="trust">
+    <p class="eyebrow">Repository trust</p>
+    <h2 id="trust">Install TPA.run.</h2>
+    <p>Download the repository bootstrap package and let APT handle the rest.</p>
+    <pre><code>curl -fL https://tpa.run/tparun-bootstrap.deb \
+  -o tparun-bootstrap.deb
+sudo apt install ./tparun-bootstrap.deb
+sudo apt update
+sudo apt install tparun</code></pre>
+    <p class="fine">Bootstrap package SHA-256: <span class="fingerprint">4ed23aaa0995432f3612c083ff9c5a4b960632ba1eb680e815fb5faf57b921cd</span><br>Signing fingerprint: <span class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</span></p>
+    <p><a href="/docs#install">Prefer manual repository setup? View the deb822 instructions →</a></p>
+  </section>
+
+  <section class="section" aria-labelledby="ecosystem-heading">
+    <p class="eyebrow">Discover public tools</p>
+    <h2 id="ecosystem-heading">Useful tools built on the same package workflow.</h2>
+    <p>Public repositories can be discovered and used without registering.</p>
+    <div class="card-grid">
+      <article class="card"><h3>Mema</h3><p>Mema provisions developer runtimes and tools through packages instead of one-off installation scripts. It helps make development environments repeatable while keeping the underlying package workflow visible.</p><pre><code>mema list</code></pre></article>
+      <article class="card"><h3>Bloom</h3><p>Bloom provides reusable capabilities and tooling that can be discovered and composed for more specialized workflows. It builds on the same infrastructure but is not required to use TPA.run.</p><pre><code>bloom search "package discovery"</code></pre></article>
+    </div>
+  </section>
+</main>
+{{template "footer"}}
+</body>
+</html>

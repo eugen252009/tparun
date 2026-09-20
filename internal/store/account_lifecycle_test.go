@@ -179,6 +179,8 @@ func TestSchema7To8LifecycleMigrationPreservesAccountState(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tpahub.db")
 	legacyDDL := strings.Replace(schemaSQL, ",membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal'))", "", 1)
+	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
+	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +202,7 @@ func TestSchema7To8LifecycleMigrationPreservesAccountState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if CurrentSchemaVersion() != 8 {
+	if CurrentSchemaVersion() != 9 {
 		t.Fatalf("schema=%d", CurrentSchemaVersion())
 	}
 	a, err := s.AccountByID(context.Background(), "legacy")

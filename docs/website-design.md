@@ -2,7 +2,7 @@
 
 ## Scope
 
-The website is a presentation layer over the existing TPA Hub routes and
+The website is a presentation layer over the existing TPA.run routes and
 contracts. Template and stylesheet changes should remain separate from product
 behavior, storage, authentication, and deployment changes.
 
@@ -18,9 +18,9 @@ Public pages answer distinct questions:
 
 ## Shared implementation
 
-`cmd/tpahub/templates/layout.html` owns the head, public navigation, operator
+`cmd/tparun/templates/layout.html` owns the head, public navigation, operator
 header, footer, Nano resource summary, and onboarding release notice.
-`cmd/tpahub/static/site.css` owns design tokens and components. No frontend
+`cmd/tparun/static/site.css` owns design tokens and components. No frontend
 framework, external font, CDN, or new runtime JavaScript dependency is needed.
 
 Use semantic sections, one h1 and one main per page, explicit form labels, and
@@ -47,8 +47,8 @@ pages, unauthenticated redirects, form contracts, and escaped error messages.
 Existing auth, operator, resource formatting and Bootstrap tests remain relevant.
 
 ```sh
-go test ./cmd/tpahub -run 'TestWebsite|TestCentralLegal|TestOps|TestOperator|TestBootstrap'
-go test -race ./cmd/tpahub -run 'TestWebsite|TestCentralLegal|TestOps|TestOperator|TestBootstrap'
+go test ./cmd/tparun -run 'TestWebsite|TestCentralLegal|TestOps|TestOperator|TestBootstrap'
+go test -race ./cmd/tparun -run 'TestWebsite|TestCentralLegal|TestOps|TestOperator|TestBootstrap'
 go vet ./...
 node --test tests/ops-resource-test.js
 ```
@@ -61,8 +61,8 @@ For browser checks, build and run the ordinary server with a disposable local
 data directory (never point the preview at production data):
 
 ```sh
-go build -o /tmp/tpahub-website-preview ./cmd/tpahub
-TPAHUB_LISTEN=127.0.0.1:18093 TPAHUB_DATA_DIR="$(mktemp -d)" \
+go build -o /tmp/tpahub-website-preview ./cmd/tparun
+TPARUN_LISTEN=127.0.0.1:18093 TPARUN_DATA_DIR="$(mktemp -d)" \
   /tmp/tpahub-website-preview serve
 ```
 

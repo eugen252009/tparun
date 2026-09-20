@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func TestDeliveryModeDefaultsAndValidation(t *testing.T) {
-	t.Setenv("TPAHUB_DELIVERY_MODE", "")
+	t.Setenv("TPARUN_DELIVERY_MODE", "")
 	if got := Load().DeliveryMode; got != DeliveryStrictAccounted {
 		t.Fatalf("default=%q", got)
 	}
@@ -17,7 +17,7 @@ func TestDeliveryModeDefaultsAndValidation(t *testing.T) {
 			t.Fatalf("accepted %q", mode)
 		}
 	}
-	t.Setenv("TPAHUB_DELIVERY_MODE", DeliveryUnmetered)
+	t.Setenv("TPARUN_DELIVERY_MODE", DeliveryUnmetered)
 	if got := Load().DeliveryMode; got != DeliveryUnmetered {
 		t.Fatalf("mode=%q", got)
 	}

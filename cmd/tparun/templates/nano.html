@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "Nano"}}</head>
+<body>
+{{template "header" "pricing"}}
+<main id="main" class="narrow" tabindex="-1">
+  <p class="eyebrow">Choosing Nano</p>
+  <h1>Small packages.<br>A useful starting point.</h1>
+  <p class="lead">Use hosted storage for the bytes that need a home—not necessarily every upstream application payload.</p>
+  <div class="resource-box">{{template "nano-resources"}}<p>Nano suits lightweight packages and small repositories. Larger binaries may not fit.</p></div>
+  <section class="section">
+    <h2>Ordinary packages work here.</h2>
+    <p>Publish your own <code>.deb</code> files using the CLI. Recipes are optional, and ordinary Debian packages work here.</p>
+    <p>If a package exceeds your available storage or technical publication limits, it cannot be published. Standard and Pro are planned, not currently available upgrades.</p>
+  </section>
+  <section class="section">
+    <h2>Recipes can keep hosting small.</h2>
+    <p><a href="https://github.com/coffeemakerstudio/mema">Mema</a> is an independent installation and version-management tool. A recipe can tell Mema how to retrieve software from its existing upstream.</p>
+    <ol class="onboarding">
+      <li><b>Host the recipe</b>TPA.run distributes the small signed Debian recipe package.</li>
+      <li><b>Retrieve the software</b>Mema downloads the application from its upstream source.</li>
+      <li><b>Retrieve from the upstream</b>Mema uses that source's availability and trust model for the application download; TPA.run hosts the recipe package.</li>
+    </ol>
+    <p>This keeps a large application payload at its existing upstream. The Mema runtime is a separate package installed on the consumer's machine.</p>
+  </section>
+  <section class="section">
+    <h2>Estimate with your own artifacts.</h2>
+    <p>At roughly 2 KB per recipe package, 5 MB is approximately 2,500 packages before other published payloads. Real packages vary, and the runtime also needs space if you host it yourself.</p>
+    <p class="estimate-note">Illustration only—not a package-count promise. Download frequency, APT metadata, caching, and package sizes affect egress.</p>
+    <div class="actions"><a class="button" href="/docs#publish">Read the publishing guide</a><a href="/pricing">Back to plans →</a></div>
+  </section>
+</main>
+{{template "footer"}}
+</body>
+</html>

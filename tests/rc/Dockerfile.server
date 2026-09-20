@@ -1,0 +1,7 @@
+FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl dpkg-dev gnupg python3 sqlite3 >/dev/null && rm -rf /var/lib/apt/lists/*
+COPY candidate.deb /candidate.deb
+RUN dpkg -i /candidate.deb >/tmp/candidate-install.log 2>&1 || (apt-get update -qq && apt-get install -f -y -qq >/tmp/candidate-deps.log 2>&1)
+RUN test -x /usr/bin/tparun && dpkg --audit && apt-get check
+ENTRYPOINT ["/bin/sh", "-c"]

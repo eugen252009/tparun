@@ -1,32 +1,32 @@
-# TPA Hub
+# TPA.run
 
-**Persistent release baseline: Schema 8 (upgradable from Schema 5/6/7).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+**Current release baseline: Schema 9 (upgradable from Schema 5/6/7).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
 
-TPA Hub is a CLI-first service for publishing and serving public or private APT repositories. **TPA Hub uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
+TPA.run is a CLI-first service for publishing and serving public or private APT repositories. **TPA.run uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
-TPA Hub now has a small public website at `https://tpa.run`. It explains the CLI-first workflow and Nano availability; repository and package management remain in `tpahub` plus normal `apt` commands.
+TPA.run now has a small public website at `https://tpa.run`. It explains the CLI-first workflow and Nano availability; repository and package management remain in `tparun` plus normal `apt` commands.
 
-## Install TPA Hub
+## Install TPA.run
 
 The public deployment marker is available at `https://tpa.run/version` and returns the service version, startup time, and revision marker. Repository trust is configured per repository by the client.
 
 The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -LO https://tpa.run/tpahub-release_0.1.3_all.deb
-sudo apt install ./tpahub-release_0.1.3_all.deb
+curl -LO https://tpa.run/tparun-release_0.1.4_all.deb
+sudo apt install ./tparun-release_0.1.4_all.deb
 sudo apt update
-sudo apt install tpahub
+sudo apt install tparun
 ```
 
-The `tpahub-release` package contains only the public repository keyring and
+The `tparun-release` package contains only the public repository keyring and
 scoped `.sources` definition. It does not contain the application, initialize
 Hub state, or invoke APT recursively. Future application updates use ordinary
 `sudo apt update && sudo apt upgrade`. The convenience `install.sh` wrapper
 uses the same bootstrap path and verifies the bootstrap package checksum before
 installing it. Candidate qualification may override the package path and
-checksum with `TPAHUB_RELEASE_PACKAGE_PATH` and
-`TPAHUB_RELEASE_PACKAGE_SHA256`; both are required together. See
+checksum with `TPARUN_RELEASE_PACKAGE_PATH` and
+`TPARUN_RELEASE_PACKAGE_SHA256`; both are required together. See
 [Debian bootstrap packaging](docs/debian-bootstrap.md). The public bootstrap
 repository also carries the qualified `mema` and `bloom` packages used by the
 [clean Debian qualification](docs/debian-bootstrap-qualification.md).
@@ -37,11 +37,11 @@ Build TPA separately and make it available on `PATH`, or set `TPA_BIN`:
 
 ```sh
 (cd ../tpa && go build -o /tmp/tpa .)
-go build -o tpahub ./cmd/tpahub
+go build -o tparun ./cmd/tparun
 # Once, for a NEW empty data directory:
-TPAHUB_DATA_DIR=./data ./tpahub init
+TPARUN_DATA_DIR=./data ./tparun init
 # Configure your existing repository signing identity as usual, then:
-TPA_BIN=/tmp/tpa TPAHUB_DATA_DIR=./data ./tpahub serve
+TPA_BIN=/tmp/tpa TPARUN_DATA_DIR=./data ./tparun serve
 ```
 
 The initialized self-hosted profile selects **operator-local capabilities +
@@ -52,9 +52,9 @@ needed for provisioning. Existing signing/TPA prerequisites still apply.
 
 Local finite defaults preserve the historical bounds: 5,000,000 storage bytes,
 12,000,000,000 annual egress bytes and private-read enabled. Operators can select
-`TPAHUB_CAPABILITY_SOURCE=local|hosted-commercial|legacy-local` and configure
-`TPAHUB_LOCAL_STORAGE_BYTES`, `TPAHUB_LOCAL_EGRESS_BYTES` and
-`TPAHUB_LOCAL_PRIVATE_READ_ENABLED=true|false`. Changes affect new accounts only;
+`TPARUN_CAPABILITY_SOURCE=local|hosted-commercial|legacy-local` and configure
+`TPARUN_LOCAL_STORAGE_BYTES`, `TPARUN_LOCAL_EGRESS_BYTES` and
+`TPARUN_LOCAL_PRIVATE_READ_ENABLED=true|false`. Changes affect new accounts only;
 existing grants are never silently replaced. Zero is not unlimited. See
 [local capability provisioning](docs/local-capability-provisioning.md), [authorization separation](docs/authorization-separation.md), and [SSH account login](docs/ssh-login.md).
 
@@ -64,7 +64,7 @@ schema. See [commercial composition](docs/commercial-composition.md) for explici
 profile overrides, billing selection and authority boundaries.
 
 Local publication currently requires Linux, the util-linux `unshare`, `mount`,
-and `prlimit` commands, and enabled unprivileged user namespaces. TPA Hub runs
+and `prlimit` commands, and enabled unprivileged user namespaces. TPA.run runs
 each TPA publication in a private user/mount namespace with a fixed-size
 `tmpfs`; publication fails closed if that sandbox cannot be created. The data
 directory and its work/candidate paths must remain on the same filesystem so a
@@ -75,60 +75,61 @@ initialized self-hosted defaults are described above. Explicit environment value
 override profile defaults:
 
 ```text
-TPAHUB_LISTEN                 127.0.0.1:8080
-TPAHUB_DATA_DIR               ./data
+TPARUN_LISTEN                 127.0.0.1:8080
+TPARUN_DATA_DIR               ./data
 TPA_BIN                       tpa
 GNUPGHOME                     optional GPG home
-TPAHUB_GPG_FINGERPRINT        full signing fingerprint
-TPAHUB_PUBLISH_TIMEOUT        10m
-TPAHUB_UPLOAD_READ_TIMEOUT    15m
-TPAHUB_MAX_UPLOAD_BYTES       512 MiB
-TPAHUB_MAX_STAGING_BYTES      4 GiB
-TPAHUB_MAX_CANDIDATE_INODES   65536 (filesystem inode count)
-TPAHUB_MIN_DISK_FREE_BYTES    100 MiB
-TPAHUB_MAX_GENERATIONS        5
-TPAHUB_REGISTRATION_ENABLED   false (set true to enable with billing or local provisioning)
-TPAHUB_LOCAL_PROVISIONING_ENABLED false (set true only for an intentional local deployment)
+TPARUN_GPG_FINGERPRINT        full signing fingerprint
+TPARUN_PUBLISH_TIMEOUT        10m
+TPARUN_UPLOAD_READ_TIMEOUT    15m
+TPARUN_MAX_UPLOAD_BYTES       512 MiB
+TPARUN_MAX_STAGING_BYTES      4 GiB
+TPARUN_MAX_CANDIDATE_INODES   65536 (filesystem inode count)
+TPARUN_MIN_DISK_FREE_BYTES    100 MiB
+TPARUN_MAX_GENERATIONS        5
+TPARUN_REGISTRATION_ENABLED   false (set true to enable with billing or local provisioning)
+TPARUN_LOCAL_PROVISIONING_ENABLED false (set true only for an intentional local deployment)
 ```
 
 ## Website and onboarding
 
 Start at `https://tpa.run/` and read the practical guide at `/docs`. The installer is available at `/install.sh`. Nano is available now; Standard and Pro are displayed as coming soon and have no activation or billing flow.
 
-The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPAHUB_REGISTRATION_ENABLED`; public registration requires enabled purchases or a local capability source (including the legacy `TPAHUB_LOCAL_PROVISIONING_ENABLED` compatibility selection).
+The website registration and login forms use the same account/session API as the CLI. A successful registration leads to `/account` with the first-user workflow. Production registration is deliberately controlled by `TPARUN_REGISTRATION_ENABLED`; public registration requires enabled purchases or a local capability source (including the legacy `TPARUN_LOCAL_PROVISIONING_ENABLED` compatibility selection).
 
 ## CLI workflow
 
-Registration and login store origin-scoped credentials in `$XDG_CONFIG_HOME/tpahub/config.json`, or `~/.config/tpahub/config.json`, mode `0600`. `--server` overrides `TPAHUB_SERVER`, which overrides the saved server. Selecting another origin never carries the previous origin's token; credentials for multiple Hubs coexist. Remote servers require verified HTTPS; explicit loopback HTTP is supported for local use. Cross-origin redirects are refused, including redirects of passwords and publication bodies.
+Registration and login store origin-scoped credentials in `$XDG_CONFIG_HOME/tparun/config.json`, or `~/.config/tparun/config.json`, mode `0600`. Server selection is explicit argument (including `--server`), then `TPARUN_SERVER`, then the saved server; a missing scheme defaults to HTTPS. Temporary overrides do not rewrite the saved server. Selecting another origin never carries the previous origin's token; credentials for multiple TPA.run servers coexist. Remote servers require verified HTTPS; explicit loopback HTTP is supported for local use. Cross-origin redirects are refused, including redirects of passwords and publication bodies.
 
 Legacy single-server credentials bind to their stored server before overrides. A token without a stored server is retained as unbound local recovery data and is never transmitted; log in explicitly to establish a scoped credential. Invalid legacy server URLs fail closed without overwriting the original file. The version-2 client configuration is not intended for older clients. See [R3/R4 qualification](docs/client-origin-upload-admission.md).
 
 ```sh
-tpahub register
-tpahub login
-tpahub create private-tools
-tpahub show https://tpa.run/r/eugen/private-tools
-tpahub add https://tpa.run/r/eugen/private-tools
-tpahub installed
-tpahub stage ./tool_1.0.0_amd64.deb
-tpahub status
-tpahub publish https://tpa.run/r/eugen/private-tools
+tparun register
+tparun login                  # use the configured server
+tparun login tpa.run          # shorthand for https://tpa.run
+tparun create private-tools
+tparun show https://tpa.run/r/eugen/private-tools
+tparun add https://tpa.run/r/eugen/private-tools
+tparun installed
+tparun stage ./tool_1.0.0_amd64.deb
+tparun status
+tparun publish https://tpa.run/r/eugen/private-tools
 ```
 
-For automated use, `TPAHUB_EMAIL` and `TPAHUB_PASSWORD` avoid interactive prompts. Passwords are bcrypt-hashed server-side and never logged or stored locally as passwords.
+For automated use, `TPARUN_EMAIL` and `TPARUN_PASSWORD` avoid interactive prompts. Passwords are bcrypt-hashed server-side and never logged or stored locally as passwords.
 
-Create a repository with `tpahub create name`; repositories default to hidden/private. Names use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. The command returns a canonical URL such as `https://tpa.run/r/eugen/name`. Use that same URL with `show`, `edit`, `delete`, `add`, `remove`, and `publish`. Usernames use the same lowercase ASCII style with a 31-character limit; canonical URL components never require escaping.
+Create a repository with `tparun create name`; repositories default to hidden/private. Names use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. The command returns a canonical URL such as `https://tpa.run/r/eugen/name`. Use that same URL with `show`, `edit`, `delete`, `add`, `remove`, and `publish`. Usernames use the same lowercase ASCII style with a 31-character limit; canonical URL components never require escaping.
 
 ## Account
 
-`tpahub account` reports the authenticated account and selected server. Account credentials remain origin-scoped; changing the server requires fresh authentication.
+`tparun account` reports the authenticated account and selected server. Account credentials remain origin-scoped; changing the server requires fresh authentication.
 
 ## APT registration
 
 Public repository:
 
 ```sh
-sudo tpahub add https://tpa.run/r/eugen/private-tools
+sudo tparun add https://tpa.run/r/eugen/private-tools
 apt update
 apt install package-name
 ```
@@ -136,7 +137,7 @@ apt install package-name
 Private repository registration uses a repository reader credential, not the publisher session token:
 
 ```sh
-sudo tpahub add https://tpa.run/r/eugen/private-tools
+sudo tparun add https://tpa.run/r/eugen/private-tools
 apt update
 apt install package-name
 ```
@@ -149,27 +150,27 @@ register, publish, or inspect repositories. Unprivileged users can preview the
 exact network-fetched key and files without changing the machine:
 
 ```sh
-tpahub add https://tpa.run/r/eugen/private-tools --dry-run
+tparun add https://tpa.run/r/eugen/private-tools --dry-run
 ```
 
-`tpahub installed` lists repositories configured on this machine. It is distinct from remote repository management.
+`tparun installed` lists repositories configured on this machine. It is distinct from remote repository management.
 
 The CLI writes:
 
 ```text
-/etc/apt/keyrings/tpahub-<id>.gpg                 0644, public key
-/etc/apt/sources.list.d/tpahub-<id>.list          0644, signed-by source
-/etc/apt/auth.conf.d/tpahub-<id>                  0600, private repos only
+/etc/apt/keyrings/tparun-<id>.gpg                 0644, public key
+/etc/apt/sources.list.d/tparun-<id>.list          0644, signed-by source
+/etc/apt/auth.conf.d/tparun-<id>                  0600, private repos only
 ```
-Each managed source also carries a `# managed-by: tpahub` marker.
+Each managed source also carries a `# managed-by: tparun` marker.
 
-The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tpahub remove https://tpa.run/r/eugen/private-tools` removes only these local APT files; it never uninstalls packages or deletes the remote repository. Remote deletion is explicit and destructive: `tpahub delete https://tpa.run/r/eugen/private-tools`.
+The auth file uses standard APT `machine ... login reader password ...` syntax. `add` is repeatable without duplicate source entries. `tparun remove https://tpa.run/r/eugen/private-tools` removes only these local APT files; it never uninstalls packages or deletes the remote repository. Remote deletion is explicit and destructive: `tparun delete https://tpa.run/r/eugen/private-tools`.
 
 Reader credentials are scoped to one repository, stored server-side only as hashes, and displayed only at creation. Manage reader credentials through the account interface.
 
 ## Local delivery and usage
 
-`TPAHUB_DELIVERY_MODE` selects `strict-accounted` (the legacy default),
+`TPARUN_DELIVERY_MODE` selects `strict-accounted` (the legacy default),
 `metrics-only`, or `unmetered`. Selection is fixed when the server is composed;
 restart to change it. Private authorization and publication/storage safety apply
 in every mode.
@@ -177,12 +178,15 @@ in every mode.
 For a local dashboard without billing:
 
 ```sh
-TPAHUB_DELIVERY_MODE=metrics-only TPAHUB_BILLING_PROVIDER=none tpahub serve
+TPARUN_DELIVERY_MODE=metrics-only TPARUN_BILLING=none TPARUN_BILLING_PROVIDER=none tparun serve
 ```
 
 New initialized self-hosted installations select `metrics-only` with
-`TPAHUB_BILLING=none`. Hosted composition explicitly selects
-`TPAHUB_BILLING=hosted` and the current `TPAHUB_BILLING_PROVIDER=stripe` test adapter;
+`TPARUN_BILLING=none`. Self-hosted operation requires no Stripe credentials,
+payment provider, customer, or subscription; `/ops` remains useful for health,
+lifecycle, repository, usage, entitlement, session, SSH, and maintenance inspection.
+Hosted composition explicitly selects
+`TPARUN_BILLING=hosted` and the current `TPARUN_BILLING_PROVIDER=stripe` test adapter;
 `simulator` retains the local mock development tool. No remote transport is implemented.
 
 Metrics-only counters are **in-memory and reset on restart**. `/account` reads
@@ -191,7 +195,7 @@ usage without creating a billing preview; when billing is enabled, its explicit
 reporting or collection service is required or implemented.
 
 Egress enforcement is independently selectable with
-`TPAHUB_EGRESS_ENFORCEMENT=none|strict-accounted`. When unset, delivery presets
+`TPARUN_EGRESS_ENFORCEMENT=none|strict-accounted`. When unset, delivery presets
 retain their previous behavior: strict-accounted selects strict enforcement;
 metrics-only/unmetered select none. An explicit override does not change whether
 bytes are measured. Unmetered + strict enforcement is rejected.
@@ -199,8 +203,8 @@ bytes are measured. Unmetered + strict enforcement is rejected.
 For measured delivery with strict local enforcement but no billing:
 
 ```sh
-TPAHUB_DELIVERY_MODE=metrics-only TPAHUB_EGRESS_ENFORCEMENT=strict-accounted \
-  TPAHUB_BILLING=none tpahub serve
+TPARUN_DELIVERY_MODE=metrics-only TPARUN_EGRESS_ENFORCEMENT=strict-accounted \
+  TPARUN_BILLING=none tparun serve
 ```
 
 See [enforcement strategies and lifecycle guarantees](docs/enforcement-strategies.md)
@@ -229,11 +233,11 @@ data/{tpahub.db,incoming/<job>,work/<job>,artifacts/<repo-id>,repos/<repo-id>}
 
 This is a small single-node foundation. Registration is enabled for development but should be gated in a public deployment until verification or invitation policy exists. Nano checkout and the account web UI are available; there is no email verification, password reset, OAuth, or customer WebAuthn. HTTP local development is supported; production deployment should use TLS.
 
-Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys are discoverable and require user verification; multiple credentials are supported. To bootstrap or recover access, use SSH and run `sudo tpahub admin operator recovery issue --data-dir /home/eugen/data/tpahub`, then enter the one-time 15-minute code at `/ops/recover` and register a new passkey. The code is printed once, stored only as a SHA-256 hash, consumed before enrollment, and issuing a new code invalidates the previous one. A recovery session authorizes one registration ceremony only; failed or concurrent enrollment attempts require a newly issued code. Never send recovery codes through chat or email or place them in URLs. The former `TPAHUB_OPERATOR_TOKEN` compatibility path has been removed; it grants no operator authority. Authentication rate limits use the direct TCP peer address and do not trust forwarded headers; customer authentication, passkey login, and recovery have separate bounded limiters.
+Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys are discoverable and require user verification; multiple credentials are supported. To bootstrap or recover access, use SSH and run `sudo tparun admin operator recovery issue --data-dir /home/eugen/data/tpahub`, then enter the one-time 15-minute code at `/ops/recover` and register a new passkey. The code is printed once, stored only as a SHA-256 hash, consumed before enrollment, and issuing a new code invalidates the previous one. A recovery session authorizes one registration ceremony only; failed or concurrent enrollment attempts require a newly issued code. Never send recovery codes through chat or email or place them in URLs. Authentication rate limits use the direct TCP peer address and do not trust forwarded headers; customer authentication, passkey login, and recovery have separate bounded limiters.
 
 ## VServer deployment
 
-The production deployment uses the live Schema 5 root `/home/eugen/vserver-tpahub-qualification`: the binary is `bin/tpahub`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` and served at `https://tpa.run/tpahub-release_0.1.3_all.deb`. The deployment script validates Schema 5, stages the binary and package, creates rollback material, and checks the public installer/package pair. Push the `staging` branch to the `vserver` remote to trigger the deployment service. Runtime configuration is kept outside Git in `/home/eugen/.config/tpahub/tpahub.env`. The old `/home/eugen/tpahub_current` and `/home/eugen/data/tpahub` paths are legacy and are not migration sources.
+The production deployment uses the current Schema 9 root `/home/eugen/vserver-tpahub-qualification`: the canonical binary is `bin/tparun`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` at the canonical `tparun-release_0.1.4_all.deb` path. Runtime configuration is kept outside Git in `/home/eugen/.config/tparun/tparun.env`; existing deployment paths and database identifiers remain unchanged because cosmetic renaming provides no technical benefit.
 
 ## Development and qualification
 

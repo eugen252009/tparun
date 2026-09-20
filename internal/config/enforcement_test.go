@@ -21,7 +21,7 @@ func TestEgressEnforcementSelectionAndCompatibility(t *testing.T) {
 			t.Fatalf("unsupported composition accepted: %v", tc)
 		}
 	}
-	t.Setenv("TPAHUB_EGRESS_ENFORCEMENT", EnforcementNone)
+	t.Setenv("TPARUN_EGRESS_ENFORCEMENT", EnforcementNone)
 	if got := Load().EgressEnforcement; got != EnforcementNone {
 		t.Fatalf("environment selection=%q", got)
 	}
@@ -29,8 +29,8 @@ func TestEgressEnforcementSelectionAndCompatibility(t *testing.T) {
 
 func TestSelfHostedEnforcementDefaultsAndExplicitOverride(t *testing.T) {
 	clearProfileEnv(t)
-	t.Setenv("TPAHUB_PROFILE", ProfileSelfHosted)
-	t.Setenv("TPAHUB_EGRESS_ENFORCEMENT", "")
+	t.Setenv("TPARUN_PROFILE", ProfileSelfHosted)
+	t.Setenv("TPARUN_EGRESS_ENFORCEMENT", "")
 	c, err := LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestSelfHostedEnforcementDefaultsAndExplicitOverride(t *testing.T) {
 	if err != nil || selected != EnforcementNone || c.BillingIntegration != BillingNone {
 		t.Fatalf("self-hosted enforcement=%q %v", selected, err)
 	}
-	t.Setenv("TPAHUB_EGRESS_ENFORCEMENT", EnforcementStrictAccounted)
+	t.Setenv("TPARUN_EGRESS_ENFORCEMENT", EnforcementStrictAccounted)
 	c, err = LoadServer()
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestSelfHostedEnforcementDefaultsAndExplicitOverride(t *testing.T) {
 	if c.DeliveryMode != DeliveryMetricsOnly || c.EgressEnforcement != EnforcementStrictAccounted || c.BillingIntegration != BillingNone {
 		t.Fatal("explicit local enforcement changed measurement or billing selection")
 	}
-	t.Setenv("TPAHUB_DELIVERY_MODE", DeliveryUnmetered)
+	t.Setenv("TPARUN_DELIVERY_MODE", DeliveryUnmetered)
 	if _, err := LoadServer(); err == nil {
 		t.Fatal("profile accepted strict accounting without measurement")
 	}

@@ -1,6 +1,6 @@
 package version
 
-const Service = "tpahub"
+const Service = "tparun"
 const Current = "0.1.1"
 
 // BuildRevision is injected by release builds with -ldflags. Development

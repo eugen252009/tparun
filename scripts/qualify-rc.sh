@@ -43,11 +43,27 @@ fi
 TPA_BIN=$(readlink -f "$TPA_BIN")
 [[ -x "$TPA_BIN" ]] || { echo "TPA_BIN is not executable: $TPA_BIN" >&2; exit 2; }
 
+# Qualify the same candidate in an isolated server/client self-hosted topology
+# before the canonical functional container stage. The self-hosted harness uses
+# only the packaged candidate and the separately supplied TPA runtime.
+if ! "$ROOT/tests/rc/self-hosted.sh" "$CANDIDATE" "$OUT" "$TPA_BIN"; then
+  python3 - "$OUT/rc-result.json" "$CANDIDATE" "$SHA256" "$PKG_NAME" "$PKG_VERSION" "$PKG_ARCH" "$SIZE" "$OUT/self-hosted-result.json" <<'PY'
+import json,sys
+out,candidate,sha,name,version,arch,size,self_result=sys.argv[1:]
+with open(self_result) as f: hosted=json.load(f)
+json.dump({'result':'FAIL','artifact':{'path':candidate,'sha256':sha,'package':name,'version':version,'architecture':arch,'size':int(size)},'tests':{},'self_hosted':hosted.get('self_hosted',{}),'failed_phase':hosted.get('failed_phase')},open(out,'w'),indent=2,sort_keys=True); open(out,'a').write('\n')
+PY
+  echo "TPA.RUN SELF-HOSTED RC QUALIFICATION FAILED"
+  echo "logs: $OUT"
+  echo "ARTIFACT SHA256: $SHA256"
+  exit 1
+fi
+
 # The container receives only the candidate, the external TPA dependency, and
-# the run output directory. TPA Hub itself is never rebuilt in the container.
+# the run output directory. TPA.run itself is never rebuilt in the container.
 docker pull debian:bookworm-slim >/dev/null
 set +e
-docker run --rm -i --privileged --name "tpahub-rc-$RUN_ID" \
+docker run --rm -i --privileged --name "tparun-rc-$RUN_ID" \
   -v "$CANDIDATE:/candidate.deb:ro" \
   -v "$TPA_BIN:/tpa:ro" \
   -v "$OUT:/out" \
@@ -66,6 +82,9 @@ write_result() { python3 - "$@" <<'PY'
 import json,sys
 out,result,run_id,name,version,arch,sha,size,tests=sys.argv[1:]
 data={"result":result,"run_id":run_id,"artifact":{"path":"/candidate.deb","sha256":sha,"package":name,"version":version,"architecture":arch,"size":int(size)},"tests":json.loads(tests),"limitations":["customer lifecycle email delivery: NOT IN CURRENT RC GATE SCOPE"]}
+try:
+ with open('/out/self-hosted-result.json') as f: data['self_hosted']=json.load(f).get('self_hosted',{})
+except FileNotFoundError: pass
 with open(out,"w") as f: json.dump(data,f,indent=2,sort_keys=True); f.write("\n")
 PY
 }
@@ -87,28 +106,28 @@ CURRENT=install
 # Install and verify the exact candidate artifact.
 dpkg -i /candidate.deb >/out/install.log 2>&1 || fail "candidate installation failed"
 record install PASS
-command -v tpahub >/out/candidate-path.txt
-readlink -f "$(command -v tpahub)" >>/out/candidate-path.txt
-[[ "$(readlink -f "$(command -v tpahub)")" == /usr/bin/tpahub ]] || fail "candidate binary was shadowed"
-tpahub --help >/out/help.log 2>&1 || fail "candidate help failed"
-APP_VERSION=$(tpahub version)
+command -v tparun >/out/candidate-path.txt
+readlink -f "$(command -v tparun)" >>/out/candidate-path.txt
+[[ "$(readlink -f "$(command -v tparun)")" == /usr/bin/tparun ]] || fail "candidate binary was shadowed"
+tparun --help >/out/help.log 2>&1 || fail "candidate help failed"
+APP_VERSION=$(tparun version)
 EXPECTED_APP_VERSION=${PKG_VERSION%-*}
 [[ "$APP_VERSION" == "$EXPECTED_APP_VERSION" ]] || fail "version mismatch: $APP_VERSION != $EXPECTED_APP_VERSION"
-tpahub version >/out/version.txt
+tparun version >/out/version.txt
 record version PASS
 
 CURRENT=server
 export GNUPGHOME=/tmp/gnupg
 mkdir -m 700 "$GNUPGHOME"
-gpg --batch --passphrase '' --quick-gen-key 'TPA Hub RC qualification <qualification@example.invalid>' rsa2048 sign 0 >/dev/null 2>&1
+gpg --batch --passphrase '' --quick-gen-key 'TPA.run RC qualification <qualification@example.invalid>' rsa2048 sign 0 >/dev/null 2>&1
 GPG_KEY=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10;exit}')
-export TPAHUB_DATA_DIR=/tmp/tpahub-data TPAHUB_LISTEN=127.0.0.1:18080 TPAHUB_REGISTRATION_ENABLED=true
-export TPAHUB_LOCAL_PROVISIONING_ENABLED=true TPAHUB_CAPABILITY_SOURCE=legacy-local TPAHUB_BILLING=none
-export TPAHUB_DELIVERY_MODE=strict-accounted TPAHUB_EGRESS_ENFORCEMENT=strict-accounted TPA_BIN=/tpa TPAHUB_GPG_FINGERPRINT=$GPG_KEY
-mkdir -p "$TPAHUB_DATA_DIR"
-tpahub init >/out/init.log 2>&1 || fail "server initialization failed"
-[[ "$(tpahub schema)" == 8 ]] || fail "schema is not 8"
-tpahub serve >/out/server.log 2>&1 & SERVER_PID=$!
+export TPARUN_DATA_DIR=/tmp/tpahub-data TPARUN_LISTEN=127.0.0.1:18080 TPARUN_REGISTRATION_ENABLED=true
+export TPARUN_LOCAL_PROVISIONING_ENABLED=true TPARUN_CAPABILITY_SOURCE=legacy-local TPARUN_BILLING=none
+export TPARUN_DELIVERY_MODE=strict-accounted TPARUN_EGRESS_ENFORCEMENT=strict-accounted TPA_BIN=/tpa TPARUN_GPG_FINGERPRINT=$GPG_KEY
+mkdir -p "$TPARUN_DATA_DIR"
+tparun init >/out/init.log 2>&1 || fail "server initialization failed"
+[[ "$(tparun schema)" == 9 ]] || fail "schema is not 9"
+tparun serve >/out/server.log 2>&1 & SERVER_PID=$!
 cleanup_server() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
 cleanup_server() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
 trap on_exit EXIT
@@ -117,7 +136,7 @@ curl -fsS http://127.0.0.1:18080/ready >/out/ready.json || fail "server not read
 python3 - <<'PY'
 import json
 x=json.load(open('/out/ready.json'))
-assert x.get('ready') is True and x.get('schema')==8
+assert x.get('ready') is True and x.get('schema')==9
 PY
 python3 - <<'PY'
 import sqlite3
@@ -128,13 +147,13 @@ PY
 record server_init PASS
 
 CURRENT=happy-path
-export HOME=/tmp/rc-home XDG_CONFIG_HOME=/tmp/rc-config TPAHUB_SERVER=http://127.0.0.1:18080
-export TPAHUB_EMAIL="rc-${RUN_ID}@example.invalid" TPAHUB_PASSWORD='qualification-password-123'
-tpahub register --server "$TPAHUB_SERVER" >/out/register.log 2>&1 || fail "registration failed"
-REPO_URL=$(tpahub create "rc-$RUN_ID" --server "$TPAHUB_SERVER") || fail "repository creation failed"
+export HOME=/tmp/rc-home XDG_CONFIG_HOME=/tmp/rc-config TPARUN_SERVER=http://127.0.0.1:18080
+export TPARUN_EMAIL="rc-${RUN_ID}@example.invalid" TPARUN_PASSWORD='qualification-password-123'
+tparun register --server "$TPARUN_SERVER" >/out/register.log 2>&1 || fail "registration failed"
+REPO_URL=$(tparun create "rc-$RUN_ID" --server "$TPARUN_SERVER") || fail "repository creation failed"
 REPO_ID=$(python3 - "$REPO_URL" <<'PY'
 import json,os,sys,urllib.request
-origin=os.environ['TPAHUB_SERVER']; token=json.load(open('/tmp/rc-config/tpahub/config.json'))['credentials'][origin]['token']
+origin=os.environ['TPARUN_SERVER']; token=json.load(open('/tmp/rc-config/tparun/config.json'))['credentials'][origin]['token']
 req=urllib.request.Request(origin+'/v1/repositories',headers={'Authorization':'Bearer '+token})
 with urllib.request.urlopen(req) as r: rows=json.load(r)
 print(next(x['id'] for x in rows if x['name'].startswith('rc-')))
@@ -142,19 +161,27 @@ PY
 )
 TOKEN=$(python3 - <<'PY'
 import json,os
-print(json.load(open('/tmp/rc-config/tpahub/config.json'))['credentials'][os.environ['TPAHUB_SERVER']]['token'])
+print(json.load(open('/tmp/rc-config/tparun/config.json'))['credentials'][os.environ['TPARUN_SERVER']]['token'])
 PY
 )
-curl -fsS -X PATCH "$TPAHUB_SERVER/v1/repositories/$REPO_ID" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"visibility":"public"}' >/out/repository-public.log || fail "repository visibility failed"
-tpahub show "$REPO_URL" --server "$TPAHUB_SERVER" >/out/repository-show.log || fail "repository inspection failed"
-tpahub add "$REPO_ID" --server "$TPAHUB_SERVER" >/out/repository-add.log 2>&1 || fail "repository apt registration failed"
-record authentication PASS; record repository_create PASS
+curl -fsS -X PATCH "$TPARUN_SERVER/v1/repositories/$REPO_ID" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"visibility":"public"}' >/out/repository-public.log || fail "repository visibility failed"
+tparun show "$REPO_URL" --server "$TPARUN_SERVER" >/out/repository-show.log || fail "repository inspection failed"
+tparun add "$REPO_ID" --server "$TPARUN_SERVER" >/out/repository-add.log 2>&1 || fail "repository apt registration failed"
+env -u TPARUN_SERVER tparun account >/out/account-configured-server.log 2>&1 || fail "configured server fallback failed"
+record authentication PASS; record repository_create PASS; record configured_server_fallback PASS
 
 make_probe() { local version=$1 output=$2; local file=/tmp/qualification-probe-$version; rm -rf "$file"; mkdir -p "$file/DEBIAN" "$file/usr/bin"; printf 'Package: qualification-probe\nVersion: %s\nArchitecture: amd64\nMaintainer: qualification <qualification@example.invalid>\nDescription: deterministic qualification probe\n' "$version" >"$file/DEBIAN/control"; printf '#!/bin/sh\nprintf "%s\\n"\n' "$output" >"$file/usr/bin/qualification-probe"; chmod 0755 "$file/usr/bin/qualification-probe"; dpkg-deb --build --root-owner-group "$file" "/tmp/qualification-probe-$version.deb" >/dev/null; }
 make_probe 1.0.0 QUALIFICATION_V1
 make_probe 2.0.0 QUALIFICATION_V2
-tpahub stage /tmp/qualification-probe-1.0.0.deb >/out/stage-v1.log 2>&1 || fail "stage v1 failed"
-tpahub publish "$REPO_URL" --yes --server "$TPAHUB_SERVER" >/out/publish-v1.log 2>&1 || fail "publish v1 failed"
+env -u TPARUN_SERVER tparun account --server "$TPARUN_SERVER" >/out/account-explicit-server.log 2>&1 || fail "explicit server override failed"
+python3 - <<'PY'
+import json, os
+cfg=json.load(open('/tmp/rc-config/tparun/config.json'))
+assert cfg.get('server') == os.environ['TPARUN_SERVER']
+PY
+record explicit_server_nonmutation PASS
+tparun stage /tmp/qualification-probe-1.0.0.deb >/out/stage-v1.log 2>&1 || fail "stage v1 failed"
+tparun publish "$REPO_URL" --yes --server "$TPARUN_SERVER" >/out/publish-v1.log 2>&1 || fail "publish v1 failed"
 record publish_v1 PASS
 find "/tmp/tpahub-data/repos/$REPO_ID" -maxdepth 5 -type f -print >/out/repo-files-v1.txt || true
 curl -i "$REPO_URL/dists/stable/main/binary-amd64/Packages" >/out/packages-v1-http.txt 2>&1 || fail "v1 metadata unavailable"
@@ -165,9 +192,13 @@ apt-get install -y -qq qualification-probe=1.0.0 >/out/install-v1.log 2>&1 || fa
 [[ "$(qualification-probe)" == QUALIFICATION_V1 ]] || fail "v1 execution mismatch"
 record install_v1 PASS
 
-tpahub stage /tmp/qualification-probe-2.0.0.deb >/out/stage-v2.log 2>&1 || fail "stage v2 failed"
-tpahub publish "$REPO_URL" --yes --server "$TPAHUB_SERVER" >/out/publish-v2.log 2>&1 || fail "publish v2 failed"
-record publish_v2 PASS
+tparun stage /tmp/qualification-probe-2.0.0.deb >/out/stage-v2.log 2>&1 || fail "stage v2 failed"
+tparun publish "$REPO_URL" --yes --no-wait --server "$TPARUN_SERVER" >/out/publish-v2.log 2>&1 || fail "async publish v2 failed"
+PUB_ID=$(sed -n 's/^Publication queued: //p' /out/publish-v2.log)
+[[ -n "$PUB_ID" ]] || fail "async publication ID missing"
+PUB_SHA=$(sha256sum /tmp/qualification-probe-2.0.0.deb | awk '{print $1}')
+tparun check "$PUB_ID" "$PUB_SHA" --wait --timeout 2m --server "$TPARUN_SERVER" >/out/check-v2.log 2>&1 || fail "publication check failed"
+record publish_v2 PASS; record publication_check PASS
 apt-get update -qq >/out/apt-v2.log 2>&1 || fail "apt update v2 failed"
 apt-get install -y -qq --allow-downgrades qualification-probe=2.0.0 >/out/upgrade-v2.log 2>&1 || fail "upgrade v2 failed"
 [[ "$(qualification-probe)" == QUALIFICATION_V2 ]] || fail "v2 execution mismatch"
@@ -184,14 +215,14 @@ record upgrade_v2 PASS; record explicit_versions PASS; record remove_reinstall P
 CURRENT=ttl-min
 # Create the fixed public ttl=min profile through the real API.
 export MIN_CONFIG=/tmp/min-config MIN_EMAIL="min-$RUN_ID@example.invalid" MIN_PASSWORD='min-profile-password-123'
-mkdir -p "$MIN_CONFIG/tpahub"
+mkdir -p "$MIN_CONFIG/tparun"
 python3 - <<'PY'
 import json,os,urllib.request
-origin=os.environ['TPAHUB_SERVER']; body=json.dumps({'email':os.environ['MIN_EMAIL'],'password':os.environ['MIN_PASSWORD'],'ttl':'min'}).encode()
+origin=os.environ['TPARUN_SERVER']; body=json.dumps({'email':os.environ['MIN_EMAIL'],'password':os.environ['MIN_PASSWORD'],'ttl':'min'}).encode()
 req=urllib.request.Request(origin+'/v1/accounts',data=body,headers={'Content-Type':'application/json'})
 with urllib.request.urlopen(req) as r: out=json.load(r)
 state={'version':2,'server':origin,'credentials':{origin:{'email':out['email'],'token':out['token']}}}
-json.dump(state,open('/tmp/min-config/tpahub/config.json','w'),indent=2)
+json.dump(state,open('/tmp/min-config/tparun/config.json','w'),indent=2)
 print(out['account_id'])
 PY
 MIN_ID=$(python3 - <<'PY'
@@ -211,11 +242,11 @@ with sqlite3.connect('/tmp/tpahub-data/tpahub.db') as d:
 PY
 record ttl_min_profile PASS
 
-export XDG_CONFIG_HOME=$MIN_CONFIG TPAHUB_EMAIL=$MIN_EMAIL TPAHUB_PASSWORD=$MIN_PASSWORD
-MIN_REPO_URL=$(tpahub create "min-$RUN_ID" --server "$TPAHUB_SERVER") || fail "min repository creation failed"
+export XDG_CONFIG_HOME=$MIN_CONFIG TPARUN_EMAIL=$MIN_EMAIL TPARUN_PASSWORD=$MIN_PASSWORD
+MIN_REPO_URL=$(tparun create "min-$RUN_ID" --server "$TPARUN_SERVER") || fail "min repository creation failed"
 MIN_REPO_ID=$(python3 - "$MIN_REPO_URL" <<'PY'
 import json,os,urllib.request
-origin=os.environ['TPAHUB_SERVER']; token=json.load(open('/tmp/min-config/tpahub/config.json'))['credentials'][origin]['token']
+origin=os.environ['TPARUN_SERVER']; token=json.load(open('/tmp/min-config/tparun/config.json'))['credentials'][origin]['token']
 req=urllib.request.Request(origin+'/v1/repositories',headers={'Authorization':'Bearer '+token})
 with urllib.request.urlopen(req) as r: rows=json.load(r)
 print(next(x['id'] for x in rows if x['name'].startswith('min-')))
@@ -223,10 +254,10 @@ PY
 )
 MIN_TOKEN=$(python3 - <<'PY'
 import json,os
-print(json.load(open('/tmp/min-config/tpahub/config.json'))['credentials'][os.environ['TPAHUB_SERVER']]['token'])
+print(json.load(open('/tmp/min-config/tparun/config.json'))['credentials'][os.environ['TPARUN_SERVER']]['token'])
 PY
 )
-curl -fsS -X PATCH "$TPAHUB_SERVER/v1/repositories/$MIN_REPO_ID" -H "Authorization: Bearer $MIN_TOKEN" -H 'Content-Type: application/json' -d '{"visibility":"public"}' >/out/min-public.log || fail "min repository visibility failed"
+curl -fsS -X PATCH "$TPARUN_SERVER/v1/repositories/$MIN_REPO_ID" -H "Authorization: Bearer $MIN_TOKEN" -H 'Content-Type: application/json' -d '{"visibility":"public"}' >/out/min-public.log || fail "min repository visibility failed"
 make_quota() { local name=$1 size=$2; local file=/tmp/$name; rm -rf "$file"; mkdir -p "$file/DEBIAN" "$file/usr/share/$name"; printf 'Package: %s\nVersion: 1.0.0\nArchitecture: amd64\nMaintainer: qualification <qualification@example.invalid>\nDescription: quota probe\n' "$name" >"$file/DEBIAN/control"; python3 - "$file/usr/share/$name/payload" "$size" <<'PY'
 import hashlib,sys
 path,size=sys.argv[1],int(sys.argv[2]); data=b''; i=0
@@ -236,8 +267,8 @@ PY
  dpkg-deb --build --root-owner-group "$file" "/tmp/$name.deb" >/dev/null; }
 make_quota quota-first 7000
 make_quota quota-second 7000
-(tpahub stage /tmp/quota-first.deb >/out/quota-stage1.log 2>&1 && tpahub publish "$MIN_REPO_URL" --yes --server "$TPAHUB_SERVER" >/out/quota-publish1.log 2>&1) || fail "min first publication failed"
-if tpahub stage /tmp/quota-second.deb >/out/quota-stage2.log 2>&1 && tpahub publish "$MIN_REPO_URL" --yes --server "$TPAHUB_SERVER" >/out/quota-publish2.log 2>&1; then fail "min storage overflow unexpectedly succeeded"; fi
+(tparun stage /tmp/quota-first.deb >/out/quota-stage1.log 2>&1 && tparun publish "$MIN_REPO_URL" --yes --server "$TPARUN_SERVER" >/out/quota-publish1.log 2>&1) || fail "min first publication failed"
+if tparun stage /tmp/quota-second.deb >/out/quota-stage2.log 2>&1 && tparun publish "$MIN_REPO_URL" --yes --server "$TPARUN_SERVER" >/out/quota-publish2.log 2>&1; then fail "min storage overflow unexpectedly succeeded"; fi
 curl -fsS "$MIN_REPO_URL/dists/stable/InRelease" >/out/min-inrelease || fail "min first publication was lost"
 record storage_quota PASS
 
@@ -253,10 +284,10 @@ record egress PASS
 
 # The min account has a five-minute authority lifetime and a ten-minute purge deadline.
 for _ in $(seq 1 80); do
-  if ! curl -fsS -o /dev/null -H "Authorization: Bearer $MIN_TOKEN" "$TPAHUB_SERVER/v1/account"; then break; fi
+  if ! curl -fsS -o /dev/null -H "Authorization: Bearer $MIN_TOKEN" "$TPARUN_SERVER/v1/account"; then break; fi
   sleep 5
 done
-if curl -fsS -o /dev/null -H "Authorization: Bearer $MIN_TOKEN" "$TPAHUB_SERVER/v1/account"; then fail "expired min session remained authorized"; fi
+if curl -fsS -o /dev/null -H "Authorization: Bearer $MIN_TOKEN" "$TPARUN_SERVER/v1/account"; then fail "expired min session remained authorized"; fi
 record ttl_expiry PASS
 for _ in $(seq 1 180); do
   count=$(python3 - "$MIN_ID" <<'PY'
@@ -282,7 +313,7 @@ record ttl_purge PASS; record zero_residue PASS
 
 CURRENT=authorization
 # Bounded authorization regressions.
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$TPAHUB_SERVER/ops")" != 200 ]] || fail "ordinary account reached ops"
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$TPARUN_SERVER/ops")" != 200 ]] || fail "ordinary account reached ops"
 record authorization_negative PASS
 record migration N/A
 record ssh_machine_auth N/A
@@ -298,10 +329,21 @@ CONTAINER_SCRIPT
 RC=$?
 set -e
 if [[ $RC -ne 0 ]]; then
-  echo "TPA HUB RC RELEASE GATE FAILED"
+  echo "TPA.RUN RC RELEASE GATE FAILED"
   echo "logs: $OUT"
   exit $RC
 fi
+python3 - "$OUT/rc-result.json" "$OUT/self-hosted-result.json" <<'PY'
+import json,sys
+with open(sys.argv[1]) as f: result=json.load(f)
+with open(sys.argv[2]) as f: hosted=json.load(f)
+result['self_hosted']=hosted.get('self_hosted',{})
+tests=result.get('tests',{})
+for source,target in [('ttl_expiry','ttl_min_expiry'),('ttl_purge','ttl_min_purge'),('zero_residue','zero_residue')]:
+    if tests.get(source) == 'PASS': result['self_hosted'][target] = 'PASS'
+with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2,sort_keys=True); f.write('\\n')
+PY
 cat "$OUT/rc-result.json"
-echo "TPA HUB RC RELEASE GATE QUALIFIED"
+echo "TPA.RUN RC RELEASE GATE QUALIFIED"
+echo "TPA.RUN SELF-HOSTED RC QUALIFICATION PASSED"
 echo "ARTIFACT SHA256: $SHA256"

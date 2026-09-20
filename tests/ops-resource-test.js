@@ -17,13 +17,13 @@ const bytes = [
   { dataset: { bytes: '12000000000' }, textContent: '' },
 ];
 const context = { document: { querySelectorAll: selector => selector === '.resource-usage' ? resources : bytes } };
-vm.runInNewContext(fs.readFileSync('cmd/tpahub/static/ops.js', 'utf8'), context);
+vm.runInNewContext(fs.readFileSync('cmd/tparun/static/ops.js', 'utf8'), context);
 const expectedResources = ['0 B / 0 B', '8.02 MB / 5.00 MB (160.3%)', '1.16 GB / 12.00 GB (9.7%)', '1.00 MB / 0 B', '8.02 MB / no applicable limit', 'fallback', '1 MB / unknown'];
 const expectedBytes = ['999 B', '1.00 KB', '1.00 MB', '1.00 GB', '12.00 GB'];
 for (const [i, expected] of expectedResources.entries()) if (resources[i].textContent !== expected) throw Error(`resource ${i}: ${resources[i].textContent}`);
 for (const [i, expected] of expectedBytes.entries()) if (bytes[i].textContent !== expected) throw Error(`bytes ${i}: ${bytes[i].textContent}`);
 const once = resources.map(e => e.textContent);
-vm.runInNewContext(fs.readFileSync('cmd/tpahub/static/ops.js', 'utf8'), context);
+vm.runInNewContext(fs.readFileSync('cmd/tparun/static/ops.js', 'utf8'), context);
 for (const [i, expected] of once.entries()) if (resources[i].textContent !== expected) throw Error(`idempotence ${i}: ${resources[i].textContent}`);
 console.log('OPS RESOURCE FORMATTER QUALIFIED');
 console.log('OPS RESOURCE FORMATTER QUALIFIED');

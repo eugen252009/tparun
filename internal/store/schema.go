@@ -190,7 +190,7 @@ var canonicalSchemaDefinitions = sync.OnceValues(func() (map[string]string, erro
 // Validate every declared table, column, CHECK, FK, index and trigger against
 // the canonical executable DDL. Every instance is freshly inspected read-only.
 func validateCurrentSchema(db *sql.DB) error {
-	return validateSchema(db, schemaSQL, "Schema 8")
+	return validateSchema(db, schemaSQL, "Schema 9")
 }
 
 func validateSchema(db *sql.DB, ddl, label string) error {
@@ -237,9 +237,52 @@ func validateSchema(db *sql.DB, ddl, label string) error {
 	return nil
 }
 
+func migrateSchemaTo9(db *sql.DB) error {
+	oldJobs := "CREATE TABLE publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed')),incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT,cleanup_state TEXT NOT NULL DEFAULT 'complete' CHECK(cleanup_state IN ('complete','pending')),cleanup_error TEXT NOT NULL DEFAULT '',cleanup_attempts INTEGER NOT NULL DEFAULT 0,cleanup_next_retry TEXT NOT NULL DEFAULT '');"
+	legacyDDL := schemaSQL
+	start := strings.Index(legacyDDL, "CREATE TABLE publish_jobs(")
+	end := -1
+	if start >= 0 {
+		end = strings.Index(legacyDDL[start:], ";")
+	}
+	if start >= 0 && end >= 0 {
+		legacyDDL = legacyDDL[:start] + oldJobs + legacyDDL[start+end+1:]
+	}
+	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
+	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
+	if err := validateSchema(db, legacyDDL, "Schema 8"); err != nil {
+		return fmt.Errorf("Schema 8 validation failed: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin Schema 8 to 9 migration: %w", err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`ALTER TABLE publish_jobs ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE publish_jobs ADD COLUMN verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch'))`,
+		`ALTER TABLE publish_jobs ADD COLUMN verified_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE publish_jobs ADD COLUMN verification_error TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename))`,
+	} {
+		if _, err = tx.Exec(statement); err != nil {
+			return fmt.Errorf("add publication identity field: %w", err)
+		}
+	}
+	if err = migrationCheckpoint("before-schema-9-version"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=9 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 9 version: %w", err)
+	}
+	return tx.Commit()
+}
+
 func migrateSchemaTo8(db *sql.DB) error {
 	oldAccount := "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL);"
 	legacyDDL := strings.Replace(schemaSQL, "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));", oldAccount, 1)
+	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
+	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	if err := validateSchema(db, legacyDDL, "Schema 7"); err != nil {
 		return fmt.Errorf("Schema 7 validation failed: %w", err)
 	}
@@ -376,11 +419,18 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			if !explicitMigration || ((version != 5 && version != 6) && version != 7) {
+			if !explicitMigration || ((version != 5 && version != 6) && version != 7 && version != 8) {
 				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
 			}
-			if version == 7 {
+			if version == 8 {
+				if err = migrateSchemaTo9(db); err != nil {
+					return nil, err
+				}
+			} else if version == 7 {
 				if err = migrateSchemaTo8(db); err != nil {
+					return nil, err
+				}
+				if err = migrateSchemaTo9(db); err != nil {
 					return nil, err
 				}
 			} else if err = migrateSchemaTo7(db, version); err != nil {

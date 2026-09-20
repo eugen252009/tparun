@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+
+<head>{{template "head" "Documentation"}}</head>
+
+<body>
+  {{template "header" "docs"}}
+  <main id="main" class="docs-layout" tabindex="-1">
+    <aside class="docs-nav">
+      <p class="eyebrow">Documentation</p>
+      <nav aria-label="On this page">
+        <a href="#install">Install the client</a>
+        <a href="#trust">Verify repository trust</a>
+        <a href="#compatibility">Repositories on this machine</a>
+        <a href="#consume">Install public packages</a>
+        <a href="#bloom">Use the ecosystem</a>
+        <a href="#qualification">Developer qualification</a>
+        <a href="#publish">Publish your package</a>
+        <a href="#private">Private repositories</a>
+        <a href="#limits">Usage & limits</a>
+      </nav>
+    </aside>
+    <div class="docs-content">
+      <div class="page-heading">
+        <p class="eyebrow">The practical guide</p>
+        <h1>From .deb to apt install.</h1>
+        <p class="lead">Install public packages without an account, or sign in to publish your own.</p>
+      </div>
+      <section id="install">
+        <h2>Install the client</h2>
+        <p>The default bootstrap package follows the currently promoted release through the public TPA.run repository:</p>
+        <pre><code>curl -fL https://tpa.run/tparun-bootstrap.deb -o tparun-bootstrap.deb
+sudo apt install ./tparun-bootstrap.deb
+sudo apt update
+sudo apt install tparun</code></pre>
+        <p>For reproducible installs, use the immutable artifact URL from the repository metadata. The current promoted package SHA-256 is <code>4ed23aaa0995432f3612c083ff9c5a4b960632ba1eb680e815fb5faf57b921cd</code>.</p>
+        <p>These commands target Debian 12 amd64. Run them with a user that can use <code>sudo</code>; omit it in a root shell.</p>
+        <pre><code>sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+curl -fsSL https://tpa.run/tparun.sources -o /tmp/tparun.sources
+echo 'd705adf0cc1943be3c46e11bab749710caaaf29e1d88fe956cdcd848cbfb073d  /tmp/tparun.sources' | sha256sum -c -
+sudo install -m 0644 /tmp/tparun.sources /etc/apt/sources.list.d/tparun.sources
+sudo apt-get update
+sudo apt-get install -y tparun</code></pre>
+        <p>The deb822 source file contains the repository and its embedded signing key. Review it before installing; the public path is qualified on Debian 12 amd64. The manual source remains available at <code>https://tpa.run/tparun.sources</code>.</p>
+      </section>
+      <section id="trust">
+        <h2>Verify repository trust</h2>
+        <p>TPA.run uses signed APT repository metadata and an explicit trust anchor. The source file embeds the public signing key; repository-specific keys are still used when you run <code>add</code> for another repository.</p>
+        <pre><code>sudo tparun add https://tpa.run/r/eugen/dev-tools
+sudo apt update</code></pre>
+        <p>APT uses <code>signed-by=</code> with the repository keyring under <code>/etc/apt/keyrings</code>. The current production signing fingerprint is:</p>
+        <p class="fingerprint">EDCEE63AA803737C8ABBC1E4A34190A2829D5E54</p>
+        <p>Keep signature verification enabled and treat repository reader credentials as secrets.</p>
+      </section>
+      <section id="compatibility">
+        <h2>Repositories on this machine</h2>
+        <p>Use the canonical repository URL with the same CLI commands everywhere:</p>
+        <pre><code>tparun installed
+sudo tparun add https://tpa.run/r/eugen/dev-tools
+sudo tparun remove https://tpa.run/r/eugen/dev-tools</code></pre>
+        <p>Use <code>tparun installed --verbose</code> to inspect managed source files and legacy origins. Internal repository IDs are not required for normal workflows.</p>
+      </section>
+      <section id="consume">
+        <h2>Install public packages</h2>
+        <p>No publisher login is required. Add the public repositories by canonical URL:</p>
+        <pre><code>sudo tparun add https://tpa.run/r/eugen/mema
+sudo tparun add https://tpa.run/r/eugen/bloom
+sudo apt update
+sudo apt install mema bloom</code></pre>
+        <p>Use <code>tparun installed</code> to inspect repositories configured on this machine.</p>
+        <p>Mema and Bloom are independent tools. Install either or both; Bloom does not require Mema.</p>
+        <pre><code>sudo apt install -y mema bloom mema-go mema-bun
+sudo mema install go 1.26.5
+sudo mema install bun 1.3.14</code></pre>
+        <p>These exact runtime versions are the current Debian 12 amd64 beta qualification path.</p>
+      </section>
+      <section id="bloom">
+        <h2>Use the ecosystem without registering</h2>
+        <p>You can explore public packages and tools from the ecosystem without creating a TPA.run account. Publishing and private repository management are account features.</p>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Mema</h3>
+            <p>Manage developer tools and runtimes from one place.</p>
+            <pre><code>mema list</code></pre>
+          </article>
+          <article class="card">
+            <h3>Bloom</h3>
+            <p>Discover reusable building blocks and inspect what they provide.</p>
+            <pre><code>bloom search "math min u32"
+bloom describe math.min.u32</code></pre>
+          </article>
+        </div>
+        <p class="fine">Need the tools first? <code>sudo apt install mema bloom</code></p>
+        <p>For a small Bloom example, find the minimum of <code>[31, 12, 91, 4, 28]</code>. The input encodes unsigned 32-bit little-endian integers:</p>
+        <pre><code>printf '\\037\\000\\000\\000\\014\\000\\000\\000\\133\\000\\000\\000\\004\\000\\000\\000\\034\\000\\000\\000' |
+  bloom run math.min.u32 --input-format u32le --output-format text</code></pre>
+        <p>Expected output: <strong><code>4</code></strong>. Mema and Bloom are independent tools.</p>
+      </section>
+      <section id="qualification">
+        <h2>Developer qualification</h2>
+        <p>The current beta path has been tested from a clean Debian 12 amd64 VM through fresh login and reboot.</p>
+        <div class="card-grid">
+          <article class="card"><h3>Go workflow</h3><p><code>rs/zerolog</code> was cloned, its modules downloaded, then tested and built. The <code>a-h/templ</code> counter example also generated code, passed tests, and built.</p></article>
+          <article class="card"><h3>Bun workflow</h3><p><code>honojs/hono</code> installed 781 packages, passed 26 Bun tests, and built successfully with its project-local tools.</p></article>
+        </div>
+        <p>After reboot, the runtimes, <code>templ</code>, Bloom discovery, dependency installation, tests, and builds continued to work. See the beta support matrix below before choosing this path.</p>
+      </section>
+      <section id="publish">
+        <h2>Publish packages</h2>
+        <p>Publishing requires an account with available repository capacity. Account creation alone does not promise publishing capacity; check your <a href="/account">account</a> and <a href="/pricing">plan availability</a>.</p>
+        <h3>One-time setup</h3>
+        <pre><code>tparun register tpa.run
+tparun login                 # uses the configured server
+tparun login tpa.run        # defaults to https://tpa.run
+tparun create tools</code></pre>
+        <p>The create command returns the repository identity. Make it public separately when that is appropriate:</p>
+        <pre><code>tparun edit https://tpa.run/r/eugen/dev-tools visibility</code></pre>
+        <h3>Daily publishing</h3>
+        <pre><code>tparun stage ./my-package_1.0.0_amd64.deb
+tparun status
+tparun publish https://tpa.run/r/eugen/dev-tools</code></pre>
+        <p>TPA.run snapshots the package bytes locally. Before upload, it shows the projected repository statistics and asks for confirmation. Use <code>--verbose</code> for the full publication plan.</p>
+        <p>For multiple packages, stage the complete set and inspect it with <code>tparun status</code> before publishing:</p>
+        <pre><code>tparun stage ./app_1.0.0_amd64.deb ./cli_1.0.0_amd64.deb
+tparun unstage ./cli_1.0.0_amd64.deb
+tparun publish https://tpa.run/r/eugen/dev-tools</code></pre>
+        <p><code>-y</code> or <code>--yes</code> only accepts the confirmation; authentication, authorization, package validation, and capacity checks still apply. Successful publication clears local staging. Failed or cancelled publication preserves it for retry. Staging lives under <code>/tmp</code> and may be removed by reboot or system cleanup.</p>
+        <p>The CLI saves the server selected during login. Server names without a scheme default to HTTPS; explicit server arguments and <code>--server</code> override the configured server without changing it for other commands. <code>TPARUN_SERVER</code> remains supported for automation. Local development servers remain supported.</p>
+        <p>Use <code>--verbose</code> when you want the detailed publication plan. The normal publish output shows only the projected repository statistics and confirmation.</p>
+        <p>On the consuming machine, add the repository's canonical URL, then install:</p>
+        <pre><code>sudo tparun add https://tpa.run/r/eugen/my-package
+sudo apt update
+sudo apt install my-package</code></pre>
+      </section>
+      <section id="private">
+        <h2>Private repositories</h2>
+        <p>Repositories are private when created. To change visibility, use <code>tparun edit https://tpa.run/r/eugen/dev-tools visibility</code>. As the publisher, create a reader token:
+        </p>
+        <pre><code>tparun create private-tools
+tparun account</code></pre>
+        <p>On the consuming machine:</p>
+        <pre><code>sudo tparun add https://tpa.run/r/eugen/private-tools</code></pre>
+        <p>The CLI prompts for <strong>Repository password:</strong> without echoing the input. Reader credentials authorize downloads from one repository, not administration or publishing. Treat them as secrets; avoid shared shell histories. APT credentials are written to a restricted file under <code>/etc/apt/auth.conf.d</code>.</p>
+      </section>
+      <section id="limits">
+        <h2>Usage & limits</h2>
+        <h3>Published storage</h3>
+        <p>Storage is the sum of canonical published <code>.deb</code> payload sizes across an account's repositories.
+          Metadata, temporary workspaces, caches, and historical uploads are excluded from that measurement. Technical
+          staging and request limits still apply independently.</p>
+        <h3>Repository egress</h3>
+        <p>Actual delivered package and repository metadata body bytes count, including partial range responses. Website
+          pages, uploads, API calls, HEAD and 304 responses do not count. Public and private delivery use the same
+          accounting.</p>
+        <p>Nano aggregates egress over its anniversary-based entitlement year. Active transfers finish normally at the
+          annual threshold; new package downloads are rate-limited. Metadata remains available and continues to count.
+        </p>
+        <h3>Billing status</h3>
+        <p>Account usage previews describe current usage; they are not invoices. Stripe Sandbox checkout, where enabled, is test-only. Standard, Pro, live usage-based charging, and future spend controls are planned rather than available today.</p>
+        <p><a href="/pricing">Compare plan capacity →</a></p>
+      </section>
+    </div>
+  </main>
+  {{template "footer"}}
+</body>
+
+</html>

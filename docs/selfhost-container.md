@@ -1,7 +1,7 @@
 # Self-hosted NAS container bundle
 
-This bundle is a single TPA Hub container. It does not change the public Hub and
-is not a NAS deployment. The image contains the pinned TPA Hub and TPA binaries;
+This bundle is a single TPA.run container. It does not change the public Hub and
+is not a NAS deployment. The image contains the pinned TPA.run and TPA binaries;
 it does not use a source checkout, host Go installation, host TPA binary, Mema
 store, or developer configuration at runtime.
 
@@ -25,8 +25,8 @@ The image runs as UID/GID `10001:10001` by default. Both bind-mounted
 persistent directories must be writable by that identity. Compose permits an
 explicit UID/GID override when the NAS requires it.
 
-`TPAHUB_OPERATOR_ORIGIN` is the canonical external origin used by the existing
-WebAuthn/operator origin checks. `TPAHUB_OPERATOR_RP_ID` is its DNS hostname.
+`TPARUN_OPERATOR_ORIGIN` is the canonical external origin used by the existing
+WebAuthn/operator origin checks. `TPARUN_OPERATOR_RP_ID` is its DNS hostname. The default production pair is `tpa.run` and `https://tpa.run`; WebAuthn credentials registered for a historical RP such as `tpa.lupricht.net` are intentionally not accepted for the new domain. Re-enroll through the explicit operator recovery/bootstrap flow after switching the configured RP ID and origin; never rewrite the stored credential or weaken RP/origin validation.
 No forwarded header is trusted to invent an origin.
 
 ## Build
@@ -43,7 +43,7 @@ deploy/container/build.sh
 
 Set `TPA_DIR=/path/to/tpa` when the sibling path is different. The script stops
 on a dirty Hub worktree, embeds the full Hub Git SHA in `BuildRevision`, and
-produces `tpahub:<short-sha>` and `tpahub:selfhost-<version>`. Record the image
+produces `tparun:<short-sha>` and `tparun:selfhost-<version>`. Record the image
 ID/digest and emitted binary checksum; use the short-SHA tag or digest in the
 NAS `.env`, never `latest`.
 
@@ -52,14 +52,14 @@ NAS `.env`, never `latest`.
 The qualified image is published as:
 
 ```text
-192.168.188.2:9006/tpahub-server:dfc79c0c45ca
-192.168.188.2:9006/tpahub-server:selfhost-0.1.1
+192.168.188.2:9006/tparun-server:dfc79c0c45ca
+192.168.188.2:9006/tparun-server:selfhost-0.1.1
 ```
 
 Both tags resolve to this immutable digest:
 
 ```text
-192.168.188.2:9006/tpahub-server@sha256:5143d77d87d3aca81fa46d4af95100bc11e6bf410e936025e2ba6fceaff149ad
+192.168.188.2:9006/tparun-server@sha256:5143d77d87d3aca81fa46d4af95100bc11e6bf410e936025e2ba6fceaff149ad
 ```
 
 The example environment file uses the digest-pinned reference. The registry is
@@ -71,12 +71,12 @@ CA fingerprint is `04:49:9A:41:11:9D:D1:3C:E7:6E:90:04:9D:CA:2B:47:D1:17:B0:30:6
 Create empty directories and make them writable by the container identity:
 
 ```sh
-sudo install -d -o 10001 -g 10001 -m 0700 /srv/tpahub/config /srv/tpahub/data
-cp deploy/container/.env.selfhost.example /srv/tpahub/.env
-# edit /srv/tpahub/.env, especially image and external origin
-sudo docker compose --env-file /srv/tpahub/.env \
-  -f deploy/container/compose.selfhost.yml run --rm tpahub init
-sudo docker compose --env-file /srv/tpahub/.env \
+sudo install -d -o 10001 -g 10001 -m 0700 /srv/tparun/config /srv/tparun/data
+cp deploy/container/.env.selfhost.example /srv/tparun/.env
+# edit /srv/tparun/.env, especially image and external origin
+sudo docker compose --env-file /srv/tparun/.env \
+  -f deploy/container/compose.selfhost.yml run --rm tparun init
+sudo docker compose --env-file /srv/tparun/.env \
   -f deploy/container/compose.selfhost.yml up -d
 ```
 
@@ -89,8 +89,8 @@ silently regenerate identity.
 Check:
 
 ```sh
-docker compose --env-file /srv/tpahub/.env -f deploy/container/compose.selfhost.yml ps
-docker compose --env-file /srv/tpahub/.env -f deploy/container/compose.selfhost.yml exec tpahub tpahub version
+docker compose --env-file /srv/tparun/.env -f deploy/container/compose.selfhost.yml ps
+docker compose --env-file /srv/tparun/.env -f deploy/container/compose.selfhost.yml exec tparun tparun version
 curl -fsS https://packages.home.example/version
 curl -fsS https://packages.home.example/ready
 ```
@@ -109,8 +109,8 @@ entitlement dependency in this profile.
 Stop the service cleanly before backing up both directories together:
 
 ```sh
-docker compose --env-file /srv/tpahub/.env -f deploy/container/compose.selfhost.yml stop
-sudo tar --xattrs --acls -czf tpahub-backup.tar.gz -C /srv/tpahub config data
+docker compose --env-file /srv/tparun/.env -f deploy/container/compose.selfhost.yml stop
+sudo tar --xattrs --acls -czf tparun-backup.tar.gz -C /srv/tparun config data
 ```
 
 Restore only into empty directories with the same UID/GID, verify the archive
@@ -122,7 +122,7 @@ operator recovery material are part of the recovery record. See
 
 ## Reverse proxy requirements
 
-- HTTPS certificate and DNS for `TPAHUB_EXTERNAL_ORIGIN`.
+- HTTPS certificate and DNS for `TPARUN_EXTERNAL_ORIGIN`.
 - Proxy only to the private container port.
 - Preserve request method/body and WebSocket support is not required.
 - Forward normal `Host`/scheme for logging, but do not use arbitrary forwarded
@@ -134,14 +134,14 @@ operator recovery material are part of the recovery record. See
 Use the client binary against the exact HTTPS origin:
 
 ```sh
-TPAHUB_SERVER=https://packages.home.example tpahub register
-TPAHUB_SERVER=https://packages.home.example tpahub login
-tpahub --server https://packages.home.example create client-test
-tpahub --server https://packages.home.example stage ./test.deb
-tpahub --server https://packages.home.example status
-tpahub --server https://packages.home.example publish https://packages.home.example/r/user/client-test
-tpahub add https://packages.home.example/r/user/client-test --dry-run
-sudo tpahub add https://packages.home.example/r/user/client-test
+TPARUN_SERVER=https://packages.home.example tparun register
+TPARUN_SERVER=https://packages.home.example tparun login
+tparun --server https://packages.home.example create client-test
+tparun --server https://packages.home.example stage ./test.deb
+tparun --server https://packages.home.example status
+tparun --server https://packages.home.example publish https://packages.home.example/r/user/client-test
+tparun add https://packages.home.example/r/user/client-test --dry-run
+sudo tparun add https://packages.home.example/r/user/client-test
 sudo apt update
 sudo apt install PACKAGE_NAME
 ```

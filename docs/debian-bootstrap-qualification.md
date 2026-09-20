@@ -11,13 +11,13 @@ production deployment work.
 
 ```text
 Canonical/production revision: e197f9c1ad59b8d9e69befee2cadb2f6ae974633
-TPA Hub version:              0.1.1
+TPA.run version:              0.1.1
 Schema:                       5
 Production readiness:         true
 Bootstrap repository:         f102d36c2eca9bbaa8ddcff08b3c645f
 Repository authority:         internal-owned, public, global bootstrap
 Signing fingerprint:          EDCEE63AA803737C8ABBC1E4A34190A2829D5E54
-Bootstrap package:            tpahub-release_0.1.3_all.deb
+Bootstrap package:            tparun-release_0.1.3_all.deb
 Bootstrap SHA-256:            420d7886545f52cf2a8c5ce987bba55a2ddd0e9888a3c71caddd4670c0d6f18c
 ```
 
@@ -72,8 +72,8 @@ no TPA APT source. The minimal qualified path was:
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl gnupg
 
-curl -fsSL https://tpa.run/install.sh -o /tmp/tpahub-install.sh
-sudo bash /tmp/tpahub-install.sh
+curl -fsSL https://tpa.run/install.sh -o /tmp/tparun-install.sh
+sudo bash /tmp/tparun-install.sh
 
 sudo apt-get update
 sudo apt-get install -y mema bloom mema-go
@@ -144,7 +144,7 @@ under:
 ## Subsequent Mema/Bun qualification
 
 The previously documented `mema-bun` activation defect was repaired in the
-Mema recipe/package layer without changing TPA Hub, Schema 5, repository
+Mema recipe/package layer without changing TPA.run, Schema 5, repository
 authority, signing, or the Debian VM harness.
 
 ```text
