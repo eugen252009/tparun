@@ -22,7 +22,7 @@ import (
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
 type Job struct {
 	ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError, CleanupNextRetry string
-	GenerationID, VerificationState, VerifiedAt, VerificationError                                                               string
+	GenerationID, VerificationState, VerifiedAt, VerificationError, PublisherAccountID                                           string
 	CleanupAttempts                                                                                                              int64
 }
 
@@ -83,16 +83,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 11
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 9 directly or opens the current supported schema.
+// Open initializes Schema 11 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit supported forward upgrade or validates Schema 9.
+// Migrate performs the explicit supported forward upgrade or validates Schema 11.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -1658,7 +1658,7 @@ func (s *Store) ClearGenerationCleanup(c context.Context, repositoryID string) e
 	return err
 }
 func (s *Store) CreateJob(c context.Context, j Job) error {
-	_, e := s.db.ExecContext(c, "INSERT INTO publish_jobs(id,repository_id,state,incoming_path,created_at) VALUES(?,?,?,?,?)", j.ID, j.RepositoryID, j.State, j.IncomingPath, j.CreatedAt)
+	_, e := s.db.ExecContext(c, "INSERT INTO publish_jobs(id,repository_id,publisher_account_id,state,incoming_path,created_at) VALUES(?,?,?,?,?,?)", j.ID, j.RepositoryID, j.PublisherAccountID, j.State, j.IncomingPath, j.CreatedAt)
 	return e
 }
 func (s *Store) AccountStagingPaths(c context.Context, accountID string) ([]string, error) {
@@ -1720,7 +1720,7 @@ func (s *Store) TerminalJobIncomingPaths(c context.Context) ([]string, error) {
 
 func (s *Store) Job(c context.Context, id string) (Job, error) {
 	var j Job
-	e := s.db.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
+	e := s.db.QueryRowContext(c, "SELECT id,repository_id,publisher_account_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE id=?", id).Scan(&j.ID, &j.RepositoryID, &j.PublisherAccountID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
 	return j, e
 }
 func (s *Store) Claim(c context.Context) (Job, error) {
@@ -1730,7 +1730,7 @@ func (s *Store) Claim(c context.Context) (Job, error) {
 	}
 	defer tx.Rollback()
 	var j Job
-	e = tx.QueryRowContext(c, "SELECT id,repository_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
+	e = tx.QueryRowContext(c, "SELECT id,repository_id,publisher_account_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.PublisherAccountID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
 	if e != nil {
 		return Job{}, e
 	}

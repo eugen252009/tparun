@@ -126,7 +126,7 @@ export TPARUN_LOCAL_PROVISIONING_ENABLED=true TPARUN_CAPABILITY_SOURCE=legacy-lo
 export TPARUN_DELIVERY_MODE=strict-accounted TPARUN_EGRESS_ENFORCEMENT=strict-accounted TPA_BIN=/tpa TPARUN_GPG_FINGERPRINT=$GPG_KEY
 mkdir -p "$TPARUN_DATA_DIR"
 tparun init >/out/init.log 2>&1 || fail "server initialization failed"
-[[ "$(tparun schema)" == 9 ]] || fail "schema is not 9"
+[[ "$(tparun schema)" == 11 ]] || fail "schema is not 11"
 tparun serve >/out/server.log 2>&1 & SERVER_PID=$!
 cleanup_server() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
 cleanup_server() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
@@ -136,7 +136,7 @@ curl -fsS http://127.0.0.1:18080/ready >/out/ready.json || fail "server not read
 python3 - <<'PY'
 import json
 x=json.load(open('/out/ready.json'))
-assert x.get('ready') is True and x.get('schema')==9
+assert x.get('ready') is True and x.get('schema')==11
 PY
 python3 - <<'PY'
 import sqlite3

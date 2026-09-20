@@ -13,7 +13,7 @@ func (s *Store) CreateJobWithArtifacts(ctx context.Context, job Job, artifacts [
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO publish_jobs(id,repository_id,state,incoming_path,created_at) VALUES(?,?,?,?,?)`, job.ID, job.RepositoryID, job.State, job.IncomingPath, job.CreatedAt); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO publish_jobs(id,repository_id,publisher_account_id,state,incoming_path,created_at) VALUES(?,?,?,?,?,?)`, job.ID, job.RepositoryID, job.PublisherAccountID, job.State, job.IncomingPath, job.CreatedAt); err != nil {
 		return err
 	}
 	for _, artifact := range artifacts {

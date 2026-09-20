@@ -34,7 +34,7 @@ CREATE TABLE operator_recovery(id INTEGER PRIMARY KEY CHECK(id=1),token_hash BLO
 
 CREATE TABLE product_grants(customer_id TEXT NOT NULL REFERENCES accounts(id),product_id TEXT NOT NULL,capability_id TEXT NOT NULL,offer_id TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),valid_from TEXT NOT NULL,valid_until TEXT NOT NULL DEFAULT '',period_cadence TEXT NOT NULL CHECK(period_cadence IN ('annual','monthly','continuous')),storage_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(storage_limit_bytes>=0),egress_limit_bytes INTEGER NOT NULL DEFAULT 0 CHECK(egress_limit_bytes>=0),operation_metric TEXT NOT NULL DEFAULT '',operation_limit INTEGER NOT NULL DEFAULT 0 CHECK(operation_limit>=0),source TEXT NOT NULL CHECK(source IN ('local','administrative')),purchase_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(customer_id,product_id,capability_id,source));
 
-CREATE TABLE publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed')),incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT,cleanup_state TEXT NOT NULL DEFAULT 'complete' CHECK(cleanup_state IN ('complete','pending')),cleanup_error TEXT NOT NULL DEFAULT '',cleanup_attempts INTEGER NOT NULL DEFAULT 0,cleanup_next_retry TEXT NOT NULL DEFAULT '',generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT '');
+CREATE TABLE publish_jobs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed')),incoming_path TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT,cleanup_state TEXT NOT NULL DEFAULT 'complete' CHECK(cleanup_state IN ('complete','pending')),cleanup_error TEXT NOT NULL DEFAULT '',cleanup_attempts INTEGER NOT NULL DEFAULT 0,cleanup_next_retry TEXT NOT NULL DEFAULT '',generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT '',publisher_account_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));
 
@@ -47,6 +47,8 @@ CREATE TABLE purchase_grant_snapshots(purchase_id TEXT NOT NULL REFERENCES billi
 CREATE TABLE reader_credentials(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),name TEXT NOT NULL,token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(repository_id,name));
 
 CREATE TABLE repositories(id TEXT PRIMARY KEY,account_id TEXT NOT NULL, name TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public','private')),created_at TEXT NOT NULL,UNIQUE(account_id,name),FOREIGN KEY(account_id) REFERENCES accounts(id));
+
+CREATE TABLE repository_delegations(account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,capability_id TEXT NOT NULL CHECK(capability_id IN ('repository.publish')),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),operator TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,repository_id,capability_id));
 
 CREATE TABLE repository_egress_daily(repository_id TEXT NOT NULL REFERENCES repositories(id),usage_date TEXT NOT NULL,egress_bytes INTEGER NOT NULL CHECK(egress_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,usage_date));
 
@@ -65,6 +67,8 @@ CREATE UNIQUE INDEX billing_purchases_provider_reference ON billing_purchases(pr
 CREATE INDEX publish_jobs_queue ON publish_jobs(state,created_at);
 
 CREATE INDEX purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id);
+
+CREATE INDEX repository_delegations_repository ON repository_delegations(repository_id,capability_id,enabled);
 
 CREATE INDEX repository_egress_daily_date ON repository_egress_daily(usage_date);
 

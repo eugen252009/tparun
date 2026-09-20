@@ -16,7 +16,7 @@ import (
 func TestRepositoryPolicySeparatesOwnershipFromEntitlement(t *testing.T) {
 	s, _ := testServer(t)
 	ctx := context.Background()
-	if err := s.db.CreateAccount(ctx, store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
+	if err := s.db.CreateAccount(ctx, store.Account{ID: "b", Email: "b@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, LifecycleKind: store.AccountLifecycleInternal, CreatedAt: "2024-01-01T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.db.PutGrant(ctx, commerce.Grant{CustomerID: "b", ProductID: tpahubproduct.ProductID, CapabilityID: tpahubproduct.CapabilityRepositoryPublish, OfferID: "administrative", Enabled: true, ValidFrom: time.Now().Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1 << 40}, Source: "administrative", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
@@ -27,6 +27,15 @@ func TestRepositoryPolicySeparatesOwnershipFromEntitlement(t *testing.T) {
 	}
 	if _, _, err := s.repositoryPolicy().AuthorizePublication(ctx, "b", "owned"); err == nil {
 		t.Fatal("foreign account was authorized despite having no ownership")
+	}
+	if err := s.db.SetAccountClass(ctx, "b", store.AccountClassInternal); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.SetRepositoryDelegation(ctx, "b", "owned", store.RepositoryPublishDelegation, "operator", time.Now().UTC().Format(time.RFC3339Nano), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.repositoryPolicy().AuthorizePublication(ctx, "b", "owned"); err != nil {
+		t.Fatalf("delegated publisher was denied: %v", err)
 	}
 	if _, _, err := s.repositoryPolicy().AuthorizePublication(ctx, "a", "owned"); err != nil {
 		t.Fatalf("owner with effective Nano entitlement was denied: %v", err)

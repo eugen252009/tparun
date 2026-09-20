@@ -33,19 +33,18 @@ other repositories.
 Repository mutation and publication are authorized by `RepositoryPolicy`:
 
 1. the repository must have a valid owner;
-2. the authenticated account must be that owner; and
-3. the owner must have the relevant product capability and active entitlement.
+2. the authenticated account must be that owner, unless the operation explicitly supports a repository-scoped delegation; and
+3. the owner or explicitly delegated publisher must have the relevant product capability and active entitlement.
+
+Only publication supports the current delegated path. A delegation is bound to
+one account, one repository, and `repository.publish`; it does not authorize
+settings changes, visibility changes, deletion, or ownership transfer.
 
 The checks are deliberately ordered so a large entitlement cannot bypass
-ownership. The bootstrap repository is separately owned by its internal
-bootstrap account:
-
-```text
-https://tpa.run/r/tpahub-bootstrap/tpahub-bootstrap
-```
-
-Recovering or enlarging a personal account does not grant it bootstrap
-publication authority.
+ownership. The bootstrap service account is separately delegated publication authority
+for the global bootstrap repository. It remains an internal service identity;
+the repository may be owned by a normal customer account. Recovering or
+enlarging a personal account does not grant it bootstrap publication authority.
 
 ## Operator authority
 
@@ -53,6 +52,8 @@ publication authority.
 implementation the bootstrap operations can:
 
 - designate or remove the global bootstrap repository;
+- transfer the global bootstrap repository owner;
+- grant or revoke repository-scoped `repository.publish` delegation;
 - change the bootstrap account's finite storage and egress capacity; and
 - record those changes in `admin_audit_log`.
 

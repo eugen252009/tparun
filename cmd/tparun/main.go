@@ -817,12 +817,12 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	now := s.currentTime().UTC().Format(time.RFC3339Nano)
 	artifacts, identityErr := uploadedPublicationArtifacts(r.Context(), dir)
 	if identityErr == nil && len(artifacts) > 0 {
-		if e := s.db.CreateJobWithArtifacts(r.Context(), store.Job{ID: jobID, RepositoryID: id, State: "queued", IncomingPath: dir, CreatedAt: now}, artifacts); e != nil {
+		if e := s.db.CreateJobWithArtifacts(r.Context(), store.Job{ID: jobID, RepositoryID: id, PublisherAccountID: accountID(r), State: "queued", IncomingPath: dir, CreatedAt: now}, artifacts); e != nil {
 			_ = os.RemoveAll(dir)
 			bad(w, 500, e.Error())
 			return
 		}
-	} else if e := s.db.CreateJob(r.Context(), store.Job{ID: jobID, RepositoryID: id, State: "queued", IncomingPath: dir, CreatedAt: now}); e != nil {
+	} else if e := s.db.CreateJob(r.Context(), store.Job{ID: jobID, RepositoryID: id, PublisherAccountID: accountID(r), State: "queued", IncomingPath: dir, CreatedAt: now}); e != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, 500, e.Error())
 		return
@@ -1256,7 +1256,11 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	// This is intentionally the last external/DB work before activation.
-	_, _, e = s.repositoryPolicy().AuthorizePublication(context.Background(), repo.AccountID, j.RepositoryID)
+	publisherAccount := j.PublisherAccountID
+	if publisherAccount == "" {
+		publisherAccount = repo.AccountID
+	}
+	_, _, e = s.repositoryPolicy().AuthorizePublication(context.Background(), publisherAccount, j.RepositoryID)
 	if e != nil {
 		_ = os.Remove(temporaryPointer)
 		s.fail(j, e)

@@ -350,8 +350,8 @@ func cli(cfg config.Config, args []string) error {
 }
 
 func adminCLI(cfg config.Config, args []string) error {
-	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator" && args[0] != "bootstrap") {
-		return fmt.Errorf("usage: tparun admin bootstrap promote <repository-id> <artifact-path> | enable <repository-id> | capacity <storage-bytes> <egress-bytes> | egress ... | account classify <account-id> --class <production|test|internal|unclassified>")
+	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator" && args[0] != "bootstrap" && args[0] != "repository") {
+		return fmt.Errorf("usage: tparun admin repository transfer-owner <repository-id> <account-id> | grant <repository-id> <account-id> repository.publish | revoke <repository-id> <account-id> repository.publish | bootstrap ... | egress ... | account classify <account-id> --class <production|test|internal|unclassified>")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	if args[0] == "operator" && args[1] == "recovery" {
@@ -370,6 +370,39 @@ func adminCLI(cfg config.Config, args []string) error {
 	defer db.Close()
 	ctx := context.Background()
 	switch args[1] {
+	case "transfer-owner":
+		if args[0] != "repository" || len(args) < 4 {
+			return fmt.Errorf("usage: tparun admin repository transfer-owner <repository-id> <account-id>")
+		}
+		op := tparunEnv("TPARUN_OPERATOR")
+		if op == "" {
+			op = os.Getenv("USER")
+		}
+		if op == "" {
+			op = "cli"
+		}
+		if err := db.TransferRepositoryOwner(ctx, args[2], args[3], op, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "repository owner transferred")
+		return nil
+	case "grant", "revoke":
+		if args[0] != "repository" || len(args) < 5 || args[4] != store.RepositoryPublishDelegation {
+			return fmt.Errorf("usage: tparun admin repository grant|revoke <repository-id> <account-id> repository.publish")
+		}
+		op := tparunEnv("TPARUN_OPERATOR")
+		if op == "" {
+			op = os.Getenv("USER")
+		}
+		if op == "" {
+			op = "cli"
+		}
+		enabled := args[1] == "grant"
+		if err := db.SetRepositoryDelegation(ctx, args[3], args[2], args[4], op, time.Now().UTC().Format(time.RFC3339Nano), enabled); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "repository delegation %s\n", map[bool]string{true: "granted", false: "revoked"}[enabled])
+		return nil
 	case "promote":
 		if args[0] != "bootstrap" || len(args) < 4 {
 			return fmt.Errorf("usage: tparun admin bootstrap promote <repository-id> <artifact-path>")

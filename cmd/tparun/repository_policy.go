@@ -57,9 +57,26 @@ func (p RepositoryPolicy) AuthorizePublication(ctx context.Context, accountID, r
 	if !p.server.accountAllowsProductWrites(ctx, accountID) {
 		return store.Repository{}, commerce.Grant{}, fmt.Errorf("membership is in retention grace")
 	}
-	r, err := p.AuthorizeMutation(ctx, accountID, repositoryID)
+	r, err := p.Resolve(ctx, repositoryID)
 	if err != nil {
 		return store.Repository{}, commerce.Grant{}, err
+	}
+	if r.AccountID == accountID {
+		if _, err := p.AuthorizeMutation(ctx, accountID, repositoryID); err != nil {
+			return store.Repository{}, commerce.Grant{}, err
+		}
+	} else {
+		delegated, delegationErr := p.server.db.HasRepositoryDelegation(ctx, accountID, repositoryID, store.RepositoryPublishDelegation)
+		if delegationErr != nil {
+			return store.Repository{}, commerce.Grant{}, fmt.Errorf("publication delegation lookup: %w", delegationErr)
+		}
+		if !delegated {
+			return store.Repository{}, commerce.Grant{}, ErrRepositoryOwnerMismatch
+		}
+		delegatedAccount, accountErr := p.server.db.AccountByID(ctx, accountID)
+		if accountErr != nil || delegatedAccount.Status != store.AccountStatusActive || delegatedAccount.LifecycleKind != store.AccountLifecycleInternal {
+			return store.Repository{}, commerce.Grant{}, fmt.Errorf("delegated publisher is not an active internal account")
+		}
 	}
 	grant, err := p.server.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, p.server.currentTime())
 	if err != nil {

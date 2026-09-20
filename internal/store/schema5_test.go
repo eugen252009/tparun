@@ -43,7 +43,7 @@ func TestSchema5FreshInitializationIsAtomic(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 9 || version != CurrentSchemaVersion() {
+	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 11 || version != CurrentSchemaVersion() {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }
