@@ -16,7 +16,7 @@ tokens, credentials, or private repository URLs.
 | Time | Scene | Commands / screen |
 |---|---|---|
 | 0–5s | Clean machine | `cat /etc/os-release`; `command -v tparun || true` |
-| 5–15s | Public bootstrap | `curl -fsSL https://tpa.run/install.sh -o /tmp/tparun-install.sh`; `sudo bash /tmp/tparun-install.sh` |
+| 5–15s | Public bootstrap | `curl -fL https://tpa.run/tparun-bootstrap.deb -o tparun-bootstrap.deb`; `sudo apt install ./tparun-bootstrap.deb`; `sudo apt update`; `sudo apt install tparun` |
 | 15–23s | Ecosystem packages | `sudo apt install -y mema bloom mema-go mema-bun` |
 | 23–32s | Runtimes | `sudo mema install go 1.26.5`; `sudo mema install bun 1.3.14`; `go version`; `bun --version` |
 | 32–48s | Real project | Clone `https://github.com/rs/zerolog.git`, enter it, run `go mod download`, `go test ./...`, and `go build ./...` |

@@ -13,8 +13,8 @@ The public deployment marker is available at `https://tpa.run/version` and retur
 The Debian-native installation path is a small repository bootstrap package followed by ordinary APT:
 
 ```sh
-curl -LO https://tpa.run/tparun-release_0.1.4_all.deb
-sudo apt install ./tparun-release_0.1.4_all.deb
+curl -fL https://tpa.run/tparun-bootstrap.deb -o tparun-bootstrap.deb
+sudo apt install ./tparun-bootstrap.deb
 sudo apt update
 sudo apt install tparun
 ```
@@ -22,11 +22,8 @@ sudo apt install tparun
 The `tparun-release` package contains only the public repository keyring and
 scoped `.sources` definition. It does not contain the application, initialize
 Hub state, or invoke APT recursively. Future application updates use ordinary
-`sudo apt update && sudo apt upgrade`. The convenience `install.sh` wrapper
-uses the same bootstrap path and verifies the bootstrap package checksum before
-installing it. Candidate qualification may override the package path and
-checksum with `TPARUN_RELEASE_PACKAGE_PATH` and
-`TPARUN_RELEASE_PACKAGE_SHA256`; both are required together. See
+`sudo apt update && sudo apt upgrade`. For the advanced manual path, use
+[`https://tpa.run/tparun.sources`](https://tpa.run/tparun.sources). See
 [Debian bootstrap packaging](docs/debian-bootstrap.md). The public bootstrap
 repository also carries the qualified `mema` and `bloom` packages used by the
 [clean Debian qualification](docs/debian-bootstrap-qualification.md).
@@ -237,7 +234,7 @@ Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys
 
 ## VServer deployment
 
-The production deployment uses the current Schema 9 root `/home/eugen/vserver-tpahub-qualification`: the canonical binary is `bin/tparun`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published from `releases/` at the canonical `tparun-release_0.1.4_all.deb` path. Runtime configuration is kept outside Git in `/home/eugen/.config/tparun/tparun.env`; existing deployment paths and database identifiers remain unchanged because cosmetic renaming provides no technical benefit.
+The production deployment uses the current Schema 9 root `/home/eugen/vserver-tpahub-qualification`: the canonical binary is `bin/tparun`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published through the canonical public repository and promoted via `/tparun-bootstrap.deb`. Runtime configuration is kept outside Git in `/home/eugen/.config/tparun/tparun.env`; existing deployment paths and database identifiers remain unchanged because cosmetic renaming provides no technical benefit.
 
 ## Development and qualification
 
