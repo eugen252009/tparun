@@ -80,7 +80,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("Machine repositories: add <repo-url> | remove <repo-url> | installed")
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
-		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | doctor")
+		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | --version | doctor")
 		fmt.Println("Server names without a scheme default to HTTPS; explicit server arguments override configuration.")
 		return nil
 	}
@@ -130,7 +130,7 @@ func cli(cfg config.Config, args []string) error {
 	case "schema":
 		fmt.Println(store.CurrentSchemaVersion())
 		return nil
-	case "version":
+	case "version", "--version":
 		fmt.Println(appversion.Current)
 		return nil
 	case "digest":
