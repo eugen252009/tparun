@@ -33,7 +33,8 @@ func credentialsCLI(c cliConfig, args []string) error {
 			return err
 		}
 		label := input("Label: ", false)
-		return postJSON(c.Server+"/v1/account/ssh-credentials", map[string]string{"public_key": key, "label": label}, &struct{}{})
+		_, err = postJSONAuth(c.Server+"/v1/account/ssh-credentials", c.Token, map[string]string{"public_key": key, "label": label}, &struct{}{})
+		return err
 	}
 	if len(args) != 0 {
 		return fmt.Errorf("usage: tpahub account credentials [add <identity-file>]")

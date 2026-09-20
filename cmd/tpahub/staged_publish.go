@@ -51,7 +51,7 @@ func postJSONAuth(u, token string, value any, out any) (int, error) {
 		return res.StatusCode, readErr
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return res.StatusCode, fmt.Errorf("decode request response (%s): %s", res.Status, strings.TrimSpace(string(data)))
+		return res.StatusCode, fmt.Errorf("decode request response (%s): %s", res.Status, redactSecrets(strings.TrimSpace(string(data))))
 	}
 	return res.StatusCode, nil
 }

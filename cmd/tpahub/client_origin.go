@@ -12,7 +12,11 @@ import (
 	"strings"
 )
 
-type clientCredential struct{ Email, Token string }
+type clientCredential struct {
+	Email        string `json:"email"`
+	Token        string `json:"token"`
+	IdentityFile string `json:"identity_file,omitempty"`
+}
 type clientState struct {
 	Version     int                         `json:"version"`
 	Server      string                      `json:"server"`
@@ -92,9 +96,9 @@ func loadCLIForServer(explicit string) cliConfig {
 					return c
 				}
 				st.Server = origin
-				st.Credentials[origin] = clientCredential{old.Email, old.Token}
+				st.Credentials[origin] = clientCredential{Email: old.Email, Token: old.Token}
 			} else if old.Token != "" {
-				st.Unbound = &clientCredential{old.Email, old.Token}
+				st.Unbound = &clientCredential{Email: old.Email, Token: old.Token}
 			}
 		} else if version.Version == 2 {
 			if err = json.Unmarshal(b, st); err != nil {
@@ -144,10 +148,12 @@ func (c cliConfig) selectServer(raw string) cliConfig {
 	c.Server = origin
 	c.Email = ""
 	c.Token = ""
+	c.IdentityFile = ""
 	if c.state != nil {
 		credential := c.state.Credentials[origin]
 		c.Email = credential.Email
 		c.Token = credential.Token
+		c.IdentityFile = credential.IdentityFile
 	}
 	return c
 }
@@ -164,10 +170,10 @@ func saveCLI(c cliConfig) error {
 		st = &clientState{Version: 2, Credentials: map[string]clientCredential{}}
 	}
 	st.Server = origin
-	if c.Token == "" {
+	if c.Token == "" && c.IdentityFile == "" {
 		delete(st.Credentials, origin)
 	} else {
-		st.Credentials[origin] = clientCredential{c.Email, c.Token}
+		st.Credentials[origin] = clientCredential{Email: c.Email, Token: c.Token, IdentityFile: c.IdentityFile}
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

@@ -53,10 +53,22 @@ func sshSigners(identity string) ([]ssh.Signer, func(), error) {
 	return result, func() {}, nil
 }
 
-func sshLoginCLI(c cliConfig, identity string) (cliConfig, error) {
+func sshLoginCLI(c cliConfig, identity string, nonInteractive bool) (cliConfig, error) {
+	if identity == "" {
+		identity = c.IdentityFile
+	}
 	email := os.Getenv("TPAHUB_EMAIL")
 	if email == "" {
+		email = c.Email
+	}
+	if email == "" && nonInteractive {
+		return c, fmt.Errorf("TPAHUB_EMAIL or a configured account email is required for non-interactive SSH login")
+	}
+	if email == "" {
 		email = input("Email: ", false)
+	}
+	if nonInteractive && identity == "" && os.Getenv("SSH_AUTH_SOCK") == "" {
+		return c, fmt.Errorf("explicit SSH identity is required in non-interactive mode")
 	}
 	signers, closeFn, err := sshSigners(identity)
 	if err != nil {
@@ -85,7 +97,7 @@ func sshLoginCLI(c cliConfig, identity string) (cliConfig, error) {
 		var out struct{ AccountID, Email, Token string }
 		err = postJSON(c.Server+"/v1/login/ssh", map[string]string{"challenge_id": challenge.ChallengeID, "public_key": public, "signature_format": sig.Format, "signature": base64.RawStdEncoding.EncodeToString(sig.Blob)}, &out)
 		if err == nil {
-			c.Email, c.Token = out.Email, out.Token
+			c.Email, c.Token, c.IdentityFile = out.Email, out.Token, identity
 			return c, nil
 		}
 		lastErr = err

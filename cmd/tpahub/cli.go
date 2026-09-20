@@ -24,9 +24,9 @@ import (
 )
 
 type cliConfig struct {
-	Server, Email, Token string
-	state                *clientState
-	err                  error
+	Server, Email, Token, IdentityFile string
+	state                              *clientState
+	err                                error
 }
 
 const defaultServer = "https://tpa.run"
@@ -80,7 +80,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("Machine repositories: add <repo-url> | remove <repo-url> | installed")
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
-		fmt.Println("Identity: account    Authentication: register | login | logout    System: version | doctor")
+		fmt.Println("Identity: account    Authentication: register | login [--ssh [identity-file] [--non-interactive]] | logout    System: version | doctor")
 		return nil
 	}
 	if args[0] == "publish" && has(args[1:], "--help") {
@@ -168,17 +168,34 @@ func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("client command required")
 	}
+	if c.Token == "" && c.IdentityFile != "" && args[0] != "login" && args[0] != "register" && args[0] != "logout" {
+		updated, err := sshLoginCLI(c, c.IdentityFile, true)
+		if err != nil {
+			return fmt.Errorf("automatic SSH session renewal failed: %w", err)
+		}
+		if err = saveCLI(updated); err != nil {
+			return err
+		}
+		c = updated
+	}
 	switch args[0] {
 	case "register", "login":
 		if args[0] == "login" && len(args) >= 2 && args[1] == "--ssh" {
-			if len(args) > 3 {
-				return fmt.Errorf("usage: tpahub login --ssh [identity-file]")
+			nonInteractive := has(args, "--non-interactive")
+			operands := make([]string, 0, len(args)-2)
+			for _, arg := range args[2:] {
+				if arg != "--non-interactive" {
+					operands = append(operands, arg)
+				}
+			}
+			if len(operands) > 1 {
+				return fmt.Errorf("usage: tpahub login --ssh [identity-file] [--non-interactive]")
 			}
 			identity := ""
-			if len(args) == 3 {
-				identity = args[2]
+			if len(operands) == 1 {
+				identity = operands[0]
 			}
-			updated, err := sshLoginCLI(c, identity)
+			updated, err := sshLoginCLI(c, identity, nonInteractive)
 			if err != nil {
 				return err
 			}
@@ -450,6 +467,23 @@ func flagValue(a []string, k, d string) string {
 	}
 	return d
 }
+func redactSecrets(value string) string {
+	for _, prefix := range []string{"tph_s_", "tph_r_"} {
+		for {
+			i := strings.Index(value, prefix)
+			if i < 0 {
+				break
+			}
+			j := i
+			for j < len(value) && !strings.ContainsRune(" \t\r\n\\\"'", rune(value[j])) {
+				j++
+			}
+			value = value[:i] + "<redacted>" + value[j:]
+		}
+	}
+	return strings.ReplaceAll(value, "Authorization: Bearer ", "Authorization: Bearer <redacted>")
+}
+
 func postJSON(u string, v any, out any) error {
 	b, _ := json.Marshal(v)
 	req, e := http.NewRequest("POST", u, bytes.NewReader(b))
@@ -466,7 +500,7 @@ func postJSON(u string, v any, out any) error {
 		body, _ := io.ReadAll(r.Body)
 		message := strings.TrimSpace(string(body))
 		if message != "" {
-			return fmt.Errorf("request failed: %s: %s", r.Status, message)
+			return fmt.Errorf("request failed: %s: %s", r.Status, redactSecrets(message))
 		}
 		return fmt.Errorf("request failed: %s", r.Status)
 	}
@@ -487,9 +521,9 @@ func printResponse(r *http.Response) error {
 	defer r.Body.Close()
 	b, _ := io.ReadAll(r.Body)
 	if r.StatusCode >= 300 {
-		return fmt.Errorf("request failed: %s: %s", r.Status, strings.TrimSpace(string(b)))
+		return fmt.Errorf("request failed: %s: %s", r.Status, redactSecrets(strings.TrimSpace(string(b))))
 	}
-	fmt.Print(string(b))
+	fmt.Print(redactSecrets(string(b)))
 	return nil
 }
 func getJSON(u, t string, out any) error {
