@@ -2333,7 +2333,6 @@ func (s *server) reconcilePublicationState() error {
 func (s *server) reconcileOrphanedRepositoryRoots() error {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
-	root := filepath.Join(s.cfg.DataDir, "repos")
 	repositories, err := s.db.AllRepositories(context.Background())
 	if err != nil {
 		return err
@@ -2342,25 +2341,31 @@ func (s *server) reconcileOrphanedRepositoryRoots() error {
 	for _, repository := range repositories {
 		durable[repository.ID] = true
 	}
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || durable[entry.Name()] {
+	for _, rootName := range []string{"repos", "artifacts"} {
+		root := filepath.Join(s.cfg.DataDir, rootName)
+		entries, readErr := os.ReadDir(root)
+		if os.IsNotExist(readErr) {
 			continue
 		}
-		if err = s.removePath(filepath.Join(root, entry.Name())); err != nil {
-			return err
+		if readErr != nil {
+			return readErr
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || durable[entry.Name()] {
+				continue
+			}
+			if err = s.removePath(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
+			if err = syncDirectory(root); err != nil {
+				return err
+			}
 		}
 		if err = syncDirectory(root); err != nil {
 			return err
 		}
 	}
-	return syncDirectory(root)
+	return nil
 }
 
 func (s *server) removeFailedGenerations(repositoryRoot, active string) error {
