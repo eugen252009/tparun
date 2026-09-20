@@ -48,10 +48,11 @@ TPA_BIN=$(readlink -f "$TPA_BIN")
 # only the packaged candidate and the separately supplied TPA runtime.
 if ! "$ROOT/tests/rc/self-hosted.sh" "$CANDIDATE" "$OUT" "$TPA_BIN"; then
   python3 - "$OUT/rc-result.json" "$CANDIDATE" "$SHA256" "$PKG_NAME" "$PKG_VERSION" "$PKG_ARCH" "$SIZE" "$OUT/self-hosted-result.json" <<'PY'
-import json,sys
+import json,sys,os
 out,candidate,sha,name,version,arch,size,self_result=sys.argv[1:]
 with open(self_result) as f: hosted=json.load(f)
-json.dump({'result':'FAIL','artifact':{'path':candidate,'sha256':sha,'package':name,'version':version,'architecture':arch,'size':int(size)},'tests':{},'self_hosted':hosted.get('self_hosted',{}),'failed_phase':hosted.get('failed_phase')},open(out,'w'),indent=2,sort_keys=True); open(out,'a').write('\n')
+result={'result':'FAIL','artifact':{'path':candidate,'sha256':sha,'package':name,'version':version,'architecture':arch,'size':int(size)},'tests':{},'self_hosted':hosted.get('self_hosted',{}),'failed_phase':hosted.get('failed_phase')}
+tmp=out+'.tmp'; json.dump(result,open(tmp,'w'),indent=2,sort_keys=True); open(tmp,'a').write('\n'); os.replace(tmp,out)
 PY
   echo "TPA.RUN SELF-HOSTED RC QUALIFICATION FAILED"
   echo "logs: $OUT"
@@ -334,14 +335,16 @@ if [[ $RC -ne 0 ]]; then
   exit $RC
 fi
 python3 - "$OUT/rc-result.json" "$OUT/self-hosted-result.json" <<'PY'
-import json,sys
+import json,sys,os
 with open(sys.argv[1]) as f: result=json.load(f)
 with open(sys.argv[2]) as f: hosted=json.load(f)
 result['self_hosted']=hosted.get('self_hosted',{})
 tests=result.get('tests',{})
 for source,target in [('ttl_expiry','ttl_min_expiry'),('ttl_purge','ttl_min_purge'),('zero_residue','zero_residue')]:
     if tests.get(source) == 'PASS': result['self_hosted'][target] = 'PASS'
-with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2,sort_keys=True); f.write('\\n')
+tmp=sys.argv[1]+'.tmp'
+with open(tmp,'w') as f: json.dump(result,f,indent=2,sort_keys=True); f.write('\\n')
+os.replace(tmp,sys.argv[1])
 PY
 cat "$OUT/rc-result.json"
 echo "TPA.RUN RC RELEASE GATE QUALIFIED"
