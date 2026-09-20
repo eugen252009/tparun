@@ -194,21 +194,11 @@ func has(a []string, v string) bool {
 	return false
 }
 func postAuth(c cliConfig, path string, v any, out any) error {
-	b, _ := json.Marshal(v)
-	r, _ := http.NewRequest("POST", c.Server+path, bytes.NewReader(b))
-	r.Header.Set("Content-Type", "application/json")
-	if c.Token != "" {
-		r.Header.Set("Authorization", "Bearer "+c.Token)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
-	res, e := doCLIRequest(r)
-	if e != nil {
-		return e
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 300 {
-		return fmt.Errorf("request failed: %s", res.Status)
-	}
-	return json.NewDecoder(res.Body).Decode(out)
+	return authenticatedJSONRequest(c, http.MethodPost, c.Server+path, b, out)
 }
 
 type RepoRef struct {
@@ -284,7 +274,7 @@ func resolveCanonicalRepository(c cliConfig, username, name string) (string, err
 	}
 	var repositories []repository
 	if c.Token != "" {
-		if err := getJSON(c.Server+"/v1/repositories", c.Token, &repositories); err != nil {
+		if err := getJSONWithSSHReauth(c, c.Server+"/v1/repositories", &repositories); err != nil {
 			return "", err
 		}
 	}
@@ -341,7 +331,7 @@ func resolveRepositoryInScope(c cliConfig, value string, ownerOnly bool) (string
 		if c.Token == "" {
 			return "", fmt.Errorf("login required to resolve an owned repository name")
 		}
-		if err := getJSON(c.Server+"/v1/repositories", c.Token, &repositories); err != nil {
+		if err := getJSONWithSSHReauth(c, c.Server+"/v1/repositories", &repositories); err != nil {
 			return "", fmt.Errorf("discover owned repositories: %w", err)
 		}
 	}

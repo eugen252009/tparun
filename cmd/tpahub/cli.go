@@ -249,7 +249,7 @@ func cli(cfg config.Config, args []string) error {
 			RepositoryCount, PackageCount, StorageBytes int64
 			StorageLimitBytes                           int64
 		}
-		if err := getJSON(c.Server+"/v1/account", c.Token, &out); err != nil {
+		if err := getJSONWithSSHReauth(c, c.Server+"/v1/account", &out); err != nil {
 			return err
 		}
 		fmt.Printf("ID: %s\nEmail: %s\nClass: %s\nRepositories: %d\nPackages: %d\n", out.ID, out.Email, out.AccountClass, out.RepositoryCount, out.PackageCount)
