@@ -1391,6 +1391,13 @@ func (s *Store) SessionPrincipalByToken(c context.Context, hash string) (Session
 	e := s.db.QueryRowContext(c, `SELECT s.account_id,s.credential_id,COALESCE(k.flags,0) FROM sessions s JOIN accounts a ON a.id=s.account_id LEFT JOIN account_ssh_credentials k ON k.id=s.credential_id AND k.account_id=s.account_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND a.status=? AND (s.credential_id='' OR (k.revoked_at='' AND (k.flags & 1) != 0))`, hash, AccountStatusActive).Scan(&p.AccountID, &p.CredentialID, &flags)
 	p.CredentialFlags = CredentialFlags(flags)
 	if e == nil {
+		account, accountErr := s.AccountByID(c, p.AccountID)
+		if accountErr != nil { return p, accountErr }
+		state, lifecycleErr := EvaluateAccountLifecycle(account, time.Now().UTC())
+		if lifecycleErr != nil { return p, lifecycleErr }
+		if account.LifecycleKind == AccountLifecycleEphemeral && state != AccountLifecycleActive {
+			return p, fmt.Errorf("account lifecycle is not active")
+		}
 		_, _ = s.db.ExecContext(c, "UPDATE sessions SET last_used_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash)
 	}
 	return p, e

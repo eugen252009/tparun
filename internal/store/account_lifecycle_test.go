@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAccountLifecycleDefaultsAndValidation(t *testing.T) {
@@ -47,6 +48,81 @@ func TestAccountLifecycleDefaultsAndValidation(t *testing.T) {
 	}
 	if err := s.CreateAccount(ctx, Account{ID: "invalid", Email: "invalid@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now", LifecycleKind: AccountLifecycleKind("other")}); err == nil {
 		t.Fatal("invalid lifecycle kind accepted")
+	}
+}
+
+func TestLifecycleEvaluationAndRenewal(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.CreateAccount(ctx, Account{ID: "customer-life", Email: "customer-life@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMembershipExpiry(ctx, "customer-life", "2026-01-31T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.AccountByID(ctx, "customer-life")
+	if a.PurgeAfter != "2026-03-31T00:00:00Z" {
+		t.Fatalf("purge_after=%q", a.PurgeAfter)
+	}
+	state, err := EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-03-01T00:00:00Z"))
+	if err != nil || state != AccountLifecycleMembershipExpired {
+		t.Fatalf("state=%q err=%v", state, err)
+	}
+	state, err = EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-04-01T00:00:00Z"))
+	if err != nil || state != AccountLifecyclePurgeDue {
+		t.Fatalf("state=%q err=%v", state, err)
+	}
+	if err := s.SetMembershipExpiry(ctx, "customer-life", "2026-02-28T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = s.AccountByID(ctx, "customer-life")
+	if a.PurgeAfter != "2026-04-28T00:00:00Z" {
+		t.Fatalf("renewed purge_after=%q", a.PurgeAfter)
+	}
+	if err := s.CreateAccount(ctx, Account{ID: "ephemeral-life", Email: "ephemeral-life@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now", LifecycleKind: AccountLifecycleEphemeral, MembershipExpiresAt: "2026-01-01T00:00:00Z", PurgeAfter: "2026-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = s.AccountByID(ctx, "ephemeral-life")
+	state, err = EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-01-01T00:00:00Z"))
+	if err != nil || state == AccountLifecycleActive {
+		t.Fatalf("expired ephemeral state=%q err=%v", state, err)
+	}
+	if err := s.CreateAccount(ctx, Account{ID: "internal-life", Email: "internal-life@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now", LifecycleKind: AccountLifecycleInternal}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMembershipExpiry(ctx, "internal-life", "2026-01-01T00:00:00Z"); err == nil {
+		t.Fatal("internal lifecycle update accepted")
+	}
+}
+
+func mustLifecycleTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
+func TestExpiredEphemeralSessionIsRejected(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.CreateAccount(ctx, Account{ID: "session-ephemeral", Email: "session-ephemeral@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now", LifecycleKind: AccountLifecycleEphemeral, MembershipExpiresAt: "2020-01-01T00:00:00Z", PurgeAfter: "2020-01-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(ctx, Session{ID: "session", AccountID: "session-ephemeral", TokenPrefix: "fixture"}, HashToken("fixture")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionPrincipalByToken(ctx, HashToken("fixture")); err == nil {
+		t.Fatal("expired ephemeral session remained authorized")
 	}
 }
 

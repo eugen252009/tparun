@@ -131,7 +131,7 @@ func (s *server) sshLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a, err := s.db.AccountByID(r.Context(), c.AccountID)
-	if err != nil || a.Status != store.AccountStatusActive {
+	if err != nil || a.Status != store.AccountStatusActive || !s.lifecycleAllowsAuthentication(a) {
 		bad(w, http.StatusUnauthorized, "account disabled")
 		return
 	}

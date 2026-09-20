@@ -116,6 +116,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		bad(w, 401, "invalid credentials")
 		return
 	}
+	if !s.lifecycleAllowsAuthentication(a) {
+		bad(w, 401, "invalid credentials")
+		return
+	}
 	t, e := s.issue(r.Context(), a.ID)
 	if e != nil {
 		bad(w, 500, "session creation failed")
@@ -147,14 +151,23 @@ func (s *server) accountSummary(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInternalServerError, "account usage unavailable")
 		return
 	}
+	lifecycleState, lifecycleErr := store.EvaluateAccountLifecycle(a, s.currentTime())
+	if lifecycleErr != nil {
+		bad(w, http.StatusInternalServerError, "account lifecycle unavailable")
+		return
+	}
 	result := map[string]any{
-		"id":                  a.ID,
-		"email":               a.Email,
-		"account_class":       a.AccountClass,
-		"repository_count":    usage.RepositoryCount,
-		"package_count":       usage.PackageCount,
-		"storage_bytes":       usage.StoredBytes,
-		"storage_limit_state": "none",
+		"id":                    a.ID,
+		"email":                 a.Email,
+		"account_class":         a.AccountClass,
+		"lifecycle_kind":        a.LifecycleKind,
+		"membership_expires_at": a.MembershipExpiresAt,
+		"purge_after":           a.PurgeAfter,
+		"lifecycle_state":       lifecycleState,
+		"repository_count":      usage.RepositoryCount,
+		"package_count":         usage.PackageCount,
+		"storage_bytes":         usage.StoredBytes,
+		"storage_limit_state":   "none",
 	}
 	if grant, grantErr := s.grantService().GetGrant(r.Context(), commerce.CustomerID(id), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime()); grantErr == nil {
 		result["storage_limit_state"] = "finite"
@@ -169,6 +182,11 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+func (s *server) lifecycleAllowsAuthentication(a store.Account) bool {
+	state, err := store.EvaluateAccountLifecycle(a, s.currentTime())
+	return err == nil && (a.LifecycleKind != store.AccountLifecycleEphemeral || state == store.AccountLifecycleActive)
+}
+
 func (s *server) authHandler(fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok, ok := bearer(r)
