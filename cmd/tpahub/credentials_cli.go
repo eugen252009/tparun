@@ -65,8 +65,7 @@ func credentialsCLI(c cliConfig, args []string) error {
 	}
 	values := map[string]any{"label": label, "enabled": inputBool("Enabled", item.Enabled), "list": inputBool("List", hasCapability(item, "list")), "read": inputBool("Read", hasCapability(item, "read")), "write": inputBool("Write", hasCapability(item, "write"))}
 	if inputBool("Revoke", false) {
-		values["action"] = "revoke"
-		return patchCredential(c, item.ID, values)
+		return revokeCredential(c, item.ID)
 	}
 	return patchCredential(c, item.ID, values)
 }
@@ -95,6 +94,20 @@ func inputBool(name string, current bool) bool {
 	}
 	return strings.EqualFold(value, "y") || strings.EqualFold(value, "yes")
 }
+func revokeCredential(c cliConfig, id string) error {
+	req, _ := http.NewRequest(http.MethodDelete, c.Server+"/v1/account/ssh-credentials/"+id, nil)
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	res, err := doCLIRequest(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("credential revoke failed: %s", res.Status)
+	}
+	return nil
+}
+
 func patchCredential(c cliConfig, id string, value map[string]any) error {
 	b, _ := json.Marshal(value)
 	req, _ := http.NewRequest(http.MethodPatch, c.Server+"/v1/account/ssh-credentials/"+id, bytes.NewReader(b))
