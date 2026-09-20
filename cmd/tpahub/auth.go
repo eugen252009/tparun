@@ -267,7 +267,25 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) lifecycleAllowsAuthentication(a store.Account) bool {
 	state, err := store.EvaluateAccountLifecycle(a, s.currentTime())
-	return err == nil && (a.LifecycleKind != store.AccountLifecycleEphemeral || state == store.AccountLifecycleActive)
+	if err != nil {
+		return false
+	}
+	if a.LifecycleKind == store.AccountLifecycleInternal {
+		return true
+	}
+	if state == store.AccountLifecyclePurgeDue {
+		return false
+	}
+	return a.LifecycleKind != store.AccountLifecycleEphemeral || state == store.AccountLifecycleActive
+}
+
+func (s *server) accountAllowsProductWrites(ctx context.Context, accountID string) bool {
+	a, err := s.db.AccountByID(ctx, accountID)
+	if err != nil {
+		return false
+	}
+	state, err := store.EvaluateAccountLifecycle(a, s.currentTime())
+	return err == nil && (a.LifecycleKind == store.AccountLifecycleInternal || state == store.AccountLifecycleActive)
 }
 
 func (s *server) authHandler(fn http.HandlerFunc) http.HandlerFunc {

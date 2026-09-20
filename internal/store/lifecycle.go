@@ -13,11 +13,16 @@ type AccountLifecycleState string
 
 const (
 	AccountLifecycleActive            AccountLifecycleState = "active"
-	AccountLifecycleMembershipExpired AccountLifecycleState = "membership_expired"
+	AccountLifecycleGrace             AccountLifecycleState = "grace"
+	AccountLifecycleExtendedGrace     AccountLifecycleState = "extended_grace"
+	AccountLifecycleMembershipExpired AccountLifecycleState = "membership_expired" // ephemeral hard expiry
 	AccountLifecyclePurgeDue          AccountLifecycleState = "purge_due"
 )
 
-const customerRetentionMonths = 2
+const (
+	CustomerGracePeriod     = 30 * 24 * time.Hour
+	CustomerRetentionPeriod = 60 * 24 * time.Hour
+)
 
 // AccountTTLProfile is a named server-owned creation profile, not a duration.
 type AccountTTLProfile string
@@ -62,13 +67,16 @@ func EvaluateAccountLifecycle(account Account, now time.Time) (AccountLifecycleS
 	if purge != nil && !now.Before(*purge) {
 		return AccountLifecyclePurgeDue, nil
 	}
-	if account.LifecycleKind == AccountLifecycleEphemeral && expires != nil && !now.Before(*expires) {
+	if expires == nil || now.Before(*expires) {
+		return AccountLifecycleActive, nil
+	}
+	if account.LifecycleKind == AccountLifecycleEphemeral {
 		return AccountLifecycleMembershipExpired, nil
 	}
-	if account.LifecycleKind == AccountLifecycleCustomer && expires != nil && !now.Before(*expires) {
-		return AccountLifecycleMembershipExpired, nil
+	if now.Before(expires.Add(CustomerGracePeriod)) {
+		return AccountLifecycleGrace, nil
 	}
-	return AccountLifecycleActive, nil
+	return AccountLifecycleExtendedGrace, nil
 }
 
 func parseLifecycleTime(value string) (*time.Time, error) {
@@ -84,7 +92,7 @@ func parseLifecycleTime(value string) (*time.Time, error) {
 }
 
 func AddCustomerRetention(expiry time.Time) time.Time {
-	return expiry.UTC().AddDate(0, customerRetentionMonths, 0)
+	return expiry.UTC().Add(CustomerRetentionPeriod)
 }
 
 // SetMembershipExpiry atomically updates the authoritative membership and

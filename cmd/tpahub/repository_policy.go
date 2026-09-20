@@ -54,6 +54,9 @@ func (p RepositoryPolicy) AuthorizeMutation(ctx context.Context, accountID, repo
 }
 
 func (p RepositoryPolicy) AuthorizePublication(ctx context.Context, accountID, repositoryID string) (store.Repository, commerce.Grant, error) {
+	if !p.server.accountAllowsProductWrites(ctx, accountID) {
+		return store.Repository{}, commerce.Grant{}, fmt.Errorf("membership is in retention grace")
+	}
 	r, err := p.AuthorizeMutation(ctx, accountID, repositoryID)
 	if err != nil {
 		return store.Repository{}, commerce.Grant{}, err
@@ -77,6 +80,9 @@ func (p RepositoryPolicy) AuthorizeCreation(ctx context.Context, accountID strin
 	}
 	if a.Status != store.AccountStatusActive {
 		return fmt.Errorf("repository account is not active")
+	}
+	if !p.server.accountAllowsProductWrites(ctx, accountID) {
+		return fmt.Errorf("membership is in retention grace")
 	}
 	if _, err = p.server.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryCreate, p.server.currentTime()); err != nil {
 		return fmt.Errorf("repository creation not authorized: %w", err)

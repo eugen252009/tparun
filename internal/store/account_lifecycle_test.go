@@ -75,6 +75,27 @@ func FuzzParseAccountTTLProfile(f *testing.F) {
 	})
 }
 
+func TestCustomerLifecycleTimeline(t *testing.T) {
+	account := Account{LifecycleKind: AccountLifecycleCustomer, MembershipExpiresAt: "2027-01-01T00:00:00Z", PurgeAfter: "2027-03-02T00:00:00Z"}
+	cases := []struct {
+		at   string
+		want AccountLifecycleState
+	}{
+		{"2026-12-31T23:59:59Z", AccountLifecycleActive},
+		{"2027-01-01T00:00:00Z", AccountLifecycleGrace},
+		{"2027-01-16T00:00:00Z", AccountLifecycleGrace},
+		{"2027-01-31T00:00:00Z", AccountLifecycleExtendedGrace},
+		{"2027-02-15T00:00:00Z", AccountLifecycleExtendedGrace},
+		{"2027-03-02T00:00:00Z", AccountLifecyclePurgeDue},
+	}
+	for _, tc := range cases {
+		got, err := EvaluateAccountLifecycle(account, mustLifecycleTime(t, tc.at))
+		if err != nil || got != tc.want {
+			t.Fatalf("at=%s state=%q err=%v want=%q", tc.at, got, err, tc.want)
+		}
+	}
+}
+
 func TestLifecycleEvaluationAndRenewal(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
@@ -89,11 +110,15 @@ func TestLifecycleEvaluationAndRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := s.AccountByID(ctx, "customer-life")
-	if a.PurgeAfter != "2026-03-31T00:00:00Z" {
+	if a.PurgeAfter != "2026-04-01T00:00:00Z" {
 		t.Fatalf("purge_after=%q", a.PurgeAfter)
 	}
-	state, err := EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-03-01T00:00:00Z"))
-	if err != nil || state != AccountLifecycleMembershipExpired {
+	state, err := EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-02-01T00:00:00Z"))
+	if err != nil || state != AccountLifecycleGrace {
+		t.Fatalf("state=%q err=%v", state, err)
+	}
+	state, err = EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-03-03T00:00:00Z"))
+	if err != nil || state != AccountLifecycleExtendedGrace {
 		t.Fatalf("state=%q err=%v", state, err)
 	}
 	state, err = EvaluateAccountLifecycle(a, mustLifecycleTime(t, "2026-04-01T00:00:00Z"))
@@ -104,7 +129,7 @@ func TestLifecycleEvaluationAndRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ = s.AccountByID(ctx, "customer-life")
-	if a.PurgeAfter != "2026-04-28T00:00:00Z" {
+	if a.PurgeAfter != "2026-04-29T00:00:00Z" {
 		t.Fatalf("renewed purge_after=%q", a.PurgeAfter)
 	}
 	if err := s.CreateAccount(ctx, Account{ID: "ephemeral-life", Email: "ephemeral-life@example.invalid", PasswordHash: "x", Status: AccountStatusActive, CreatedAt: "now", LifecycleKind: AccountLifecycleEphemeral, MembershipExpiresAt: "2026-01-01T00:00:00Z", PurgeAfter: "2026-01-01T00:00:00Z"}); err != nil {

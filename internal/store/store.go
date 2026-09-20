@@ -1392,10 +1392,14 @@ func (s *Store) SessionPrincipalByToken(c context.Context, hash string) (Session
 	p.CredentialFlags = CredentialFlags(flags)
 	if e == nil {
 		account, accountErr := s.AccountByID(c, p.AccountID)
-		if accountErr != nil { return p, accountErr }
+		if accountErr != nil {
+			return p, accountErr
+		}
 		state, lifecycleErr := EvaluateAccountLifecycle(account, time.Now().UTC())
-		if lifecycleErr != nil { return p, lifecycleErr }
-		if account.LifecycleKind == AccountLifecycleEphemeral && state != AccountLifecycleActive {
+		if lifecycleErr != nil {
+			return p, lifecycleErr
+		}
+		if account.LifecycleKind != AccountLifecycleInternal && (state == AccountLifecyclePurgeDue || (account.LifecycleKind == AccountLifecycleEphemeral && state != AccountLifecycleActive)) {
 			return p, fmt.Errorf("account lifecycle is not active")
 		}
 		_, _ = s.db.ExecContext(c, "UPDATE sessions SET last_used_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash)

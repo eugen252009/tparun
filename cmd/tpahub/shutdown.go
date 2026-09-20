@@ -50,9 +50,10 @@ func (s *server) serveAndDrain(stop context.Context, srv *http.Server, listener 
 	defer cancelWork()
 	s.ctx = work
 	var background sync.WaitGroup
-	background.Add(2)
+	background.Add(3)
 	go func() { defer background.Done(); s.worker() }()
 	go func() { defer background.Done(); s.cleanupRetryLoop() }()
+	go func() { defer background.Done(); s.lifecycleMaintenanceLoop() }()
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
 	var serveErr error
