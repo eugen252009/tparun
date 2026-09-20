@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ func (s *Store) AccountCreatedAt(c context.Context, accountID string) (time.Time
 }
 
 func (s *Store) AllAccounts(c context.Context) ([]Account, error) {
-	rows, err := s.db.QueryContext(c, `SELECT a.id,a.email,a.password_hash,a.status,a.created_at,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id ORDER BY a.id`, AccountClassUnclassified)
+	rows, err := s.db.QueryContext(c, `SELECT a.id,a.email,a.password_hash,a.status,a.created_at,a.membership_expires_at,a.purge_after,a.lifecycle_kind,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id ORDER BY a.id`, AccountClassUnclassified)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +59,18 @@ func (s *Store) AllAccounts(c context.Context) ([]Account, error) {
 	var out []Account
 	for rows.Next() {
 		var a Account
-		if err := rows.Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.AccountClass); err != nil {
+		var expires, purge sql.NullString
+		var kind string
+		if err := rows.Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &expires, &purge, &kind, &a.AccountClass); err != nil {
 			return nil, err
 		}
+		if expires.Valid {
+			a.MembershipExpiresAt = expires.String
+		}
+		if purge.Valid {
+			a.PurgeAfter = purge.String
+		}
+		a.LifecycleKind = AccountLifecycleKind(kind)
 		out = append(out, a)
 	}
 	return out, rows.Err()

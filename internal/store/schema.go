@@ -190,7 +190,7 @@ var canonicalSchemaDefinitions = sync.OnceValues(func() (map[string]string, erro
 // Validate every declared table, column, CHECK, FK, index and trigger against
 // the canonical executable DDL. Every instance is freshly inspected read-only.
 func validateCurrentSchema(db *sql.DB) error {
-	return validateSchema(db, schemaSQL, "Schema 7")
+	return validateSchema(db, schemaSQL, "Schema 8")
 }
 
 func validateSchema(db *sql.DB, ddl, label string) error {
@@ -237,6 +237,38 @@ func validateSchema(db *sql.DB, ddl, label string) error {
 	return nil
 }
 
+func migrateSchemaTo8(db *sql.DB) error {
+	oldAccount := "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL);"
+	legacyDDL := strings.Replace(schemaSQL, "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));", oldAccount, 1)
+	if err := validateSchema(db, legacyDDL, "Schema 7"); err != nil {
+		return fmt.Errorf("Schema 7 validation failed: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin Schema 7 to 8 migration: %w", err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`ALTER TABLE accounts ADD COLUMN membership_expires_at TEXT DEFAULT NULL`,
+		`ALTER TABLE accounts ADD COLUMN purge_after TEXT DEFAULT NULL`,
+		`ALTER TABLE accounts ADD COLUMN lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal'))`,
+	} {
+		if _, err = tx.Exec(statement); err != nil {
+			return fmt.Errorf("add account lifecycle field: %w", err)
+		}
+	}
+	if _, err = tx.Exec(`UPDATE accounts SET lifecycle_kind='internal' WHERE id IN (SELECT account_id FROM global_bootstrap_repository)`); err != nil {
+		return fmt.Errorf("classify bootstrap account: %w", err)
+	}
+	if err = migrationCheckpoint("before-schema-8-version"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=8 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 8 version: %w", err)
+	}
+	return tx.Commit()
+}
+
 func migrateSchemaTo7(db *sql.DB, version int) error {
 	finalCred := "CREATE TABLE account_ssh_credentials(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,credential_type TEXT NOT NULL CHECK(credential_type='ssh'),public_key BLOB NOT NULL,fingerprint TEXT NOT NULL UNIQUE,label TEXT NOT NULL DEFAULT '',flags INTEGER NOT NULL DEFAULT 0 CHECK(flags>=0),created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '');\n\n"
 	finalAudit := "CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),credential_id TEXT NOT NULL,old_flags INTEGER NOT NULL CHECK(old_flags>=0),new_flags INTEGER NOT NULL CHECK(new_flags>=0),action TEXT NOT NULL,created_at TEXT NOT NULL);\n\n"
@@ -245,6 +277,7 @@ func migrateSchemaTo7(db *sql.DB, version int) error {
 	oldSessions := "CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT);"
 	legacyDDL := strings.Replace(schemaSQL, finalCred+finalAudit, oldCred, 1)
 	legacyDDL = strings.Replace(legacyDDL, finalSessions, oldSessions, 1)
+	legacyDDL = strings.Replace(legacyDDL, ",membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal'))", "", 1)
 	if version == 5 {
 		legacyDDL = strings.Replace(legacyDDL, oldCred, "", 1)
 	}
@@ -343,10 +376,14 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			if !explicitMigration || (version != 5 && version != 6) || currentSchemaVersion != 7 {
+			if !explicitMigration || ((version != 5 && version != 6) && version != 7) {
 				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
 			}
-			if err = migrateSchemaTo7(db, version); err != nil {
+			if version == 7 {
+				if err = migrateSchemaTo8(db); err != nil {
+					return nil, err
+				}
+			} else if err = migrateSchemaTo7(db, version); err != nil {
 				return nil, err
 			}
 		}

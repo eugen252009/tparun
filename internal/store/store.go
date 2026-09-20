@@ -24,7 +24,23 @@ type Job struct {
 	ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError, CleanupNextRetry string
 	CleanupAttempts                                                                                                              int64
 }
-type Account struct{ ID, Email, PasswordHash, Status, CreatedAt, AccountClass string }
+type Account struct {
+	ID, Email, PasswordHash, Status, CreatedAt, AccountClass string
+	MembershipExpiresAt, PurgeAfter                          string
+	LifecycleKind                                            AccountLifecycleKind
+}
+
+type AccountLifecycleKind string
+
+const (
+	AccountLifecycleCustomer  AccountLifecycleKind = "customer"
+	AccountLifecycleEphemeral AccountLifecycleKind = "ephemeral"
+	AccountLifecycleInternal  AccountLifecycleKind = "internal"
+)
+
+func (k AccountLifecycleKind) Valid() bool {
+	return k == AccountLifecycleCustomer || k == AccountLifecycleEphemeral || k == AccountLifecycleInternal
+}
 
 const AccountStatusActive = "active"
 
@@ -58,16 +74,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 7 directly or opens the current supported schema.
+// Open initializes Schema 8 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit supported forward upgrade or validates Schema 7.
+// Migrate performs the explicit supported forward upgrade or validates Schema 8.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -1286,7 +1302,14 @@ func (s *Store) CreateAccount(c context.Context, a Account, grants ...commerce.G
 		return e
 	}
 	defer tx.Rollback()
-	if _, e = tx.ExecContext(c, "INSERT INTO accounts VALUES(?,?,?,?,?)", a.ID, a.Email, a.PasswordHash, a.Status, a.CreatedAt); e != nil {
+	kind := a.LifecycleKind
+	if kind == "" {
+		kind = AccountLifecycleCustomer
+	}
+	if !kind.Valid() {
+		return fmt.Errorf("invalid account lifecycle kind")
+	}
+	if _, e = tx.ExecContext(c, "INSERT INTO accounts(id,email,password_hash,status,created_at,membership_expires_at,purge_after,lifecycle_kind) VALUES(?,?,?,?,?,?,?,?)", a.ID, a.Email, a.PasswordHash, a.Status, a.CreatedAt, nullableLifecycleTime(a.MembershipExpiresAt), nullableLifecycleTime(a.PurgeAfter), kind); e != nil {
 		return e
 	}
 	class := a.AccountClass
@@ -1311,19 +1334,41 @@ func (s *Store) CreateAccount(c context.Context, a Account, grants ...commerce.G
 	}
 	return tx.Commit()
 }
+func nullableLifecycleTime(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func scanAccount(row interface{ Scan(...any) error }, a *Account) error {
+	var expires, purge sql.NullString
+	var kind string
+	if err := row.Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &expires, &purge, &kind, &a.AccountClass); err != nil {
+		return err
+	}
+	if expires.Valid {
+		a.MembershipExpiresAt = expires.String
+	}
+	if purge.Valid {
+		a.PurgeAfter = purge.String
+	}
+	a.LifecycleKind = AccountLifecycleKind(kind)
+	return nil
+}
 func (s *Store) AccountByID(c context.Context, id string) (Account, error) {
 	var a Account
-	e := s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.id=?", AccountClassUnclassified, id).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.AccountClass)
+	e := scanAccount(s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,a.membership_expires_at,a.purge_after,a.lifecycle_kind,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.id=?", AccountClassUnclassified, id), &a)
 	return a, e
 }
 func (s *Store) AccountByEmail(c context.Context, email string) (Account, error) {
 	var a Account
-	e := s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.email=?", AccountClassUnclassified, email).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.AccountClass)
+	e := scanAccount(s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,a.membership_expires_at,a.purge_after,a.lifecycle_kind,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.email=?", AccountClassUnclassified, email), &a)
 	return a, e
 }
 func (s *Store) ActiveAccountByEmail(c context.Context, email string) (Account, error) {
 	var a Account
-	e := s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.email=? AND a.status=?", AccountClassUnclassified, email, AccountStatusActive).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.AccountClass)
+	e := scanAccount(s.db.QueryRowContext(c, "SELECT a.id,a.email,a.password_hash,a.status,a.created_at,a.membership_expires_at,a.purge_after,a.lifecycle_kind,COALESCE(m.account_class,?) FROM accounts a LEFT JOIN account_metadata m ON m.account_id=a.id WHERE a.email=? AND a.status=?", AccountClassUnclassified, email, AccountStatusActive), &a)
 	return a, e
 }
 func (s *Store) SetAccountStatus(c context.Context, id, status string) error {

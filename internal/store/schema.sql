@@ -6,7 +6,7 @@ CREATE TABLE account_ssh_credential_audit(id TEXT PRIMARY KEY,account_id TEXT NO
 
 CREATE TABLE account_storage_high_water(account_id TEXT NOT NULL REFERENCES accounts(id),period TEXT NOT NULL,high_water_bytes INTEGER NOT NULL CHECK(high_water_bytes >= 0),updated_at TEXT NOT NULL,PRIMARY KEY(account_id,period));
 
-CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL);
+CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));
 
 CREATE TABLE admin_audit_log(id TEXT PRIMARY KEY,action TEXT NOT NULL,marker_id TEXT NOT NULL,account_id TEXT NOT NULL,repository_id TEXT NOT NULL,previous_state TEXT NOT NULL,previous_version INTEGER NOT NULL,result TEXT NOT NULL,operator TEXT NOT NULL,created_at TEXT NOT NULL,details TEXT NOT NULL DEFAULT '');
 

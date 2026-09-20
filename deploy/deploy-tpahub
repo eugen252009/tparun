@@ -40,7 +40,7 @@ commit=$(git --git-dir="$REPO" rev-parse refs/heads/staging)
 short=${commit:0:12}
 
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
-  printf 'DRY RUN\nsource_commit=%s\nproduction_root=%s\nbinary=%s\ndatabase=%s\nschema_required=7\ngnupg=%s\nrelease_root=%s\nservice=%s\nhealth=%s\npublic_release=%s\n' \
+  printf 'DRY RUN\nsource_commit=%s\nproduction_root=%s\nbinary=%s\ndatabase=%s\nschema_required=8\ngnupg=%s\nrelease_root=%s\nservice=%s\nhealth=%s\npublic_release=%s\n' \
     "$commit" "$PROD_ROOT" "$BINARY" "$DB" "$GNUPGHOME_DIR" "$RELEASE_ROOT" "$SERVICE" "$HEALTH_URL" "$PUBLIC_ORIGIN"
   exit 0
 fi
@@ -50,7 +50,7 @@ fi
 [[ -x "$BINARY" ]] || fail "current production binary missing: $BINARY"
 [[ "$(sqlite3 "$DB" 'PRAGMA integrity_check;')" == ok ]] || fail 'production database integrity check failed'
 schema=$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')
-[[ "$schema" == 5 || "$schema" == 7 ]] || fail "refusing deployment against unsupported database schema: $schema"
+[[ "$schema" == 5 || "$schema" == 7 || "$schema" == 8 ]] || fail "refusing deployment against unsupported database schema: $schema"
 
 unit=$(systemctl --user cat "$SERVICE")
 grep -Fq "ExecStart=$BINARY serve" <<<"$unit" || fail "service ExecStart is not the live production binary"
@@ -69,7 +69,7 @@ import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
     value = json.load(f)
 assert value.get('revision') == sys.argv[2]
-assert value.get('schema') == '7'
+assert value.get('schema') == '8'
 PY
 then
   if [[ -f "$dest_package" ]] && [[ "$(sha256sum "$dest_package" | awk '{print $1}')" == "$package_sha" ]] && $CURL -fsSL --max-time 5 "$PUBLIC_ORIGIN/$package_file" -o "$current_body.public" && [[ "$(sha256sum "$current_body.public" | awk '{print $1}')" == "$package_sha" ]]; then
@@ -107,7 +107,7 @@ candidate="$stage/tpahub"
 (cd "$archive" && "$GO" build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$commit" -o "$candidate" ./cmd/tpahub)
 chmod 0755 "$candidate"
 [[ "$("$candidate" version)" == 0.1.1 ]] || fail 'candidate application version mismatch'
-[[ "$("$candidate" schema)" == 7 ]] || fail 'candidate schema mismatch'
+[[ "$("$candidate" schema)" == 8 ]] || fail 'candidate schema mismatch'
 
 package="$stage/$package_file"
 (cd "$archive" && SOURCE_DATE_EPOCH=0 packaging/tpahub-release/build.sh "$package")
@@ -142,17 +142,17 @@ rollback_deploy(){
   exit 1
 }
 
-if [[ "$schema" == 5 ]]; then
+if [[ "$schema" == 5 || "$schema" == 7 ]]; then
   systemctl --user stop "$SERVICE" || rollback_deploy
   cp -p "$DB" "$database_backup"
   if ! TPAHUB_DATA_DIR="$DATA_DIR" "$candidate" migrate; then rollback_deploy; fi
-  [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 7 ]] || rollback_deploy
+  [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 8 ]] || rollback_deploy
   database_migrated=1
 fi
 candidate_binary="$BINARY.new.$$"
 install -m 0755 "$candidate" "$candidate_binary"
 mv -f "$candidate_binary" "$BINARY"
-if [[ "$schema" == 5 ]]; then
+if [[ "$schema" == 5 || "$schema" == 7 ]]; then
   if ! systemctl --user start "$SERVICE"; then rollback_deploy; fi
 else
   if ! systemctl --user restart "$SERVICE"; then rollback_deploy; fi
@@ -167,7 +167,7 @@ with open(sys.argv[1], encoding='utf-8') as f:
     value = json.load(f)
 assert value.get('service') == 'tpahub'
 assert value.get('version') == '0.1.1'
-assert value.get('schema') == '7'
+assert value.get('schema') == '8'
 assert value.get('revision') == sys.argv[2]
 PY
     then break; fi
@@ -179,7 +179,7 @@ import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
     value = json.load(f)
 assert value.get('revision') == sys.argv[2]
-assert value.get('schema') == '7'
+assert value.get('schema') == '8'
 PY
 then rollback_deploy; fi
 

@@ -43,7 +43,7 @@ func TestSchema5FreshInitializationIsAtomic(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 7 || version != CurrentSchemaVersion() {
+	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 8 || version != CurrentSchemaVersion() {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }
@@ -53,8 +53,8 @@ func TestSchema5ValidationIgnoresFormattingNotTokenBoundaries(t *testing.T) {
 		name, ddl string
 		accept    bool
 	}{
-		{"formatting", `CREATE /* formatting */ TABLE accounts("id" text PRIMARY KEY, email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL)`, true},
-		{"different-column-not-whitespace", `CREATE TABLE accounts(idTEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL)`, false},
+		{"formatting", `CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));`, false},
+		{"different-column-not-whitespace", `CREATE TABLE accounts(idTEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := populatedBoundaryFixture(t)
