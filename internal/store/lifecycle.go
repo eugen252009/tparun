@@ -17,6 +17,31 @@ const (
 
 const customerRetentionMonths = 2
 
+// AccountTTLProfile is a named server-owned creation profile, not a duration.
+type AccountTTLProfile string
+
+const AccountTTLMin AccountTTLProfile = "min"
+
+func ParseAccountTTLProfile(value string) (AccountTTLProfile, bool) {
+	if value == "" {
+		return "", true
+	}
+	if value == string(AccountTTLMin) {
+		return AccountTTLMin, true
+	}
+	return "", false
+}
+
+const (
+	minEphemeralLifetime   = 5 * time.Minute
+	minEphemeralPurgeDelay = 10 * time.Minute
+)
+
+func MinEphemeralDeadlines(created time.Time) (membershipExpiresAt, purgeAfter string) {
+	created = created.UTC()
+	return created.Add(minEphemeralLifetime).Format(time.RFC3339Nano), created.Add(minEphemeralPurgeDelay).Format(time.RFC3339Nano)
+}
+
 // EvaluateAccountLifecycle derives lifecycle state from persisted timestamps.
 // It is intentionally policy-only: it does not delete or mutate account state.
 func EvaluateAccountLifecycle(account Account, now time.Time) (AccountLifecycleState, error) {

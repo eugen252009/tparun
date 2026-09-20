@@ -41,6 +41,16 @@ func NanoOffer() commerce.Offer {
 	}}
 }
 
+func MinEphemeralGrants(created time.Time) []commerce.Grant {
+	now := created.UTC()
+	return []commerce.Grant{
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryCreate, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{StorageBytes: 10 * 1024}, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryDownload, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Limits: commerce.Limits{EgressBytes: 20 * 1024}, Source: "local", CreatedAt: now, UpdatedAt: now},
+		{ProductID: ProductID, CapabilityID: CapabilityRepositoryReadPrivate, OfferID: "ephemeral-min", Enabled: true, Period: NanoCadence, Source: "local", CreatedAt: now, UpdatedAt: now},
+	}
+}
+
 func DefaultGrants(created time.Time) []commerce.Grant {
 	offer := NanoOffer()
 	grants := make([]commerce.Grant, len(offer.Grants))

@@ -59,9 +59,18 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusTooManyRequests, "too many authentication attempts")
 		return
 	}
-	var in struct{ Email, Password string }
+	var in struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		TTL      string `json:"ttl"`
+	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil || !emailRE.MatchString(strings.TrimSpace(strings.ToLower(in.Email))) || len(in.Password) < 10 {
 		bad(w, 400, "valid email and password of at least 10 characters required")
+		return
+	}
+	profile, validTTL := store.ParseAccountTTLProfile(in.TTL)
+	if !validTTL {
+		bad(w, 400, "ttl must be omitted or \"min\"")
 		return
 	}
 	hash, e := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -69,11 +78,19 @@ func (s *server) accounts(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, "password hashing failed")
 		return
 	}
-	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: store.AccountStatusActive, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	grants, e := s.initialTPAGrants(a.CreatedAt)
-	if e != nil {
-		bad(w, 500, "account provisioning unavailable")
-		return
+	created := time.Now().UTC()
+	a := store.Account{ID: newID(), Email: strings.ToLower(strings.TrimSpace(in.Email)), PasswordHash: string(hash), Status: store.AccountStatusActive, CreatedAt: created.Format(time.RFC3339Nano), LifecycleKind: store.AccountLifecycleCustomer}
+	var grants []commerce.Grant
+	if profile == store.AccountTTLMin {
+		a.LifecycleKind = store.AccountLifecycleEphemeral
+		a.MembershipExpiresAt, a.PurgeAfter = store.MinEphemeralDeadlines(created)
+		grants = tpahubproduct.MinEphemeralGrants(created)
+	} else {
+		grants, e = s.initialTPAGrants(a.CreatedAt)
+		if e != nil {
+			bad(w, 500, "account provisioning unavailable")
+			return
+		}
 	}
 	if e = s.db.CreateAccount(r.Context(), a, grants...); e != nil {
 		bad(w, 409, "account already exists")

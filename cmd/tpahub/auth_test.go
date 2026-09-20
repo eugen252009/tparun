@@ -18,6 +18,79 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func TestRegistrationTTLMinCreatesFixedEphemeralProfile(t *testing.T) {
+	s, h := testServer(t)
+	before := time.Now().UTC()
+	req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(`{"email":"ttl-min@example.invalid","password":"long-enough-password","ttl":"min"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var out struct {
+		AccountID string `json:"account_id"`
+		Token     string `json:"token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&out); err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d id=%q err=%v", response.StatusCode, out.AccountID, err)
+	}
+	a, err := s.db.AccountByID(context.Background(), out.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.LifecycleKind != store.AccountLifecycleEphemeral {
+		t.Fatalf("kind=%q", a.LifecycleKind)
+	}
+	expires, _ := time.Parse(time.RFC3339Nano, a.MembershipExpiresAt)
+	purge, _ := time.Parse(time.RFC3339Nano, a.PurgeAfter)
+	if expires.Before(before.Add(4*time.Minute)) || expires.After(time.Now().UTC().Add(6*time.Minute)) {
+		t.Fatalf("expiry=%s", expires)
+	}
+	if purge.Before(before.Add(9*time.Minute)) || purge.After(time.Now().UTC().Add(11*time.Minute)) {
+		t.Fatalf("purge=%s", purge)
+	}
+	grants := tpahubproduct.MinEphemeralGrants(expires.Add(-5 * time.Minute))
+	for _, grant := range grants {
+		got, err := s.db.GetGrant(context.Background(), commerce.CustomerID(out.AccountID), grant.ProductID, grant.CapabilityID, time.Now().UTC())
+		if err != nil {
+			t.Fatalf("grant %s: %v", grant.CapabilityID, err)
+		}
+		if got.Limits != grant.Limits {
+			t.Fatalf("grant limits=%+v want %+v", got.Limits, grant.Limits)
+		}
+	}
+	if out.Token == "" {
+		t.Fatal("missing session token")
+	}
+}
+
+func TestRegistrationRejectsArbitraryTTL(t *testing.T) {
+	for _, ttl := range []string{`5`, `"5m"`, `"short"`, `5`} {
+		s, h := testServer(t)
+		body := `{"email":"bad-ttl@example.invalid","password":"long-enough-password","ttl":` + ttl + `}`
+		req, err := http.NewRequest(http.MethodPost, h.URL+"/v1/accounts", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("ttl %s status=%d", ttl, response.StatusCode)
+		}
+		if _, err := s.db.AccountByEmail(context.Background(), "bad-ttl@example.invalid"); err == nil {
+			t.Fatalf("ttl %s created an account", ttl)
+		}
+	}
+}
+
 func TestHostedRegistrationDoesNotProvisionPermanentTPAGrants(t *testing.T) {
 	s, h := testServer(t)
 	s.cfg.BillingPurchasesEnabled = true
