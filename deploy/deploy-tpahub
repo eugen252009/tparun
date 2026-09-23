@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Rollback-safe deployment for the live Schema 7 TPA.run service.
-# The production root is intentionally explicit: the older /home/eugen/data
-# lineage is legacy and must never be selected by this script.
+# Authoritative single-node TPA.run deployment hook.
+# The historical tpahub service/path names are retained for compatibility.
 set -Eeuo pipefail
 
 HOME_DIR=${HOME_DIR:-/home/eugen}
@@ -14,188 +13,298 @@ RELEASE_ROOT=${RELEASE_ROOT:-$PROD_ROOT/releases}
 REPO=${REPO:-$HOME_DIR/tpahub}
 SERVICE=${SERVICE:-tparun.service}
 LOCK=${LOCK:-$HOME_DIR/tpahub-deploy.lock}
+ENV_FILE=${ENV_FILE:-$HOME_DIR/.config/tparun/tparun.env}
 GO=${GO:-$HOME_DIR/.local/go/bin/go}
-[[ -x "$GO" ]] || GO=$(command -v go)
 SQLITE3=${SQLITE3:-sqlite3}
 CURL=${CURL:-curl}
 PYTHON=${PYTHON:-python3}
-HEALTH_URL=${HEALTH_URL:-http://127.0.0.1:8082/version}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
 PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-https://tpa.run}
-PUBLIC_READY_URL="$PUBLIC_ORIGIN/ready"
-PUBLIC_INSTALL_URL="$PUBLIC_ORIGIN/install.sh"
+HEALTH_URL=${HEALTH_URL:-http://127.0.0.1:8082/version}
+HEALTH_ORIGIN=${HEALTH_ORIGIN:-${HEALTH_URL%/version}}
+[[ -n "$HEALTH_ORIGIN" ]] || HEALTH_ORIGIN=http://127.0.0.1:8082
+HEALTH_ATTEMPTS=${TPARUN_DEPLOY_HEALTH_ATTEMPTS:-30}
+HEALTH_INTERVAL=${TPARUN_DEPLOY_HEALTH_INTERVAL:-1}
+CURRENT_SCHEMA=11
+ALLOW_SCHEMA_MIGRATION=${TPARUN_ALLOW_SCHEMA_MIGRATION:-false}
 
-fail(){ echo "DEPLOYMENT FAILED: $*" >&2; exit 1; }
+[[ -x "$GO" ]] || GO=$(command -v go)
+[[ -n "$GO" ]] || { echo 'TPA.run deployment requires Go' >&2; exit 1; }
+if [[ -f "$ENV_FILE" ]]; then set -a; source "$ENV_FILE"; set +a; fi
 
-[[ "$PROD_ROOT" == "$HOME_DIR/vserver-tpahub-qualification" ]] || fail "unexpected production root: $PROD_ROOT"
-[[ "$DATA_DIR" == "$PROD_ROOT/data" ]] || fail "unexpected data path: $DATA_DIR"
-[[ "$DB" == "$PROD_ROOT/data/tpahub.db" ]] || fail "unexpected database path: $DB"
-[[ "$BINARY" == "$PROD_ROOT/bin/tparun" ]] || fail "unexpected binary path: $BINARY"
-[[ "$GNUPGHOME_DIR" == "$PROD_ROOT/gnupg" ]] || fail "unexpected GPG path: $GNUPGHOME_DIR"
-[[ "$DB" != "$HOME_DIR/data/tpahub/tpahub.db" ]] || fail "legacy Schema 3 database selected"
+[[ "$PROD_ROOT" == "$HOME_DIR/vserver-tpahub-qualification" ]] || { echo 'unexpected production root' >&2; exit 1; }
+[[ "$DATA_DIR" == "$PROD_ROOT/data" && "$DB" == "$DATA_DIR/tpahub.db" ]] || { echo 'unexpected production data path' >&2; exit 1; }
+[[ "$BINARY" == "$PROD_ROOT/bin/tparun" ]] || { echo 'unexpected production binary path' >&2; exit 1; }
+[[ "$GNUPGHOME_DIR" == "$PROD_ROOT/gnupg" ]] || { echo 'unexpected production signing path' >&2; exit 1; }
 
 exec 9>"$LOCK"
 flock -n 9 || { echo 'Deployment already running; latest push will be deployed by it.'; exit 0; }
 
-commit=$(git --git-dir="$REPO" rev-parse refs/heads/staging)
+commit=$(git --git-dir="$REPO" rev-parse --verify refs/heads/staging^{commit})
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'staging is not an exact commit' >&2; exit 1; }
 short=${commit:0:12}
-
-if [[ "${DRY_RUN:-0}" == 1 ]]; then
-  printf 'DRY RUN\nsource_commit=%s\nproduction_root=%s\nbinary=%s\ndatabase=%s\nschema_required=9\ngnupg=%s\nrelease_root=%s\nservice=%s\nhealth=%s\npublic_release=%s\n' \
-    "$commit" "$PROD_ROOT" "$BINARY" "$DB" "$GNUPGHOME_DIR" "$RELEASE_ROOT" "$SERVICE" "$HEALTH_URL" "$PUBLIC_ORIGIN"
-  exit 0
-fi
-
-[[ -f "$DB" ]] || fail "current production database missing: $DB"
-[[ -d "$GNUPGHOME_DIR" ]] || fail "current production GPG directory missing: $GNUPGHOME_DIR"
-[[ -x "$BINARY" ]] || fail "current production binary missing: $BINARY"
-[[ "$(sqlite3 "$DB" 'PRAGMA integrity_check;')" == ok ]] || fail 'production database integrity check failed'
-schema=$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')
-[[ "$schema" == 5 || "$schema" == 7 || "$schema" == 8 || "$schema" == 9 ]] || fail "refusing deployment against unsupported database schema: $schema"
-
-unit=$(systemctl --user cat "$SERVICE")
-grep -Fq "ExecStart=$BINARY serve" <<<"$unit" || fail "service ExecStart is not the live production binary"
-grep -Fq "WorkingDirectory=$PROD_ROOT" <<<"$unit" || fail "service WorkingDirectory is not the live production root"
-grep -Fq "TPARUN_DATA_DIR=$DATA_DIR" <<<"$unit" || fail "service data directory is not the live production data directory"
-grep -Fq "TPARUN_RELEASE_DIR=$RELEASE_ROOT" <<<"$unit" || fail "service release directory is not the live production release directory"
-grep -Fq "TPARUN_OPERATOR_RP_ID=tpa.run" <<<"$unit" || fail 'operator RP ID is not tpa.run'
-grep -Fq "TPARUN_OPERATOR_ORIGIN=https://tpa.run" <<<"$unit" || fail 'operator origin is not https://tpa.run'
-
-package_file=$(git --git-dir="$REPO" show "$commit:install.sh" | grep -oE 'tparun-release_[0-9][^/" ]*_all\.deb' | head -1)
-package_sha=$(git --git-dir="$REPO" show "$commit:install.sh" | sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' | head -1)
-dest_package="$RELEASE_ROOT/$package_file"
-current_body=$(mktemp)
-if $CURL -fsS --max-time 3 "$HEALTH_URL" >"$current_body" 2>/dev/null && "$PYTHON" - "$current_body" "$commit" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding='utf-8') as f:
-    value = json.load(f)
-assert value.get('revision') == sys.argv[2]
-assert value.get('schema') == '9'
-PY
-then
-  if [[ -f "$dest_package" ]] && [[ "$(sha256sum "$dest_package" | awk '{print $1}')" == "$package_sha" ]] && $CURL -fsSL --max-time 5 "$PUBLIC_ORIGIN/$package_file" -o "$current_body.public" && [[ "$(sha256sum "$current_body.public" | awk '{print $1}')" == "$package_sha" ]]; then
-    rm -f "$current_body" "$current_body.public"
-    echo "Already deployed $short"
-    exit 0
-  fi
-fi
-rm -f "$current_body" "$current_body.public"
-
-rollback="$HOME_DIR/tparun-public-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -m 700 "$rollback"
-cp -p "$BINARY" "$rollback/tparun"
-sha256sum "$BINARY" >"$rollback/tparun.sha256"
-systemctl --user cat "$SERVICE" >"$rollback/tparun.service"
-if [[ -f "$HOME_DIR/.config/tpahub/tpahub.env" ]]; then cp -p "$HOME_DIR/.config/tpahub/tpahub.env" "$rollback/tpahub.env"; fi
-printf '%s\n' "$DB" >"$rollback/database-path"
-printf '%s\n' "$schema" >"$rollback/database-schema"
-
+mkdir -p "$RELEASE_ROOT"
+release="$RELEASE_ROOT/$commit"
 stage="$RELEASE_ROOT/.tmp-$commit-$$"
-mkdir -p "$stage"
-chmod 700 "$stage"
-cleanup(){ rm -rf "$stage"; }
+rollback="${TPARUN_ROLLBACK_ROOT:-$HOME_DIR}/tparun-public-rollback-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+previous=''
+[[ -L "$PROD_ROOT/current" ]] && previous=$(readlink -f "$PROD_ROOT/current") || true
+health_body="$RELEASE_ROOT/.health-$commit-$$.json"
+service_stopped=0
+candidate_promoted=0
+rollback_ready=0
+migration_ran=0
+migration_state=NO
+rollback_required=0
+
+cleanup() { rm -rf "$stage" "$health_body"; }
 trap cleanup EXIT
 
-archive="$stage/source"
-mkdir "$archive"
-git --git-dir="$REPO" archive "$commit" | tar -x -C "$archive"
-built_package_file=$(grep -oE 'tparun-release_[0-9][^/" ]*_all\.deb' "$archive/install.sh" | head -1)
-built_package_sha=$(sed -n 's/.*:-\([0-9a-f]\{64\}\)}$/\1/p' "$archive/install.sh" | head -1)
-[[ "$built_package_file" == "$package_file" && "$built_package_sha" == "$package_sha" ]] || fail 'installer release metadata changed during archive extraction'
-[[ -n "$package_file" && -n "$package_sha" ]] || fail 'could not derive release package and checksum from installer'
-
-candidate="$stage/tpahub"
-(cd "$archive" && "$GO" build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$commit" -o "$candidate" ./cmd/tparun)
-chmod 0755 "$candidate"
-[[ "$("$candidate" version)" == 0.1.1 ]] || fail 'candidate application version mismatch'
-[[ "$("$candidate" schema)" == 9 ]] || fail 'candidate schema mismatch'
-
-package="$stage/$package_file"
-(cd "$archive" && SOURCE_DATE_EPOCH=0 packaging/tparun-release/build.sh "$package")
-[[ "$(dpkg-deb -f "$package" Package)" == tparun-release ]] || fail 'release package name mismatch'
-package_version=${package_file#tparun-release_}
-package_version=${package_version%_all.deb}
-[[ "$(dpkg-deb -f "$package" Version)" == "$package_version" ]] || fail 'release package version mismatch'
-[[ "$(dpkg-deb -f "$package" Architecture)" == all ]] || fail 'release package architecture mismatch'
-package_extract="$stage/package-root"
-dpkg-deb -x "$package" "$package_extract" >/dev/null
-grep -Fq 'URIs: https://tpa.run/' "$package_extract/etc/apt/sources.list.d/tparun.sources" || fail 'release package origin mismatch'
-grep -Fq 'Signed-By: /usr/share/keyrings/tparun-archive-keyring.gpg' "$package_extract/etc/apt/sources.list.d/tparun.sources" || fail 'release package trust scope mismatch'
-actual_package_sha=$(sha256sum "$package" | awk '{print $1}')
-[[ "$actual_package_sha" == "$package_sha" ]] || fail "installer/package checksum mismatch: installer=$package_sha built=$actual_package_sha"
-
-mkdir -p "$RELEASE_ROOT"
-chmod 0755 "$RELEASE_ROOT"
-old_package="$stage/old-package"
-old_package_exists=0
-if [[ -f "$dest_package" ]]; then cp -p "$dest_package" "$old_package"; old_package_exists=1; fi
-database_migrated=0
-database_backup="$rollback/tpahub.db"
-
-rollback_deploy(){
-  if (( database_migrated )); then install -m 0600 "$database_backup" "$DB"; fi
-  set +e
-  systemctl --user stop "$SERVICE" >/dev/null 2>&1 || true
-  install -m 0755 "$rollback/tparun" "$BINARY"
-  if (( old_package_exists )); then install -m 0644 "$old_package" "$dest_package"; else rm -f "$dest_package"; fi
-  systemctl --user start "$SERVICE" >/dev/null 2>&1 || true
-  echo "Rolled back binary; rollback material: $rollback" >&2
-  exit 1
+json_value() {
+  "$PYTHON" - "$1" "$2" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    value = json.load(f)
+item = value.get(sys.argv[2])
+if item is None:
+    raise SystemExit(1)
+print(item)
+PY
 }
 
-if [[ "$schema" == 5 || "$schema" == 7 || "$schema" == 8 ]]; then
-  systemctl --user stop "$SERVICE" || rollback_deploy
-  cp -p "$DB" "$database_backup"
-  if ! TPARUN_DATA_DIR="$DATA_DIR" "$candidate" migrate; then rollback_deploy; fi
-  [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == 9 ]] || rollback_deploy
-  database_migrated=1
-fi
-candidate_binary="$BINARY.new.$$"
-install -m 0755 "$candidate" "$candidate_binary"
-mv -f "$candidate_binary" "$BINARY"
-if [[ "$schema" == 5 || "$schema" == 7 || "$schema" == 8 ]]; then
-  if ! systemctl --user start "$SERVICE"; then rollback_deploy; fi
-else
-  if ! systemctl --user restart "$SERVICE"; then rollback_deploy; fi
-fi
+validate_version() {
+  local file=$1 expected_revision=$2 expected_schema=$3 expected_version=$4
+  "$PYTHON" - "$file" "$expected_revision" "$expected_schema" "$expected_version" <<'PY'
+import json, sys
+from datetime import datetime
+with open(sys.argv[1], encoding='utf-8') as f:
+    v = json.load(f)
+assert v.get('service') == 'tparun'
+assert v.get('revision') == sys.argv[2]
+assert v.get('schema') == sys.argv[3]
+assert v.get('version') == sys.argv[4]
+assert datetime.fromisoformat(v['started_at'].replace('Z', '+00:00'))
+PY
+}
 
-health_body="$stage/health.json"
-for _ in $(seq 1 30); do
-  if $CURL -fsS --max-time 3 "$HEALTH_URL" >"$health_body"; then
-    if "$PYTHON" - "$health_body" "$commit" <<'PY'
+validate_ready() {
+  local file=$1 expected_schema=$2
+  "$PYTHON" - "$file" "$expected_schema" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
-    value = json.load(f)
-assert value.get('service') == 'tparun'
-assert value.get('version') == '0.1.1'
-assert value.get('schema') == '9'
-assert value.get('revision') == sys.argv[2]
+    v = json.load(f)
+assert v == {'ready': True, 'schema': int(sys.argv[2])}
 PY
-    then break; fi
+}
+
+health_ok() {
+  local expected_revision=$1 expected_schema=$2 expected_version=$3
+  local version_file="$RELEASE_ROOT/.health-check-$$.json"
+  local ready_file="$RELEASE_ROOT/.ready-check-$$.json"
+  local version_code ready_code
+  for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
+    version_code=$($CURL -sS -o "$version_file" -w '%{http_code}' --max-time 3 "$HEALTH_ORIGIN/version" || true)
+    ready_code=$($CURL -sS -o "$ready_file" -w '%{http_code}' --max-time 3 "$HEALTH_ORIGIN/ready" || true)
+    if [[ "$version_code" == 200 && "$ready_code" == 200 ]] && \
+       validate_version "$version_file" "$expected_revision" "$expected_schema" "$expected_version" && \
+       validate_ready "$ready_file" "$expected_schema"; then
+      rm -f "$version_file" "$ready_file"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL"
+  done
+  rm -f "$version_file" "$ready_file"
+  return 1
+}
+
+verify_public_artifacts() {
+  local body code repo_url pkg_path
+  for endpoint in / /pricing /docs /how-to /nano /login /register; do
+    code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_ORIGIN$endpoint" || true)
+    [[ "$code" == 200 ]] || { echo "public endpoint failed: $endpoint ($code)" >&2; return 1; }
+  done
+  for endpoint in /account /ops; do
+    code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_ORIGIN$endpoint" || true)
+    [[ "$code" == 303 ]] || { echo "public endpoint failed: $endpoint ($code)" >&2; return 1; }
+  done
+  code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_ORIGIN/tparun.sources" || true)
+  [[ "$code" == 200 ]] || return 1
+  code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_ORIGIN/tparun-bootstrap.deb" || true)
+  [[ "$code" == "${TPARUN_BOOTSTRAP_PACKAGE_STATUS:-404}" ]] || return 1
+  code=$($CURL -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PUBLIC_ORIGIN/r/tparun/bootstrap" || true)
+  [[ "$code" == "${TPARUN_BOOTSTRAP_REPOSITORY_STATUS:-404}" ]] || return 1
+
+  body="$RELEASE_ROOT/.public-repositories-$$.json"
+  $CURL -fsS --max-time 10 "$PUBLIC_ORIGIN/v1/public/repositories" -o "$body"
+  repo_url=$("$PYTHON" - "$body" "$PUBLIC_ORIGIN" <<'PY'
+import json, sys
+repos=json.load(open(sys.argv[1], encoding='utf-8'))
+for r in repos:
+    if r.get('name') != 'tparun-bootstrap' and r.get('username') and r.get('name'):
+        print(sys.argv[2].rstrip('/') + '/r/' + r['username'] + '/' + r['name'])
+        break
+else:
+    raise SystemExit('no public repository available')
+PY
+)
+  $CURL -fsS --max-time 10 "$repo_url/dists/stable/InRelease" -o "$RELEASE_ROOT/.public-inrelease-$$"
+  $CURL -fsS --max-time 10 "$repo_url/dists/stable/main/binary-amd64/Packages" -o "$RELEASE_ROOT/.public-packages-$$"
+  pkg_path=$(awk '/^Filename:/{print $2; exit}' "$RELEASE_ROOT/.public-packages-$$")
+  [[ -n "$pkg_path" ]] || { echo 'public package metadata contains no artifact' >&2; return 1; }
+  $CURL -fsS --max-time 10 "$repo_url/$pkg_path" -o "$RELEASE_ROOT/.public-package-$$"
+  rm -f "$body" "$RELEASE_ROOT/.public-inrelease-$$" "$RELEASE_ROOT/.public-packages-$$" "$RELEASE_ROOT/.public-package-$$"
+}
+
+restore_state() {
+  local restored_data="$PROD_ROOT/.data-rollback-$$"
+  local restored_gpg="$PROD_ROOT/.gnupg-rollback-$$"
+  [[ -d "$rollback/data" && -d "$rollback/gnupg" ]] || return 1
+  rm -rf "$restored_data" "$restored_gpg"
+  cp -a "$rollback/data" "$restored_data"
+  cp -a "$rollback/gnupg" "$restored_gpg"
+  rm -rf "$DATA_DIR" "$GNUPGHOME_DIR"
+  mv "$restored_data" "$DATA_DIR"
+  mv "$restored_gpg" "$GNUPGHOME_DIR"
+  [[ "$($SQLITE3 "$DB" 'PRAGMA integrity_check;')" == ok ]]
+  [[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
+  [[ "$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')" == "$schema_before" ]]
+}
+
+deployment_failed() {
+  local reason=${1:-unknown failure} rollback_failed=0
+  trap - ERR
+  echo "TPA.run deployment failed: $reason" >&2
+  if (( service_stopped )); then
+    $SYSTEMCTL --user stop "$SERVICE" || rollback_failed=1
   fi
-  sleep 1
-done
-if [[ ! -s "$health_body" ]] || ! "$PYTHON" - "$health_body" "$commit" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding='utf-8') as f:
-    value = json.load(f)
-assert value.get('revision') == sys.argv[2]
-assert value.get('schema') == '9'
-PY
-then rollback_deploy; fi
+  if (( service_stopped && rollback_ready && !rollback_failed )); then
+    restore_state || rollback_failed=1
+  fi
+  if (( candidate_promoted && !rollback_failed )); then
+    install -m 0755 "$rollback/tparun" "$BINARY" || rollback_failed=1
+    [[ "$(sha256sum "$BINARY" | awk '{print $1}')" == "$(awk '{print $1}' "$rollback/tparun.sha256")" ]] || rollback_failed=1
+    if [[ -n "$previous" && -d "$previous" ]]; then
+      ln -s "$previous" "$PROD_ROOT/current.rollback.$$" && mv -Tf "$PROD_ROOT/current.rollback.$$" "$PROD_ROOT/current" || rollback_failed=1
+    fi
+  fi
+  if (( service_stopped && !rollback_failed )); then
+    $SYSTEMCTL --user start "$SERVICE" || rollback_failed=1
+    $SYSTEMCTL --user is-active --quiet "$SERVICE" || rollback_failed=1
+    health_ok "$previous_revision" "$schema_before" "$previous_version" || rollback_failed=1
+    verify_public_artifacts || rollback_failed=1
+  fi
+  if (( rollback_failed )); then
+    echo "MANUAL INTERVENTION REQUIRED: rollback failed; rollback state: $rollback" >&2
+  else
+    echo "TPA.run rollback restored revision=$previous_revision schema=$schema_before" >&2
+  fi
+  exit 1
+}
+on_error() { deployment_failed "command failed (exit $?)"; }
+trap on_error ERR
 
-install -m 0644 "$package" "$dest_package.new.$$"
-mv -f "$dest_package.new.$$" "$dest_package"
-public_package="$stage/public.deb"
-if ! $CURL -fsSL "$PUBLIC_ORIGIN/$package_file" -o "$public_package"; then rollback_deploy; fi
-[[ "$(sha256sum "$public_package" | awk '{print $1}')" == "$actual_package_sha" ]] || rollback_deploy
-public_install="$stage/public-install.sh"
-$CURL -fsSL "$PUBLIC_INSTALL_URL" -o "$public_install" || rollback_deploy
-grep -Fq "$package_file" "$public_install" || rollback_deploy
-grep -Fq "$actual_package_sha" "$public_install" || rollback_deploy
-$CURL -fsS "$PUBLIC_READY_URL" >/dev/null || rollback_deploy
+if [[ ! -d "$release" ]]; then
+  mkdir -p "$stage"
+  git --git-dir="$REPO" archive "$commit" | tar -x -C "$stage"
+  (cd "$stage" && "$GO" build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$commit" -o "$stage/tparun" ./cmd/tparun)
+  chmod 0755 "$stage/tparun"
+  candidate_diag="$stage/.candidate-diagnostics.json"
+  TPARUN_DATA_DIR="$stage/.diagnostics" "$stage/tparun" diagnostics > "$candidate_diag"
+  candidate_revision=$(json_value "$candidate_diag" revision)
+  [[ "$candidate_revision" == "$commit" ]] || { echo 'candidate embedded revision mismatch' >&2; exit 1; }
+  candidate_version=$(json_value "$candidate_diag" version)
+  candidate_schema=$("$stage/tparun" schema)
+  [[ "$candidate_schema" =~ ^[1-9][0-9]*$ && "$candidate_schema" -ge "$CURRENT_SCHEMA" ]] || { echo "unsupported candidate schema: $candidate_schema" >&2; exit 1; }
+  printf '%s\n' "$commit" > "$stage/.source-revision"
+  sha256sum "$stage/tparun" > "$stage/tparun.sha256"
+  mv "$stage" "$release"
+else
+  [[ -x "$release/tparun" && -f "$release/.source-revision" && "$(cat "$release/.source-revision")" == "$commit" ]] || { echo 'existing release does not match exact source revision' >&2; exit 1; }
+  candidate_diag="$release/.candidate-diagnostics.json"
+  TPARUN_DATA_DIR="$release/.diagnostics" "$release/tparun" diagnostics > "$candidate_diag"
+  candidate_revision=$(json_value "$candidate_diag" revision)
+  candidate_version=$(json_value "$candidate_diag" version)
+  candidate_schema=$("$release/tparun" schema)
+fi
+candidate_sha=$(sha256sum "$release/tparun" | awk '{print $1}')
+printf 'TPA.run candidate revision=%s schema=%s version=%s binary_sha256=%s\n' "$commit" "$candidate_schema" "$candidate_version" "$candidate_sha"
 
-printf 'Deployed %s\n' "$short"
-printf 'production_root=%s\nrollback=%s\napplication_sha256=' "$PROD_ROOT" "$rollback"
-sha256sum "$BINARY" | awk '{print $1}'
-printf 'release_package=%s\nrelease_package_sha256=%s\n' "$package_file" "$actual_package_sha"
+[[ -f "$DB" && -d "$GNUPGHOME_DIR" && -x "$BINARY" ]] || { echo 'production state is incomplete' >&2; exit 1; }
+unit=$($SYSTEMCTL --user cat "$SERVICE")
+grep -Fq "ExecStart=$BINARY serve" <<<"$unit" || { echo 'service ExecStart is not the live tparun binary' >&2; exit 1; }
+grep -Fq "WorkingDirectory=$PROD_ROOT" <<<"$unit" || { echo 'service WorkingDirectory is not the live production root' >&2; exit 1; }
+grep -Fq "TPARUN_DATA_DIR=$DATA_DIR" <<<"$unit" || { echo 'service data directory is not the live production data directory' >&2; exit 1; }
+grep -Fq "TPARUN_RELEASE_DIR=$RELEASE_ROOT" <<<"$unit" || { echo 'service release directory is not the live production release directory' >&2; exit 1; }
+current_body="$RELEASE_ROOT/.current-version-$$.json"
+$CURL -fsS --max-time 3 "$HEALTH_ORIGIN/version" -o "$current_body"
+previous_revision=$(json_value "$current_body" revision)
+previous_version=$(json_value "$current_body" version)
+previous_schema=$(json_value "$current_body" schema)
+previous_service=$(json_value "$current_body" service)
+[[ "$previous_service" == tparun ]] || { echo "unexpected running service: $previous_service" >&2; exit 1; }
+[[ "$previous_schema" == "$CURRENT_SCHEMA" ]] || { echo "production schema is not current: $previous_schema" >&2; exit 1; }
+[[ "$previous_revision" =~ ^[0-9a-f]{40}$ ]] || { echo 'current deployed revision is invalid' >&2; exit 1; }
+$SQLITE3 "$DB" 'PRAGMA integrity_check;' | grep -qx ok
+[[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]]
+schema_before="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')"
+[[ "$schema_before" == "$CURRENT_SCHEMA" ]] || { echo "database schema is not current: $schema_before" >&2; exit 1; }
+[[ "$candidate_schema" -ge "$schema_before" ]] || { echo 'candidate would downgrade the database schema' >&2; exit 1; }
+if [[ "$candidate_schema" != "$schema_before" && "$ALLOW_SCHEMA_MIGRATION" != true ]]; then
+  echo "candidate schema transition $schema_before -> $candidate_schema requires TPARUN_ALLOW_SCHEMA_MIGRATION=true" >&2
+  exit 1
+fi
+rm -f "$current_body"
+
+mkdir -p "$rollback" && chmod 0700 "$rollback"
+cp -p "$BINARY" "$rollback/tparun"
+sha256sum "$BINARY" > "$rollback/tparun.sha256"
+$SYSTEMCTL --user cat "$SERVICE" > "$rollback/tparun.service"
+[[ ! -e "$ENV_FILE" ]] || { [[ -r "$ENV_FILE" ]] && cp -p "$ENV_FILE" "$rollback/tparun.env"; }
+printf '%s\n' "$DB" > "$rollback/database-path"
+printf '%s\n' "$schema_before" > "$rollback/database-schema"
+printf '%s\n' "$previous_revision" > "$rollback/deployed-revision"
+printf '%s\n' "$candidate_sha" > "$rollback/candidate-sha256"
+$SQLITE3 "$DB" ".backup '$rollback/tpahub.db'"
+[[ "$($SQLITE3 "$rollback/tpahub.db" 'PRAGMA integrity_check;')" == ok ]]
+[[ -z "$($SQLITE3 "$rollback/tpahub.db" 'PRAGMA foreign_key_check;')" ]]
+sha256sum "$rollback/tpahub.db" > "$rollback/tpahub.db.sha256"
+
+if ! $SYSTEMCTL --user stop "$SERVICE"; then
+  $SYSTEMCTL --user start "$SERVICE" || true
+  exit 1
+fi
+service_stopped=1
+cp -a "$DATA_DIR" "$rollback/data"
+cp -a "$GNUPGHOME_DIR" "$rollback/gnupg"
+[[ -r "$rollback/data/tpahub.db" && -r "$rollback/gnupg" ]] || { echo 'rollback state is unreadable' >&2; exit 1; }
+rollback_ready=1
+
+if [[ "$candidate_schema" != "$schema_before" ]]; then
+  migration_ran=1
+  migration_state=YES
+  rollback_required=1
+  TPARUN_DATA_DIR="$DATA_DIR" "$release/tparun" migrate
+fi
+schema_after="$($SQLITE3 "$DB" 'SELECT version FROM tpahub_schema WHERE singleton=1;')"
+[[ "$schema_after" == "$candidate_schema" ]] || deployment_failed 'post-migration schema mismatch'
+$SQLITE3 "$DB" 'PRAGMA integrity_check;' | grep -qx ok || deployment_failed 'post-migration integrity failure'
+[[ -z "$($SQLITE3 "$DB" 'PRAGMA foreign_key_check;')" ]] || deployment_failed 'post-migration foreign-key failure'
+[[ "$migration_ran" == 1 || "$schema_after" == "$schema_before" ]] || deployment_failed 'unexpected schema transition'
+
+candidate_binary="$BINARY.new.$$"
+install -m 0755 "$release/tparun" "$candidate_binary"
+mv -f "$candidate_binary" "$BINARY"
+[[ "$(sha256sum "$BINARY" | awk '{print $1}')" == "$candidate_sha" ]] || deployment_failed 'deployed binary digest mismatch'
+candidate_promoted=1
+$SYSTEMCTL --user start "$SERVICE" || deployment_failed 'candidate service start failed'
+$SYSTEMCTL --user is-active --quiet "$SERVICE" || deployment_failed 'candidate service is not active'
+health_ok "$commit" "$candidate_schema" "$candidate_version" || deployment_failed 'candidate health validation failed'
+verify_public_artifacts || deployment_failed 'public artifact validation failed'
+printf '%s\n' "$commit" > "$release/.deploy-commit"
+
+printf 'TPA.run deployed revision=%s schema_before=%s schema_after=%s migration=%s binary_sha256=%s rollback=%s\n' \
+  "$commit" "$schema_before" "$schema_after" "$migration_state" "$candidate_sha" "$rollback"
+find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -name '[0-9a-f]*' -printf '%T@ %p\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf
+trap - EXIT
+cleanup
 exit 0
