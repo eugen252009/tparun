@@ -10,9 +10,10 @@
 <header class="site-header">
   <a class="brand" href="/" aria-label="TPA.run home"><span class="brand-mark" aria-hidden="true">tpa</span> TPA.run</a>
   <nav aria-label="Main navigation">
-    <a href="/" {{if eq . "home"}}aria-current="page"{{end}}>Overview</a>
+    <a href="/" {{if eq . "home"}}aria-current="page"{{end}}>Product</a>
+    <a href="/docs" {{if eq . "docs"}}aria-current="page"{{end}}>Docs</a>
     <a href="/pricing" {{if eq . "pricing"}}aria-current="page"{{end}}>Pricing</a>
-    <a href="/docs" {{if eq . "docs"}}aria-current="page"{{end}}>Documentation</a>
+    <a href="/nano" {{if eq . "nano"}}aria-current="page"{{end}}>Nano</a>
     <a class="button secondary" href="/account" {{if eq . "account"}}aria-current="page"{{end}}>Account</a>
   </nav>
 </header>
@@ -31,7 +32,7 @@
   <div><a class="brand" href="/">TPA.run</a><p class="fine">CLI-first. APT-native.</p></div>
   <nav aria-label="Footer navigation">
     <a href="/docs">Documentation</a>
-    <a href="/tparun.sources">APT sources</a>
+    <a href="/docs#install">Installation status</a>
     <a href="/docs#trust">Repository trust</a>
     <a href="https://lupricht.net/legal/">Legal</a>
     <a href="https://lupricht.net/privacy/">Privacy</a>
@@ -44,5 +45,5 @@
 {{end}}
 
 {{define "release-note"}}
-<p class="notice">Use a current TPA.run CLI release with the documented workflows. <a href="/docs#compatibility">Find a public repository</a> to get started.</p>
+<p class="notice">The deb822 source file is available for inspection. Its referenced bootstrap repository is not active yet; see the <a href="/docs#install">installation status</a>.</p>
 {{end}}

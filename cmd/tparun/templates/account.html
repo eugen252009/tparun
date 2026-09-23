@@ -10,7 +10,7 @@
       <p class="eyebrow">Account</p>
       <h1>Your workspace.</h1>
       <p>Signed in as <strong>{{.Email}}</strong></p>
-      <div class="actions"><a href="/docs#publish">Publishing guide</a><a href="/logout">Log out</a></div>
+      <div class="actions"><a href="/how-to#publish">Publish a package</a><a href="/logout">Log out</a></div>
     </div>
     <section class="section" aria-labelledby="usage">
       <h2 id="usage">Usage & capacity</h2>
@@ -92,7 +92,7 @@
     {{end}}
     <section class="section" aria-labelledby="next">
       <h2 id="next">Publish from your terminal.</h2>
-      <p>The CLI creates repositories, publishes packages, and manages reader tokens. See the guide for installation, repository discovery, and consumer setup.</p>
+      <p>The CLI creates repositories, publishes packages, and manages reader tokens. Inspect a repository before asking a machine to trust it.</p>
       <pre><code>tparun login                 # uses the configured server
 tparun login tpa.run        # defaults to https://tpa.run
 tparun create myrepo
@@ -100,7 +100,7 @@ tparun stage ./package.deb
 tparun status
 tparun publish https://tpa.run/r/eugen/my-package</code></pre>
       <p class="fine">Repositories are private by default. Publishing requires an active entitlement.</p>
-      <a class="button secondary" href="/docs#publish">Open the publishing guide</a>
+      <a class="button secondary" href="/how-to#publish">Open the publishing guide</a>
     </section>
   </main>
   {{template "footer"}}

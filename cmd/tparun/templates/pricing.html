@@ -5,32 +5,32 @@
 {{template "header" "pricing"}}
 <main id="main" class="page" tabindex="-1">
   <div class="page-heading">
-    <p class="eyebrow">Plans & capacity</p>
-    <h1>Start small.<br>Know your limits.</h1>
-    <p class="lead">Same core capabilities. Different storage and repository egress allowances.</p>
-    <p>Choose for the bytes you host and deliver—not an artificial package or repository count.</p>
+    <p class="eyebrow">Plans and capacity</p>
+    <h1>Choose the capacity that fits your packages.</h1>
+    <p class="lead">Every plan uses the same signed APT repository workflow. The difference is how much published data you can host and deliver.</p>
+    <p>Capacity is measured in package bytes and repository egress, not an arbitrary repository count.</p>
   </div>
   <div class="plans">
     <article class="plan featured">
-      <span class="tag">Current plan</span><h2>Nano</h2>
+      <span class="tag">Available now</span><h2>Nano</h2>
       {{template "nano-resources"}}
       <p>For small Debian packages, internal tools, and recipe-based distribution.</p>
-      <div class="actions"><a class="button" href="/register">Create an account</a><a href="/nano">Explore Nano →</a></div>
+      <div class="actions"><a class="button" href="/register">Create an account</a><a href="/nano">See Nano resources</a></div>
     </article>
     <article class="plan">
-      <span class="tag muted">Coming soon</span><h2>Standard</h2>
+      <span class="tag muted">Not available</span><h2>Standard</h2>
       <p class="plan-resources"><strong>500 MB</strong> storage<br><strong>20 GB</strong> monthly repository egress</p>
-      <p>Planned fixed capacity for larger application packages. Not available for purchase.</p>
+      <p>Planned fixed capacity for larger application packages. It cannot be purchased today.</p>
     </article>
     <article class="plan">
-      <span class="tag muted">Coming soon</span><h2>Pro</h2>
+      <span class="tag muted">Not available</span><h2>Pro</h2>
       <p class="plan-resources"><strong>Pay as you go</strong><br>500 MB storage blocks<br>20 GB egress blocks</p>
-      <p>Planned usage-based capacity. Storage and egress would scale independently. Not available for purchase.</p>
+      <p>Planned usage-based capacity. Storage and egress would scale independently. It cannot be purchased today.</p>
     </article>
   </div>
   <aside class="notice" aria-label="Payment availability">
     <strong>Payment availability</strong>
-    <p>Live self-service payment is not available. Where enabled, the account page offers a clearly marked Stripe Sandbox test checkout for Nano at €5/year. This is a test amount, not an active live purchase offer.</p>
+    <p>Live self-service payment is not available. Where enabled, the account page offers a clearly marked Stripe Sandbox test checkout for Nano at €5/year. This is a test amount, not a live purchase offer.</p>
   </aside>
   <section class="section" aria-labelledby="measurement">
     <h2 id="measurement">What counts toward capacity?</h2>
@@ -38,7 +38,7 @@
       <article class="card"><h3>Storage</h3><p>The canonical published <code>.deb</code> payloads across your repositories. Repository metadata and temporary workspaces are excluded from this measurement.</p><p>Publishing is subject to entitlement and technical upload limits.</p></article>
       <article class="card"><h3>Repository egress</h3><p>Package and repository metadata bytes actually delivered. Nano uses an annual entitlement period. After its allowance, new package downloads are rate-limited rather than abruptly cutting off active transfers.</p></article>
     </div>
-    <p class="fine">Uploads remain subject to technical rate and request limits. <a href="/docs#limits">Read the usage details.</a></p>
+    <p class="fine">Uploads remain subject to technical rate and request limits. <a href="/docs#limits">Read the usage reference.</a></p>
   </section>
 </main>
 {{template "footer"}}

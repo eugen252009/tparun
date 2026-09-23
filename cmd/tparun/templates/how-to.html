@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>{{template "head" "How-to guide"}}</head>
+<body>
+{{template "header" "docs"}}
+<main id="main" class="docs-layout" tabindex="-1">
+  <aside class="docs-nav">
+    <p class="eyebrow">How-to guide</p>
+    <nav aria-label="On this page">
+      <a href="#install">Install TPA.run</a>
+      <a href="#inspect">Inspect a repository</a>
+      <a href="#consume">Install a package</a>
+      <a href="#publish">Publish a package</a>
+      <a href="#private">Use a private repository</a>
+    </nav>
+  </aside>
+  <div class="docs-content">
+    <div class="page-heading">
+      <p class="eyebrow">Task-oriented guide</p>
+      <h1>Do the next useful thing.</h1>
+      <p class="lead">These short procedures show the order of operations. For concepts, limits, and command contracts, see the <a href="/docs">reference documentation</a>.</p>
+    </div>
+
+    <section id="install">
+      <h2>Install TPA.run</h2>
+      <p>The public CLI installation flow is pending. You can inspect the signed source file, but its referenced repository and bootstrap alias are not active, so do not add it to APT yet.</p>
+      <pre><code>curl -fsSL https://tpa.run/tparun.sources -o /tmp/tparun.sources
+echo 'd705adf0cc1943be3c46e11bab749710caaaf29e1d88fe956cdcd848cbfb073d  /tmp/tparun.sources' | sha256sum -c -
+sed -n '1,12p' /tmp/tparun.sources</code></pre>
+    </section>
+
+    <section id="inspect">
+      <h2>Inspect a repository before adding it</h2>
+      <p>Repository configuration is a trust decision. Start with inspection; this command does not write system APT configuration.</p>
+      <pre><code>tparun show https://tpa.run/r/eugen/dev-tools</code></pre>
+      <p>Check the publisher, repository identity, visibility, signing information, and package list. If the provenance is clear and you intend to trust the source, continue to configuration.</p>
+    </section>
+
+    <section id="consume">
+      <h2>Install a package</h2>
+      <p>After inspecting and choosing a repository, add its canonical URL and install the package it publishes.</p>
+      <pre><code>sudo tparun add https://tpa.run/r/eugen/dev-tools
+sudo apt update
+sudo apt install my-package</code></pre>
+      <p>To see managed sources without changing them, run <code>tparun installed --verbose</code>.</p>
+    </section>
+
+    <section id="publish">
+      <h2>Publish a package</h2>
+      <p>Publishing is an account action. The repository owner remains responsible for the package and its provenance.</p>
+      <pre><code>tparun login https://tpa.run
+tparun create my-repo
+tparun stage ./my-package_1.0.0_amd64.deb
+tparun status
+tparun publish https://tpa.run/r/you/my-repo</code></pre>
+      <p>Read the status output before confirming publication. Set repository visibility separately and intentionally.</p>
+    </section>
+
+    <section id="private">
+      <h2>Use a private repository</h2>
+      <p>Ask the publisher for a reader credential, then add the repository. The credential authorizes package downloads from that repository only.</p>
+      <pre><code>sudo tparun add https://tpa.run/r/you/private-tools</code></pre>
+      <p>Enter the repository password when prompted. Keep it out of shell history and shared configuration.</p>
+    </section>
+  </div>
+</main>
+{{template "footer"}}
+</body>
+</html>

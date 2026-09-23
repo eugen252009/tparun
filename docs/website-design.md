@@ -11,7 +11,8 @@ Public pages answer distinct questions:
 - `/`: what the product does and where to start;
 - `/pricing`: current capacity, future plans, and payment availability;
 - `/nano`: when small packages or optional recipes are a good fit;
-- `/docs`: installation, trust, repository discovery, consumption, publication, and limits;
+- `/docs`: reference concepts, installation, trust, repository inspection, consumption, publication, and limits;
+- `/how-to`: task-oriented installation, inspection, consumption, publication, and private-repository procedures;
 - `/account`: actual available usage data and conditional test checkout;
 - `/ops/*`: operator-only workflows with their own navigation;
 - unknown website routes: a shared, accessible 404 page.
@@ -19,7 +20,8 @@ Public pages answer distinct questions:
 ## Shared implementation
 
 `cmd/tparun/templates/layout.html` owns the head, public navigation, operator
-header, footer, Nano resource summary, and onboarding release notice.
+header, footer, Nano resource summary, and current installation-state notice.
+`docs.html` is reference material; `how-to.html` is the task-oriented guide.
 `cmd/tparun/static/site.css` owns design tokens and components. No frontend
 framework, external font, CDN, or new runtime JavaScript dependency is needed.
 

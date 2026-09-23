@@ -170,13 +170,13 @@ func TestWebsitePagesAndProtocolBoundaries(t *testing.T) {
 			text := string(body)
 			wants := []string{"Nano"}
 			if path == "/" {
-				wants = append(wants, "Bootstrap package SHA-256", "Build, publish, install", "Get Started", "tparun-bootstrap.deb", "/docs#install")
+				wants = append(wants, "APT package distribution", "Inspect repositories", "Review the source", "/docs#install")
 			} else if path == "/nano" {
 				wants = append(wants, "5 MB", "12 GB", "2,500 packages", "Illustration only", "Recipes are optional", "not currently available upgrades")
 			} else if path == "/pricing" {
-				wants = append(wants, "Standard", "Pro", "Same core capabilities", "5 MB", "12 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "Current plan", "Coming soon", "not an active live purchase offer")
-			} else {
-				wants = append(wants, "id=\"consume\"", "id=\"publish\"", "signed-by", "anniversary-based entitlement year", "Actual delivered", "live usage-based charging", "future spend controls", "test-only")
+				wants = append(wants, "Standard", "Pro", "same signed APT repository workflow", "5 MB", "12 GB", "500 MB", "20 GB", "Pay as you go", "storage blocks", "egress blocks", "Available now", "Not available", "not a live purchase offer")
+			} else if path == "/docs" {
+				wants = append(wants, "id=\"repositories\"", "Repository trust", "tparun show", "signed deb822 source", "live usage-based charging")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {

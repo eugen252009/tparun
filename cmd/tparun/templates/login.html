@@ -4,9 +4,9 @@
 <body>
 {{template "header" "account"}}
 <main id="main" class="form-page" tabindex="-1">
-  <p class="eyebrow">Your account</p>
-  <h1>Welcome back.</h1>
-  <p class="lead">Log in to view your usage and account status.</p>
+  <p class="eyebrow">TPA.run account</p>
+  <h1>Manage your repositories.</h1>
+  <p class="lead">Log in to review usage, publish packages, and manage repository access.</p>
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
   <form method="post" action="/login">
     <label for="email">Email</label>
@@ -16,7 +16,7 @@
     <button class="button" type="submit">Log in</button>
   </form>
   <p class="fine">New to TPA.run? <a href="/register">Create an account</a></p>
-  <p class="fine">Just installing public packages? <a href="/docs#consume">No account is required.</a></p>
+  <p class="fine">Installing a public package? <a href="/how-to#consume">Read the package installation guide.</a></p>
 </main>
 {{template "footer"}}
 </body>

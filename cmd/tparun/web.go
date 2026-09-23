@@ -81,10 +81,7 @@ func (s *server) web(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "home"
 	}
-	if name == "how-to" {
-		name = "docs"
-	}
-	if name != "home" && name != "docs" && name != "pricing" && name != "nano" && name != "register" && name != "login" && name != "account" {
+	if name != "home" && name != "docs" && name != "how-to" && name != "pricing" && name != "nano" && name != "register" && name != "login" && name != "account" {
 		notFoundPage(w)
 		return
 	}

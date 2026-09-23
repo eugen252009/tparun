@@ -72,7 +72,7 @@ func TestWebsiteSharedShellAndAccessBoundaries(t *testing.T) {
 
 func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
 	s, _ := testServer(t)
-	for _, path := range []string{"/docs", "/account"} {
+	for _, path := range []string{"/docs", "/how-to", "/account"} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		if path == "/account" {
@@ -83,9 +83,15 @@ func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
 		body := w.Body.String()
-		blocks := []string{"tparun login                 # uses the configured server\ntparun login tpa.run        # defaults to https://tpa.run"}
+		blocks := []string{}
 		if path == "/docs" {
-			blocks = append(blocks, "sudo apt-get update\nsudo apt-get install", "tparun register tpa.run\ntparun login")
+			blocks = append(blocks, "curl -fsSL https://tpa.run/tparun.sources", "tparun show https://tpa.run/r/eugen/dev-tools")
+		}
+		if path == "/how-to" {
+			blocks = append(blocks, "curl -fsSL https://tpa.run/tparun.sources", "tparun show https://tpa.run/r/eugen/dev-tools")
+		}
+		if path == "/account" {
+			blocks = append(blocks, "tparun login                 # uses the configured server\ntparun login tpa.run        # defaults to https://tpa.run")
 		}
 		for _, block := range blocks {
 			if !strings.Contains(body, block) {
@@ -100,18 +106,20 @@ func TestWebsiteCommandExamplesHaveIntentionalWhitespace(t *testing.T) {
 
 func TestWebsiteEcosystemExamples(t *testing.T) {
 	s, _ := testServer(t)
-	for _, path := range []string{"/", "/docs"} {
+	for _, path := range []string{"/", "/docs", "/how-to"} {
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
 		body := w.Body.String()
-		fragments := []string{"<h3>Mema</h3>", "<h3>Bloom</h3>"}
+		fragments := []string{}
 		if path == "/" {
-			fragments = append(fragments, "Discover public tools", "Useful tools built on the same package workflow.")
+			fragments = append(fragments, "APT package distribution", "Inspect repositories", "signed APT repositories")
+		} else if path == "/docs" {
+			fragments = append(fragments, "Reference and concepts", "Inspect repositories", "Repository trust")
 		} else {
-			fragments = append(fragments, "Use the ecosystem without registering", "bloom search \"math min u32\"")
+			fragments = append(fragments, "Task-oriented guide", "Inspect a repository before adding it", "Install a package")
 		}
 		for _, fragment := range fragments {
 			if !strings.Contains(body, fragment) {
@@ -120,6 +128,34 @@ func TestWebsiteEcosystemExamples(t *testing.T) {
 		}
 		if strings.Contains(body, "Try Bloom") {
 			t.Errorf("%s retains the former Bloom CTA", path)
+		}
+	}
+}
+
+func TestWebsiteRepositorySafetyAndReleaseState(t *testing.T) {
+	s, _ := testServer(t)
+	for _, path := range []string{"/", "/docs", "/how-to"} {
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		body := w.Body.String()
+		for _, unsafe := range []string{"Repos testen", "Try random repositories", "Add any repo and see what happens", "Get Started"} {
+			if strings.Contains(body, unsafe) {
+				t.Errorf("%s contains unsafe or vague repository CTA %q", path, unsafe)
+			}
+		}
+		if path != "/" && !strings.Contains(body, "tparun show") {
+			t.Errorf("%s does not provide an inspection command", path)
+		}
+	}
+	for _, path := range []string{"/docs", "/how-to"} {
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		body := w.Body.String()
+		if !strings.Contains(body, "tpa.run/tparun.sources") || !strings.Contains(body, "bootstrap") || !strings.Contains(body, "not active") {
+			t.Errorf("%s does not state the current installation release state", path)
 		}
 	}
 }

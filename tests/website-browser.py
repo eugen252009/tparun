@@ -25,7 +25,7 @@ def main():
     options = Options()
     options.add_argument("-headless")
     options.enable_bidi = True
-    paths = ["/", "/pricing", "/nano", "/docs", "/login", "/register",
+    paths = ["/", "/pricing", "/nano", "/docs", "/how-to", "/login", "/register",
              "/ops/login", "/ops/recover", "/missing-page"]
     with webdriver.Firefox(options=options) as browser:
         for width in (360, 768, 1440):
@@ -49,7 +49,7 @@ def main():
                     "return [...document.querySelectorAll('a[href^=\"#\"]')]"
                     ".every(a => document.getElementById(a.hash.slice(1)))"
                 ), f"Broken in-page link: {path}"
-                if path in {"/", "/docs"}:
+                if path in {"/", "/docs", "/how-to"}:
                     assert browser.execute_script(
                         "return [...document.querySelectorAll('pre code')].every(code => "
                         "code.textContent.split('\\n').every(line => !/^\\s{4,}(sudo|tpahub|curl|gpg|mema|bloom)/.test(line)))"
