@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "service": "tparun",
+  "files": [
+    {"path": "/lib/systemd/system/tparun.service", "role": "systemd-unit"}
+  ],
+  "config": [
+    {"path": "/etc/nginx/sites-enabled/tparun", "role": "nginx-config"}
+  ],
+  "env": [
+    {"path": "/etc/tparun/tparun.env", "role": "host-configuration", "secret": true}
+  ],
+  "data": [
+    {"path": "/var/lib/tparun/data", "role": "database-repositories-publication-state"}
+  ],
+  "identity": [
+    {"path": "/var/lib/tparun/gnupg", "role": "repository-signing-identity", "secret": true, "critical": true}
+  ],
+  "binary": [
+    {"path": "/usr/bin/tparun", "role": "release-binary"}
+  ],
+  "targets": {
+    "runtime": {"type": "systemd", "units": ["tparun.service"]},
+    "reverse_proxy": {"type": "nginx", "configs": ["/etc/nginx/sites-enabled/tparun"]}
+  },
+  "health": {
+    "ready": "http://127.0.0.1:8082/ready",
+    "version": "http://127.0.0.1:8082/version"
+  },
+  "snapshot": {"consistency": "stop-service"},
+  "backup": {
+    "format": "mema-snapshot-v1",
+    "backend": "local",
+    "file": "${SERVICE}-${SNAPSHOT_ID}.mema",
+    "verify": {"remote_hash": false}
+  },
+  "variables": {
+    "BACKUP_BACKEND": {"type": "backend-ref", "default": "local", "overridable": true},
+    "BACKUP_FILE": {"type": "string", "default": "${SERVICE}-${SNAPSHOT_ID}.mema", "overridable": true},
+    "BACKUP_RECIPIENT": {"type": "secret-ref", "source": {"env": "MEMA_BACKUP_RECIPIENT"}}
+  },
+  "clean": {"grace_period": "7d"}
+}

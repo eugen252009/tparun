@@ -1,0 +1,3 @@
+d /var/lib/tparun 0750 tparun tparun -
+d /var/lib/tparun/data 0700 tparun tparun -
+d /var/lib/tparun/gnupg 0700 tparun tparun -

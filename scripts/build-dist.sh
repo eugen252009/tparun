@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DIST=${1:-$ROOT/dist}
-VERSION=${TPARUN_VERSION:-0.1.1-1}
+VERSION=${TPARUN_VERSION:-0.1.2}
 RELEASE_VERSION=${TPARUN_RELEASE_VERSION:-0.1.5}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
 ARCH=${TPARUN_ARCH:-amd64}
@@ -17,25 +17,8 @@ command -v apt-ftparchive >/dev/null || { echo 'apt-ftparchive is required' >&2;
 [[ -f "$ROOT/tpahub.asc" ]] || { echo 'tpahub.asc is required' >&2; exit 1; }
 cp "$ROOT/tpahub.asc" "$DIST/keyring/tpahub.asc"
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/DEBIAN" "$work/usr/bin"
-revision=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unknown)
-go build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$revision" -o "$work/usr/bin/tparun" "$ROOT/cmd/tparun"
-chmod 0755 "$work/usr/bin/tparun"
-cat >"$work/DEBIAN/control" <<EOF
-Package: tparun
-Version: $VERSION
-Section: net
-Priority: optional
-Architecture: $ARCH
-Depends: ca-certificates
-Maintainer: TPA.run <tparun@lupricht.net>
-Description: TPA.run application
- Persistent APT repository and package publishing service.
-EOF
-find "$work" -exec touch -h -d "@$EPOCH" {} +
-dpkg-deb --build --root-owner-group "$work" "$DIST/pool/main/t/tparun/tparun_${VERSION}_${ARCH}.deb" >/dev/null
+TPARUN_VERSION="$VERSION" TPARUN_ARCH="$ARCH" SOURCE_DATE_EPOCH="$EPOCH" \
+  "$ROOT/packaging/tparun/build.sh" "$DIST/pool/main/t/tparun/tparun_${VERSION}_${ARCH}.deb" >/dev/null
 
 SOURCE_DATE_EPOCH="$EPOCH" TPARUN_RELEASE_VERSION="$RELEASE_VERSION" \
   "$ROOT/packaging/tparun-release/build.sh" "$DIST/pool/main/t/tparun-release/tparun-release_${RELEASE_VERSION}_all.deb" >/dev/null

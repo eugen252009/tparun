@@ -1,0 +1,26 @@
+[Unit]
+Description=TPA.run application (Schema 11)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tparun
+Group=tparun
+WorkingDirectory=/var/lib/tparun
+EnvironmentFile=/etc/tparun/tparun.env
+ExecStart=/usr/bin/tparun serve
+Restart=on-failure
+RestartSec=3s
+TimeoutStartSec=60s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+KillMode=control-group
+UMask=0027
+LimitNOFILE=1048575:1048576
+LimitCORE=0:infinity
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
