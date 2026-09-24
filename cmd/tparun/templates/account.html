@@ -20,7 +20,7 @@
           {{if .HasStorageUsage}}
           <p class="lead"><strong>{{.StorageUsed}}</strong> used</p>
           <p>Storage capacity: {{.StorageCapacity}}</p>
-          <p class="fine">Canonical package payloads across your repositories. Capacity is checked before publication.
+          <p class="fine">Current active package payloads across all your repositories. Capacity is checked against the final publication; APT metadata and temporary uploads are excluded.
           </p>
           {{else}}
           <p>Storage usage unavailable</p>

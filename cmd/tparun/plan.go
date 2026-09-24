@@ -154,5 +154,5 @@ type StorageCapacityError struct {
 }
 
 func (e StorageCapacityError) Error() string {
-	return fmt.Sprintf("storage-capacity-exceeded: Storage capacity exceeded. Current usage: %s (current_bytes=%d); resulting usage: %s (resulting_bytes=%d); capacity: %s (capacity_bytes=%d)", formatBytes(e.CurrentBytes), e.CurrentBytes, formatBytes(e.ResultingBytes), e.ResultingBytes, formatBytes(e.CapacityBytes), e.CapacityBytes)
+	return fmt.Sprintf("storage-capacity-exceeded: Package storage capacity exceeded. Current published payload: %s (current_bytes=%d); resulting usage: %s (resulting_bytes=%d); capacity: %s (capacity_bytes=%d)", formatBytes(e.CurrentBytes), e.CurrentBytes, formatBytes(e.ResultingBytes), e.ResultingBytes, formatBytes(e.CapacityBytes), e.CapacityBytes)
 }

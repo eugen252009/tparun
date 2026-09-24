@@ -572,10 +572,15 @@ func TestDisabledGrantAtFinalAuthorizationCannotActivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
+	disabled := false
+	s.publicationFault = func(stage string) error {
+		if stage == "before-live-swap" {
+			disabled = true
+		}
+		return nil
+	}
 	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
-		calls++
-		if calls >= 3 {
+		if disabled {
 			return commerce.Grant{}, commerce.ErrGrantDisabled
 		}
 		return grant, nil

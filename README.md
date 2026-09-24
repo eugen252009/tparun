@@ -119,6 +119,13 @@ Create a repository with `tparun create name`; repositories default to hidden/pr
 
 ## Account
 
+Nano includes **5 MB published package storage**: exactly 5,000,000 bytes of
+current active `.deb` files, shared across all repositories owned by the account.
+APT metadata and temporary uploads/workspaces are not customer package storage.
+There is no repository-count entitlement or per-repository storage allowance.
+Final publication is subject to separate service resource safeguards; see the
+[quota and infrastructure contract](docs/nano-storage-accounting.md).
+
 `tparun account` reports the authenticated account and selected server. Account credentials remain origin-scoped; changing the server requires fresh authentication.
 
 ## APT registration

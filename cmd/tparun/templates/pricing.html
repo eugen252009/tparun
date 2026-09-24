@@ -35,7 +35,7 @@
   <section class="section" aria-labelledby="measurement">
     <h2 id="measurement">What counts toward capacity?</h2>
     <div class="card-grid">
-      <article class="card"><h3>Storage</h3><p>The canonical published <code>.deb</code> payloads across your repositories. Repository metadata and temporary workspaces are excluded from this measurement.</p><p>Publishing is subject to entitlement and technical upload limits.</p></article>
+      <article class="card"><h3>Storage</h3><p>The canonical published <code>.deb</code> payloads across your repositories. APT metadata, queued uploads, and temporary workspaces are excluded from this measurement. The quota applies account-wide to the final active package payload, not separately to each repository.</p><p>Publishing is subject to entitlement and technical upload limits.</p></article>
       <article class="card"><h3>Repository egress</h3><p>Package and repository metadata bytes actually delivered. Nano uses an annual entitlement period. After its allowance, new package downloads are rate-limited rather than abruptly cutting off active transfers.</p></article>
     </div>
     <p class="fine">Uploads remain subject to technical rate and request limits. <a href="/docs#limits">Read the usage reference.</a></p>

@@ -104,19 +104,13 @@ func TestUploadAdmissionRepresentationBoundaries(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					// Product quota is evaluated on the resulting candidate, not input.
 					want := 202
-					if delta > 0 {
-						want = 413
-					}
 					if status != want {
 						t.Fatalf("status=%d want=%d", status, want)
 					}
 					jobs, staged := admissionState(t, s)
-					if delta > 0 {
-						if jobs != 0 || staged != 0 {
-							t.Fatal("rejection persisted incoming")
-						}
-					} else if jobs != 1 || staged != int64(n) {
+					if jobs != 1 || staged != int64(n) {
 						t.Fatalf("job representation=%d/%d", jobs, staged)
 					}
 					grant, err := s.db.GetGrant(context.Background(), "a", TPAHubProductID, CapabilityRepositoryPublish, s.currentTime())
@@ -154,19 +148,13 @@ func TestUploadAdmissionConcurrentRepresentations(t *testing.T) {
 					}
 					if c == 202 {
 						accepted++
-					} else if c != 413 {
+					} else {
 						t.Fatalf("unexpected status=%d", c)
 					}
 				}
 				jobs, total := admissionState(t, s)
-				if jobs != accepted || total > 10000000 {
-					t.Fatalf("durable admission exceeds authority: jobs=%d accepted=%d bytes=%d", jobs, accepted, total)
-				}
-				if sizes[0]+sizes[1] <= 10000000 && accepted != 2 {
-					t.Fatalf("valid exact-fit competitors rejected without retry: codes=%v jobs=%d bytes=%d", codes, jobs, total)
-				}
-				if sizes[0]+sizes[1] > 10000000 && accepted > 1 {
-					t.Fatal("both oversized competitors admitted")
+				if jobs != 2 || accepted != 2 || total != int64(sizes[0]+sizes[1]) {
+					t.Fatalf("temporary input incorrectly charged to product quota: codes=%v jobs=%d bytes=%d", codes, jobs, total)
 				}
 			})
 		}
@@ -219,7 +207,11 @@ func TestMultipartFiveMillionPolicyRegression(t *testing.T) {
 		t.Fatal("wrong durable representation")
 	}
 	status, err = admissionHTTP(h, "multipart", 2000001)
-	if err != nil || status != 413 {
-		t.Fatalf("over limit=%d %v", status, err)
+	if err != nil || status != 202 {
+		t.Fatalf("temporary input charged to payload quota=%d %v", status, err)
+	}
+	jobs, total = admissionState(t, s)
+	if jobs != 2 || total != 5000001 {
+		t.Fatalf("queued representation=%d/%d", jobs, total)
 	}
 }

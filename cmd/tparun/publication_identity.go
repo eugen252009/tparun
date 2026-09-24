@@ -44,6 +44,40 @@ func uploadedPublicationArtifacts(ctx context.Context, dir string) ([]store.Publ
 	return out, nil
 }
 
+// removeReplacedWorkPackages implements the planner's existing identity-based
+// replacement contract. Only the disposable baseline copy is changed; versions
+// with different identities and all authoritative/historical files are preserved.
+func (s *server) removeReplacedWorkPackages(ctx context.Context, work, jobID string) error {
+	incoming, err := s.db.PublicationArtifacts(ctx, jobID)
+	if err != nil || len(incoming) == 0 {
+		return err // legacy/malformed input still goes through normal validation
+	}
+	identities := make(map[string]bool, len(incoming))
+	for _, artifact := range incoming {
+		identities[strings.Join([]string{artifact.Package, artifact.Version, artifact.Architecture}, "\x00")] = true
+	}
+	entries, err := os.ReadDir(work)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".deb") {
+			continue
+		}
+		path := filepath.Join(work, entry.Name())
+		identity, err := debIdentity(ctx, path)
+		if err != nil {
+			return err
+		}
+		if identities[identity] {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *server) verifyPublicationArtifactIdentity(ctx context.Context, root, jobID string) ([]store.PublicationArtifact, error) {
 	expected, err := s.db.PublicationArtifacts(ctx, jobID)
 	if err != nil {

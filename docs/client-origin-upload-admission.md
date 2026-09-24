@@ -46,7 +46,12 @@ Optional future challenge/machine-key authentication is not implemented. Any
 session it eventually issues must still obey origin/identity binding; challenge
 responses do not by themselves establish first-contact trust.
 
-## Upload invariant
+## Historical upload invariant (superseded)
+
+The staging-entitlement arithmetic below describes the historical R3/R4 fix,
+not current behavior. The [current Nano contract](nano-storage-accounting.md)
+removes temporary input from product entitlement entirely. Uploads still reserve
+physical staging/disk/inode capacity; the worker checks final account payload.
 
 For multipart and unknown-length raw requests, post-copy input already appears
 in the in-flight incoming directory. The existing logical capacity check now adds

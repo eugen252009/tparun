@@ -47,7 +47,7 @@ func TestPhysicalSnapshotSerializesOrphanRemoval(t *testing.T) {
 	go func() {
 		s.stagingMu.Lock()
 		defer s.stagingMu.Unlock()
-		e := s.reserveCapacityWithLogicalResources(context.Background(), "a", admissionRepo, "probe", "incoming", block, 0, 1)
+		e := s.reserveCapacityWithResources(context.Background(), "a", admissionRepo, "probe", "incoming", block, 1)
 		scanned.Store(sequence.Add(1))
 		scanDone <- e
 	}()

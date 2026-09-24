@@ -83,10 +83,16 @@ func TestLocalPolicyRegistrationAuthorizationAndPrivateRead(t *testing.T) {
 			if _, grant, err := s.repositoryPolicy().AuthorizePublication(context.Background(), id, pub); err != nil || grant.Limits.StorageBytes != 23 {
 				t.Fatalf("publication authority %+v %v", grant, err)
 			}
-			// Both admission cases pass through the unchanged real upload path.
+			// Upload admission is infrastructure-only; the final candidate remains
+			// subject to this account's actual resolved payload grant.
 			w := provisioningRequest(s, "POST", "/v1/repositories/"+pub+"/publishes?filename=local.deb", strings.Repeat("x", 24), token)
-			if w.Code != 413 {
-				t.Fatalf("over-limit publication=%d %s", w.Code, w.Body.String())
+			if w.Code != 202 {
+				t.Fatalf("temporary upload=%d %s", w.Code, w.Body.String())
+			}
+			candidate := candidateWithSize(t, s, "local-over", 24)
+			var capacityErr StorageCapacityError
+			if err := s.checkStorageCapacity(pub, candidate); !errors.As(err, &capacityErr) || capacityErr.CapacityBytes != 23 {
+				t.Fatalf("local candidate quota=%v", err)
 			}
 			w = provisioningRequest(s, "POST", "/v1/repositories/"+pub+"/publishes?filename=local.deb", "x", token)
 			if w.Code != 202 {

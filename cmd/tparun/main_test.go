@@ -633,7 +633,7 @@ func TestConcurrentUploadsUseRealReservationPath(t *testing.T) {
 	}
 }
 
-func TestHTTPUploadUsesLogicalBytesForCommercialQuota(t *testing.T) {
+func TestHTTPUploadDoesNotConsumeCustomerPayloadQuota(t *testing.T) {
 	s, _ := testServer(t)
 	s.cfg.MaxUpload = 1 << 20
 	s.cfg.MaxStagingBytes = 1 << 30
@@ -665,7 +665,7 @@ func TestHTTPUploadUsesLogicalBytesForCommercialQuota(t *testing.T) {
 	if allocated, err := fileTreeAllocatedSize(filepath.Join(s.cfg.DataDir, "incoming")); err != nil || allocated <= 1 {
 		t.Fatalf("test did not exceed logical quota physically: allocated=%d err=%v", allocated, err)
 	}
-	if status := upload("two.deb"); status != http.StatusRequestEntityTooLarge {
+	if status := upload("two.deb"); status != http.StatusAccepted {
 		t.Fatalf("second logical byte upload status=%d", status)
 	}
 }
@@ -786,7 +786,7 @@ func TestCapacityReservationReconstructsFromFilesystemAfterRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.checkStagingCapacity(context.Background(), "a", block, false); err == nil {
+	if err := s.reserveCapacityWithResources(context.Background(), "a", "repo", "probe", "incoming", block, 1); err == nil {
 		t.Fatal("surviving incoming allocation did not affect restart admission")
 	}
 	if err := s.db.Finish(context.Background(), "queued-job", "failed", "test interruption"); err != nil {
@@ -832,12 +832,12 @@ func TestPerAccountLogicalQuotaAndPhysicalTransientLimitAreIndependent(t *testin
 	if err = s.db.CreateJob(context.Background(), store.Job{ID: "physical-account-job", RepositoryID: repo, State: "queued", IncomingPath: path, CreatedAt: "now"}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.checkStagingCapacity(context.Background(), "a", block, false); err != nil {
+	if err = s.reserveCapacityWithResources(context.Background(), "a", repo, "probe", "incoming", block, 1); err != nil {
 		t.Fatalf("physical allocation was charged to logical storage quota: %v", err)
 	}
 	s.cfg.MaxAccountStagingBytes = 2 * block
 	s.stagingMu.Lock()
-	err = s.reserveCapacityWithLogicalResources(context.Background(), "a", repo, "physical-account-next", "incoming", block, 1, 1)
+	err = s.reserveCapacityWithResources(context.Background(), "a", repo, "physical-account-next", "incoming", block, 1)
 	s.stagingMu.Unlock()
 	if err == nil {
 		t.Fatal("per-account transient physical staging overage was accepted")
@@ -935,10 +935,14 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 		t.Fatal(err)
 	}
 	grant := commerce.Grant{CustomerID: "a", ProductID: tpahubproduct.ProductID, CapabilityID: CapabilityRepositoryPublish, OfferID: "nano", Enabled: true, ValidFrom: clock.Add(-time.Hour), Period: commerce.PeriodAnnual, Limits: commerce.Limits{StorageBytes: 1000000}}
-	calls := 0
+	s.publicationFault = func(stage string) error {
+		if stage == "before-live-swap" {
+			clock = expires.Add(time.Nanosecond)
+		}
+		return nil
+	}
 	s.grants = grantServiceFunc(func(context.Context, commerce.CustomerID, commerce.ProductID, commerce.CapabilityID, time.Time) (commerce.Grant, error) {
-		calls++
-		if calls >= 3 && !clock.Before(expires) {
+		if !clock.Before(expires) {
 			return commerce.Grant{}, commerce.ErrGrantInactive
 		}
 		return grant, nil
@@ -948,7 +952,6 @@ func TestGrantRevocationImmediatelyBeforeLiveSwapBlocksPublication(t *testing.T)
 	done := make(chan struct{})
 	go func() { s.process(job); close(done) }()
 	<-runner.started
-	clock = expires.Add(time.Nanosecond)
 	close(runner.release)
 	<-done
 	if _, err := os.Lstat(filepath.Join(s.cfg.DataDir, "repos", repositoryID, "current")); !os.IsNotExist(err) {
@@ -1117,6 +1120,21 @@ func TestGenerationRetentionPreservesActiveAndRecentHistory(t *testing.T) {
 	if tasks, err := s.db.PendingGenerationCleanup(ctx); err != nil || len(tasks) != 1 || tasks[0].RepositoryID != repositoryID {
 		t.Fatalf("deferred generation cleanup task=%+v err=%v", tasks, err)
 	}
+	if err := s.db.Finish(ctx, "job-1", "failed", "queue drained"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.retryPendingGenerationCleanup(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 2 {
+		t.Fatalf("retention did not recover after queue drained: %v %v", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "job-3")); err != nil {
+		t.Fatalf("active generation was pruned: %v", err)
+	}
+	if tasks, err := s.db.PendingGenerationCleanup(ctx); err != nil || len(tasks) != 0 {
+		t.Fatalf("completed deferred cleanup task remains: %+v %v", tasks, err)
+	}
 }
 
 func TestNextGenerationRetainsPreviousArtifacts(t *testing.T) {
@@ -1162,7 +1180,7 @@ func TestDiskHeadroomGuardFailsClosed(t *testing.T) {
 	}
 }
 
-func TestUploadStagingRespectsStorageGrant(t *testing.T) {
+func TestUploadStagingRespectsInfrastructureLimit(t *testing.T) {
 	s, _ := testServer(t)
 	now := time.Now().UTC()
 	until := now.AddDate(1, 0, 0)
@@ -1182,7 +1200,7 @@ func TestUploadStagingRespectsStorageGrant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err == nil {
+	if err := s.reserveCapacityWithResources(context.Background(), "a", "repo", "probe", "incoming", 1, 1); err == nil {
 		t.Fatal("staging overage was accepted")
 	}
 }

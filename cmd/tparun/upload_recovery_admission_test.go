@@ -159,13 +159,21 @@ func TestAdmissionRestartDurableAndOrphanOwnership(t *testing.T) {
 					t.Fatal("cleanup did not release durable input")
 				}
 			}
-			// Exercise the production predicate after reconciliation, not a duplicated
-			// arithmetic helper or a fabricated customer reservation for orphan files.
+			// Durable queued input still consumes physical capacity after restart,
+			// but is never a customer payload reservation.
 			s.stagingMu.Lock()
-			err = s.checkAccountLogicalCapacity(context.Background(), "a", 1)
+			snapshot, snapshotErr := s.physicalCapacity(context.Background(), "a")
+			if snapshotErr != nil {
+				t.Fatal(snapshotErr)
+			}
+			if state == "queued" {
+				s.cfg.MaxAccountStagingBytes = snapshot.accountCommitted
+			}
+			err = s.reserveCapacityWithResources(context.Background(), "a", admissionRepo, "probe", "incoming", 1, 1)
+			s.releaseCapacity("probe")
 			s.stagingMu.Unlock()
-			if state == "queued" && (err == nil || !strings.Contains(err.Error(), "limit exceeded")) {
-				t.Fatal("queued capacity lost")
+			if state == "queued" && (err == nil || !strings.Contains(err.Error(), "account staging")) {
+				t.Fatal("queued physical capacity lost")
 			}
 			if state != "queued" && err != nil {
 				t.Fatal(err)

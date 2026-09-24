@@ -149,7 +149,7 @@ func TestPhysicalSnapshotSerializesLiveUploadGrowth(t *testing.T) {
 	go func() {
 		s.stagingMu.Lock()
 		defer s.stagingMu.Unlock()
-		e := s.reserveCapacityWithLogicalResources(ctx, "a", admissionRepo, "probe", "incoming", bound, 0, 2)
+		e := s.reserveCapacityWithResources(ctx, "a", admissionRepo, "probe", "incoming", bound, 2)
 		scanFinished.Store(clock.Add(1))
 		scanResult <- e
 	}()
@@ -194,7 +194,7 @@ func TestPhysicalSnapshotSerializesLiveUploadGrowth(t *testing.T) {
 	if p.committed+p.reserved != s.cfg.MaxStagingBytes {
 		t.Fatalf("handoff changed exact-fit budget: %+v", p)
 	}
-	if e = s.reserveCapacityWithLogicalResources(ctx, "a", admissionRepo, "overflow", "incoming", 1, 0, 0); e == nil {
+	if e = s.reserveCapacityWithResources(ctx, "a", admissionRepo, "overflow", "incoming", 1, 0); e == nil {
 		t.Fatal("over-capacity admission accepted")
 	}
 	s.releaseCapacity("probe")
@@ -220,7 +220,7 @@ func TestPhysicalReservationMaterializationResizeAndFailure(t *testing.T) {
 	s.stagingMu.Lock()
 	defer s.stagingMu.Unlock()
 	reserve := func(n int64) error {
-		return s.reserveCapacityWithLogicalResources(ctx, "a", admissionRepo, "held", "incoming", n, 0, 2)
+		return s.reserveCapacityWithResources(ctx, "a", admissionRepo, "held", "incoming", n, 2)
 	}
 	if err = reserve(3 * block); err != nil {
 		t.Fatal(err)

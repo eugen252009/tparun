@@ -139,7 +139,7 @@ type server struct {
 
 type capacityReservation struct {
 	AccountID, RepositoryID, JobID, Kind string
-	Bytes, LogicalBytes, Inodes          int64
+	Bytes, Inodes                        int64
 }
 
 func main() {
@@ -418,7 +418,7 @@ func (s *server) repositories(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInsufficientStorage, "repository allocation overflow")
 		return
 	}
-	if e = s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, reservationID, "repository", repositoryReservation, 0, 2); e != nil {
+	if e = s.reserveCapacityWithResources(r.Context(), accountID(r), id, reservationID, "repository", repositoryReservation, 2); e != nil {
 		bad(w, http.StatusInsufficientStorage, e.Error())
 		return
 	}
@@ -676,10 +676,6 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			bad(w, http.StatusInsufficientStorage, err.Error())
 			return
 		}
-		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), r.ContentLength); err != nil {
-			bad(w, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
 	}
 	for _, name := range []string{"incoming", "work"} {
 		if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, name), 0700); err != nil {
@@ -712,15 +708,11 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	logicalReserve := int64(0)
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") && r.ContentLength > 0 {
-		logicalReserve = r.ContentLength
-	}
 	inodeReserve := int64(2)
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		inodeReserve = maxUploadFiles + 1
 	}
-	if err := s.reserveCapacityWithLogicalResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, logicalReserve, inodeReserve); err != nil {
+	if err := s.reserveCapacityWithResources(r.Context(), accountID(r), id, jobID, "incoming", physicalReserve, inodeReserve); err != nil {
 		bad(w, http.StatusInsufficientStorage, err.Error())
 		return
 	}
@@ -794,15 +786,8 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		bad(w, 400, "at least one .deb is required")
 		return
 	}
-	if logicalReserve == 0 {
-		// The in-flight directory already represents these materialized bytes.
-		// Validate under stagingMu without adding them again as prospective input.
-		if err := s.checkAccountLogicalCapacity(r.Context(), accountID(r), 0); err != nil {
-			_ = os.RemoveAll(dir)
-			bad(w, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
-	}
+	// Uploads consume infrastructure capacity only. Customer entitlement is
+	// checked against the complete resulting published payload by the worker.
 	if err := s.checkDiskHeadroom(); err != nil {
 		_ = os.RemoveAll(dir)
 		bad(w, http.StatusInsufficientStorage, err.Error())
@@ -1087,6 +1072,10 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	if e := s.removeReplacedWorkPackages(s.ctx, work, j.ID); e != nil {
+		s.fail(j, fmt.Errorf("prepare package replacements: %w", e))
+		return
+	}
 	if e := copyDebs(j.IncomingPath, work, true); e != nil {
 		s.fail(j, e)
 		return
@@ -1141,7 +1130,7 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
 	}
-	if e = s.reserveCapacityWithLogicalResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "candidate", candidateReservation, 0, candidateInodes+1); e != nil {
+	if e = s.reserveCapacityWithResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "candidate", candidateReservation, candidateInodes+1); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -1165,15 +1154,6 @@ func (s *server) process(j store.Job) {
 		return
 	}
 	if e := s.checkDiskHeadroom(); e != nil {
-		s.fail(j, e)
-		return
-	}
-	repository, repositoryErr := s.db.Repository(context.Background(), j.RepositoryID)
-	if repositoryErr != nil {
-		s.fail(j, repositoryErr)
-		return
-	}
-	if e := s.checkStagingCapacity(context.Background(), repository.AccountID, 0, true); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -2449,14 +2429,7 @@ func (s *server) reserveCapacity(ctx context.Context, accountID, repositoryID, j
 // are process-local; restart reconciliation treats durable filesystem state as
 // actual bytes and the statfs result as actual inode usage.
 func (s *server) reserveCapacityWithResources(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes, inodes int64) error {
-	logicalBytes := int64(0)
-	if accountID != "" && kind == "incoming" {
-		logicalBytes = bytes
-	}
-	return s.reserveCapacityWithLogicalResources(ctx, accountID, repositoryID, jobID, kind, bytes, logicalBytes, inodes)
-}
-
-func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accountID, repositoryID, jobID, kind string, bytes, logicalBytes, inodes int64) error {
+	// Infrastructure reservations never consume customer payload entitlement.
 	if bytes < 0 {
 		return fmt.Errorf("negative capacity reservation")
 	}
@@ -2466,25 +2439,13 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 	if s.reservations == nil {
 		s.reservations = make(map[string]capacityReservation)
 	}
-	if logicalBytes < 0 {
-		return fmt.Errorf("negative logical capacity reservation")
-	}
-	oldBytes, oldLogicalBytes, oldInodes := int64(0), int64(0), int64(0)
+	oldBytes, oldInodes := int64(0), int64(0)
 	if old, ok := s.reservations[jobID]; ok {
 		if old.AccountID != accountID || old.RepositoryID != repositoryID || old.Kind != kind {
 			return fmt.Errorf("physical reservation identity conflict")
 		}
 		oldBytes = old.Bytes
-		oldLogicalBytes = old.LogicalBytes
 		oldInodes = old.Inodes
-	}
-	// Incoming reservations are charged against the account at admission. Work
-	// reservations duplicate already-admitted input and the active baseline, so
-	// charging them again would make exact logical storage limits unattainable.
-	if accountID != "" && logicalBytes > 0 {
-		if err := s.checkAccountLogicalCapacity(ctx, accountID, logicalBytes); err != nil {
-			return err
-		}
 	}
 	snapshot, err := s.physicalCapacity(ctx, accountID)
 	if err != nil {
@@ -2492,7 +2453,7 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 	}
 	prospective, overflow := addCapacity(snapshot.committed, snapshot.reserved, bytes)
 	if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
-		return fmt.Errorf("global staging reservation exceeded")
+		return fmt.Errorf("temporary publication capacity unavailable: global staging reservation exceeded")
 	}
 	additional, overflow := addCapacity(snapshot.remaining, bytes)
 	if overflow {
@@ -2511,7 +2472,7 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 	if accountID != "" && s.cfg.MaxAccountStagingBytes > 0 {
 		prospectiveAccount, accountOverflow := addCapacity(snapshot.accountCommitted, snapshot.accountReserved, bytes)
 		if accountOverflow || prospectiveAccount > s.cfg.MaxAccountStagingBytes {
-			return fmt.Errorf("account staging reservation exceeded")
+			return fmt.Errorf("temporary publication capacity unavailable: account staging reservation exceeded")
 		}
 	}
 	newBytes, overflow := addCapacity(oldBytes, bytes)
@@ -2522,11 +2483,7 @@ func (s *server) reserveCapacityWithLogicalResources(ctx context.Context, accoun
 	if overflow {
 		return fmt.Errorf("inode reservation overflow")
 	}
-	newLogicalBytes, overflow := addCapacity(oldLogicalBytes, logicalBytes)
-	if overflow {
-		return fmt.Errorf("logical capacity reservation overflow")
-	}
-	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes, LogicalBytes: newLogicalBytes, Inodes: newInodes}
+	s.reservations[jobID] = capacityReservation{AccountID: accountID, RepositoryID: repositoryID, JobID: jobID, Kind: kind, Bytes: newBytes, Inodes: newInodes}
 	return nil
 }
 func (s *server) resizeCapacity(jobID string, bytes int64) error {
@@ -2541,7 +2498,7 @@ func (s *server) resizeCapacity(jobID string, bytes int64) error {
 		return fmt.Errorf("negative capacity reservation")
 	}
 	if bytes > r.Bytes {
-		return s.reserveCapacityWithLogicalResources(context.Background(), r.AccountID, r.RepositoryID, jobID, r.Kind, bytes-r.Bytes, 0, 0)
+		return s.reserveCapacityWithResources(context.Background(), r.AccountID, r.RepositoryID, jobID, r.Kind, bytes-r.Bytes, 0)
 	}
 	snapshot, err := s.physicalCapacity(context.Background(), r.AccountID)
 	if err != nil {
@@ -2651,91 +2608,6 @@ func (s *server) checkInodeHeadroomFor(additional int64) error {
 	return checkInodeHeadroomValues(free, known, s.cfg.MinFreeInodes, additional)
 }
 
-func (s *server) checkStagingCapacity(ctx context.Context, accountID string, incoming int64, alreadyWritten bool) error {
-	if !alreadyWritten {
-		snapshot, err := s.physicalCapacity(ctx, accountID)
-		if err != nil {
-			return err
-		}
-		prospective, overflow := addCapacity(snapshot.committed, snapshot.reserved, incoming)
-		if overflow || s.cfg.MaxStagingBytes > 0 && prospective > s.cfg.MaxStagingBytes {
-			return fmt.Errorf("global staging storage limit exceeded")
-		}
-	} else {
-		// Upload admission already bounded this account's staged input. Work and
-		// candidate copies remain covered by global reservations, disk, and inode
-		// limits; the candidate storage check that follows enforces the account's
-		// logical published-byte limit without charging the active baseline twice.
-		grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
-		if err != nil {
-			return fmt.Errorf("staging grant unavailable: %w", err)
-		}
-		if grant.Limits.StorageBytes <= 0 {
-			return fmt.Errorf("staging grant has no capacity")
-		}
-		if _, err = s.accountUsage(ctx, accountID); err != nil {
-			return fmt.Errorf("staging usage unavailable: %w", err)
-		}
-		return nil
-	}
-	return s.checkAccountLogicalCapacity(ctx, accountID, incoming)
-}
-
-func (s *server) checkAccountLogicalCapacity(ctx context.Context, accountID string, incoming int64) error {
-	grant, err := s.grantService().GetGrant(ctx, commerce.CustomerID(accountID), tpahubproduct.ProductID, CapabilityRepositoryPublish, s.currentTime())
-	if err != nil {
-		return fmt.Errorf("staging grant unavailable: %w", err)
-	}
-	if grant.Limits.StorageBytes <= 0 {
-		return fmt.Errorf("staging grant has no capacity")
-	}
-	usage, err := s.accountUsage(ctx, accountID)
-	if err != nil {
-		return fmt.Errorf("staging usage unavailable: %w", err)
-	}
-	var reservedAccount int64
-	for _, reservation := range s.reservations {
-		if reservation.AccountID == accountID {
-			var overflow bool
-			reservedAccount, overflow = addCapacity(reservedAccount, reservation.LogicalBytes)
-			if overflow {
-				return fmt.Errorf("account staging reservation overflow")
-			}
-			if reservation.Kind == "incoming" && reservation.LogicalBytes == 0 {
-				partial, partialErr := fileTreeSize(filepath.Join(s.cfg.DataDir, "incoming", reservation.JobID))
-				if partialErr != nil {
-					return fmt.Errorf("account staging reservation usage unavailable: %w", partialErr)
-				}
-				reservedAccount, overflow = addCapacity(reservedAccount, partial)
-				if overflow {
-					return fmt.Errorf("account staging reservation overflow")
-				}
-			}
-		}
-	}
-	accountStaged := int64(0)
-	paths, pathErr := s.db.AccountStagingPaths(ctx, accountID)
-	if pathErr != nil {
-		return fmt.Errorf("account staging usage unavailable: %w", pathErr)
-	}
-	for _, path := range paths {
-		treeSize, sizeErr := fileTreeSize(path)
-		if sizeErr != nil {
-			return fmt.Errorf("account staging usage unavailable: %w", sizeErr)
-		}
-		var overflow bool
-		accountStaged, overflow = addCapacity(accountStaged, treeSize)
-		if overflow {
-			return fmt.Errorf("account staging usage overflow")
-		}
-	}
-	accountProspective, overflow := addCapacity(usage.StoredBytes, accountStaged, reservedAccount, incoming)
-	if overflow || accountProspective > grant.Limits.StorageBytes {
-		return fmt.Errorf("staging storage limit exceeded")
-	}
-	return nil
-}
-
 func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	repository, err := s.db.Repository(context.Background(), repositoryID)
 	if err != nil {
@@ -2771,7 +2643,7 @@ func (s *server) checkStorageCapacity(repositoryID, candidate string) error {
 	if resulting > capacity && resulting > account.StoredBytes {
 		return StorageCapacityError{CurrentBytes: account.StoredBytes, ResultingBytes: resulting, CapacityBytes: capacity}
 	}
-	return nil
+	return s.checkActiveRepositoryCapacity(repository.AccountID, repositoryID, candidate, capacity)
 }
 func fileTreeSize(root string) (int64, error) {
 	var total int64

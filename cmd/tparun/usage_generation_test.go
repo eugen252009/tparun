@@ -272,15 +272,6 @@ func TestGenerationBackedStorageQuotaBoundaries(t *testing.T) {
 	repositoryID := "ababababababababababababababab30"
 	generationUsageFixture(t, s, repositoryID, map[string][]int{"gen-1": {100}}, "gen-1")
 
-	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes)
-	if err := s.checkStagingCapacity(context.Background(), "a", 0, false); err != nil {
-		t.Fatalf("exact existing limit rejected: %v", err)
-	}
-	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes-1)
-	if err := s.checkStagingCapacity(context.Background(), "a", 0, false); err != nil {
-		t.Fatalf("below-Nano raw grant was not floored: %v", err)
-	}
-
 	candidate := candidateWithSize(t, s, "r8-growth", int(tpahubproduct.NanoStorageBytes+7))
 	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+7)
 	if err := s.checkStorageCapacity(repositoryID, candidate); err != nil {
@@ -293,17 +284,15 @@ func TestGenerationBackedStorageQuotaBoundaries(t *testing.T) {
 	}
 }
 
-func TestGenerationBackedLargeBaselineAndTinyUpload(t *testing.T) {
+func TestGenerationBackedOverageDoesNotConsumeTemporaryCapacity(t *testing.T) {
 	s, _ := testServer(t)
-	generationUsageFixture(t, s, "ababababababababababababababab31", map[string][]int{"gen-1": {int(tpahubproduct.NanoStorageBytes + 1)}}, "gen-1")
-	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes+2)
-	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err != nil {
-		t.Fatalf("exact tiny upload boundary rejected: %v", err)
-	}
+	repo := "ababababababababababababababab31"
+	generationUsageFixture(t, s, repo, map[string][]int{"gen-1": {int(tpahubproduct.NanoStorageBytes + 1)}}, "gen-1")
 	setStorageLimit(t, s, tpahubproduct.NanoStorageBytes)
-	if err := s.checkStagingCapacity(context.Background(), "a", 1, false); err == nil {
-		t.Fatal("tiny upload ignored large active baseline")
+	if err := s.reserveCapacityWithResources(context.Background(), "a", repo, "input", "incoming", 1, 1); err != nil {
+		t.Fatalf("existing overage prevented temporary reservation for a correction: %v", err)
 	}
+	s.releaseCapacity("input")
 }
 
 func processTestPackage(t *testing.T, s *server, repositoryID, jobID, filename string, payload []byte) store.Job {
