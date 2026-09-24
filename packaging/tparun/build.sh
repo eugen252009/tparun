@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-VERSION=${TPARUN_VERSION:-0.1.2}
+VERSION=${TPARUN_VERSION:-0.1.3}
 ARCH=${TPARUN_ARCH:-amd64}
 OUTPUT=${1:-$ROOT/dist/tparun_${VERSION}_${ARCH}.deb}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
@@ -32,6 +32,7 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Depends: ca-certificates, gnupg, systemd
+Recommends: tpa
 Maintainer: TPA.run <tparun@lupricht.net>
 Homepage: https://tpa.run
 Mema-Type: binary
