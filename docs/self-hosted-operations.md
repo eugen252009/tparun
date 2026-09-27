@@ -22,7 +22,7 @@ mayi /usr/bin/apt install tparun
 
 Otherwise use the host's documented administrator workflow. Do not install a beta from the public stable repository. For beta qualification, configure the separate beta source and inspect `apt-cache policy tparun` before selecting an explicit version.
 
-The bootstrap adds the signed stable APT source; it does not install or start the application. Install the `tparun` package only after confirming the intended repository and version. The package recommends the separate `tpa` CLI, which TPA.run invokes for repository generation.
+The bootstrap adds the signed stable APT source; it does not install or start the application. Install the `tparun` package only after confirming the intended repository and version. The package hard-depends on the separate `tpa` CLI, which TPA.run validates at startup and invokes for repository generation.
 
 ## 2. Configure the instance
 

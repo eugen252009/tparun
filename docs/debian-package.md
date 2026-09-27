@@ -1,6 +1,6 @@
 # TPA.run Debian package
 
-The `tparun` package is the release-layer handoff for self-hosted TPA.run. It recommends the separate `tpa` administrative/build CLI; TPA is not part of the serving runtime. The application binary is installed at `/usr/bin/tparun` and runs directly with `/usr/bin/tparun serve`, independent of PID 1 or systemd. The optional systemd unit is `/lib/systemd/system/tparun.service`. The package does not contain or manage instance data.
+The `tparun` package is the release-layer handoff for self-hosted TPA.run. It has a hard dependency on the separate `tpa` administrative/build CLI; APT installs TPA even with recommendations disabled, and the server validates it at startup before repository generation/publication. The application binary is installed at `/usr/bin/tparun` and runs directly with `/usr/bin/tparun serve`, independent of PID 1 or systemd. The optional systemd unit is `/lib/systemd/system/tparun.service`. The package does not contain or manage instance data.
 
 ## Ownership boundary
 
