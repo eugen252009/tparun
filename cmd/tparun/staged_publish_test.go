@@ -53,6 +53,39 @@ func TestStagedPublicationClearsAfterAcceptedSuccess(t *testing.T) {
 	}
 }
 
+func TestStagedPublicationCLIShowsServerBatchLimitMessage(t *testing.T) {
+	packagePath := filepath.Join(t.TempDir(), "staged_1_amd64.deb")
+	buildSemanticTestDebForArchitecture(t, packagePath, "amd64")
+	t.Setenv("TPARUN_STAGING_DIR", filepath.Join(t.TempDir(), "staging"))
+	if err := stageCLI([]string{packagePath}); err != nil {
+		t.Fatal(err)
+	}
+	const repositoryID = "cececececececececececececececece"
+	const sessionID = "acacacacacacacacacacacacacacacac"
+	const message = "Too many packages in one upload.\n\nTPA.run accepts up to 64 packages per upload.\nPlease split this publication into batches of 64 packages or fewer."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/repositories":
+			json.NewEncoder(w).Encode([]map[string]string{{"id": repositoryID, "name": "staged"}})
+		case "/v1/repositories/" + repositoryID + "/publication-sessions":
+			json.NewEncoder(w).Encode(publicationSessionStart{SessionID: sessionID, BatchSize: 64, Plan: publicationPlanResponse{RepositoryID: repositoryID, StagedPackageCount: 1, ProjectedPackageCount: 1, StorageLimitBytes: 100, Allowed: true}})
+		case "/v1/repositories/" + repositoryID + "/publishes":
+			http.Error(w, message, http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	err := publishStaged(cliConfig{Server: server.URL, Token: "token"}, repositoryID, true, false)
+	if err == nil || !strings.Contains(err.Error(), message) {
+		t.Fatalf("CLI error did not preserve server guidance: %v", err)
+	}
+	manifest, err := loadStagingManifest()
+	if err != nil || len(manifest.Artifacts) != 1 {
+		t.Fatalf("rejected publication did not preserve staging: %+v err=%v", manifest, err)
+	}
+}
+
 func TestStagedPublicationCancellationPreservesStaging(t *testing.T) {
 	packagePath := filepath.Join(t.TempDir(), "cancel_1_amd64.deb")
 	buildSemanticTestDebForArchitecture(t, packagePath, "amd64")

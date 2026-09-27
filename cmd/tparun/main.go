@@ -777,7 +777,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 			}
 			fileCount++
 			if fileCount > maxUploadFiles {
-				bad(w, 400, "too many upload files")
+				bad(w, http.StatusBadRequest, "Too many packages in one upload.\n\nTPA.run accepts up to 64 packages per upload.\nPlease split this publication into batches of 64 packages or fewer.")
 				return
 			}
 			name := filepath.Base(part.FileName())
