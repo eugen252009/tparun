@@ -2,3 +2,12 @@
 /.cocoindex_code/
 .env
 /qualification/
+
+# Local runtime databases and lock files
+/data/tpahub.db
+/dist/data/.tpahub.lock
+/dist/data/tpahub.db
+
+# Locally generated package artifacts
+/dist/tparun-release_0.1.5_all.deb
+/lupricht-beta-repo_1.0_all.deb
