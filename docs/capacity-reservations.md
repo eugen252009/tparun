@@ -31,10 +31,17 @@ publication planner; different package versions remain present.
 Global and per-account staging admission use allocated filesystem blocks, not
 logical file lengths. Candidate output is bounded before the runner starts:
 the production runner uses a fixed-size `tmpfs` mount with a bounded inode count,
-then copies the completed tree into the host reservation. Writes beyond the data
-or inode bound receive `ENOSPC` before host candidate growth. The post-copy block
-allocation check is defense in depth. Request bytes, upload file count, publication
-timeout and upload read timeout remain separate limits.
+then copies the completed tree into the host reservation. The byte bound covers
+both logical output expansion and block-rounded package payload allocations, so
+many tiny packages cannot exhaust the sandbox despite low summed logical bytes.
+Writes beyond the data or inode bound receive `ENOSPC` before host candidate
+growth. The post-copy block allocation check is defense in depth. Request bytes,
+upload file count, publication timeout and upload read timeout remain separate
+limits. A single multipart upload accepts at most 64 package files; this is a
+per-request transport limit, not a repository package-count limit. `tparun publish`
+automatically sends larger staged sets in sequential batches inside one publication
+session and finalizes one job. Do not emulate this by publishing independent
+batches, which would activate intermediate generations.
 
 A same-filesystem candidate-to-generation rename is a kind-D ownership transition,
 not a second allocation. The candidate reservation is cleared when the rename
@@ -56,5 +63,8 @@ TPA repository output is written beneath the candidate directory; the configured
 GPG home remains separate signing state. Reservations are process-local by design.
 On restart, durable job/publication state and filesystem accounting are
 authoritative; abandoned terminal transient trees are reconciled before new work
-is admitted. Cleanup failures are retried without treating surviving files as
-free physical capacity. No schema or persistent reservation table is introduced.
+is admitted. Incomplete publication sessions are discarded on startup, while
+finalized sessions have one ordinary durable job. Cleanup failures are retried
+without treating surviving files as free physical capacity. Reservations remain
+process-local; Schema 12 persists only the session manifest/batch lifecycle needed
+for multi-request uploads.

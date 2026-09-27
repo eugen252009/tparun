@@ -1,6 +1,6 @@
 # TPA.run
 
-**Current release baseline: Schema 11 (upgradable from Schema 5/6/7/8/9/10).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+**Current development schema: Schema 12 (upgradable from Schema 5/6/7/8/9/10/11).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
 
 TPA.run is a CLI-first service for publishing and serving public or private APT repositories. **TPA.run uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
@@ -241,7 +241,7 @@ Operator operations use passwordless WebAuthn passkeys at `/ops/login`. Passkeys
 
 ## VServer deployment
 
-The production deployment uses the current Schema 11 root `/home/eugen/vserver-tpahub-qualification`: the canonical binary is `bin/tparun`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published through the canonical public repository and promoted via `/tparun-bootstrap.deb`. Runtime configuration is kept outside Git in `/home/eugen/.config/tparun/tparun.env`; existing deployment paths and database identifiers remain unchanged because cosmetic renaming provides no technical benefit.
+The production deployment uses the Schema 11 root `/home/eugen/vserver-tpahub-qualification`: the canonical binary is `bin/tparun`, persistent state is `data/`, and signing state is `gnupg/`. The bootstrap release package is published through the canonical public repository and promoted via `/tparun-bootstrap.deb`. Runtime configuration is kept outside Git in `/home/eugen/.config/tparun/tparun.env`; existing deployment paths and database identifiers remain unchanged because cosmetic renaming provides no technical benefit.
 
 ## Development and qualification
 

@@ -80,7 +80,7 @@ func (s *Store) PurgeAccount(ctx context.Context, accountID string, now time.Tim
 	}
 	for _, id := range repos {
 		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND (state NOT IN ('succeeded','failed') OR cleanup_state='pending')`, id).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND (state NOT IN ('succeeded','failed') OR cleanup_state='pending')) + (SELECT COUNT(*) FROM publication_sessions WHERE repository_id=? AND state='open')`, id, id).Scan(&n); err != nil {
 			return nil, err
 		}
 		if n != 0 {
@@ -95,6 +95,7 @@ func (s *Store) PurgeAccount(ctx context.Context, accountID string, now time.Tim
 	}
 	for _, id := range repos {
 		for _, statement := range []string{
+			"DELETE FROM publication_sessions WHERE repository_id=?",
 			"DELETE FROM egress_accounting_uncertain WHERE repository_id=?",
 			"DELETE FROM generation_cleanup_tasks WHERE repository_id=?",
 			"DELETE FROM reader_credentials WHERE repository_id=?",

@@ -1,6 +1,6 @@
 # Persistent schema and upgrades
 
-**Schema 5 is the first supported persistent schema; Schema 8 is the current schema.** Schemas 1–4 were internal,
+**Schema 5 is the first supported persistent schema; Schema 12 is the current development schema.** Explicit migration supports Schema 5 through 11. Schemas 1–4 were internal,
 disposable development schemas, with no supported user data or upgrade contract.
 They are rejected, not migrated, reinterpreted or automatically deleted.
 
@@ -8,7 +8,7 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 
 | State | `serve` / Store.Open | `migrate` |
 |---|---|---|
-| Fresh empty state | Creates current Schema 8 directly, atomically | Requires an initialized database |
+| Fresh empty state | Creates current Schema 12 directly, atomically | Requires an initialized database |
 | Schemas 1–4 | Reject: unsupported pre-release state | Same rejection, no mutation |
 | Schema 5/6/7 | Reject until explicitly migrated to Schema 8 | Explicit atomic forward migration |
 | Newer than this binary | Reject: use compatible binary/backup | Same rejection, no mutation |

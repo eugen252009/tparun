@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ func TestStagedPublicationClearsAfterAcceptedSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	const repositoryID = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+	const sessionID = "abababababababababababababababab"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer token" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
@@ -29,12 +31,14 @@ func TestStagedPublicationClearsAfterAcceptedSuccess(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/repositories":
 			json.NewEncoder(w).Encode([]map[string]string{{"id": repositoryID, "name": "staged"}})
-		case "/v1/repositories/" + repositoryID + "/publication-plan":
-			json.NewEncoder(w).Encode(publicationPlanResponse{RepositoryID: repositoryID, CurrentPackageCount: 0, StagedPackageCount: 1, StagedStorageBytes: 1, ProjectedPackageCount: 1, ProjectedStorageBytes: 1, ProjectedAccountStorageBytes: 1, StorageLimitBytes: 100, RemainingStorageBytes: 99, Allowed: true, Items: []publicationPlanItem{{Classification: "NEW", Package: "test", Version: "1", Architecture: "amd64"}}})
+		case "/v1/repositories/" + repositoryID + "/publication-sessions":
+			json.NewEncoder(w).Encode(publicationSessionStart{SessionID: sessionID, BatchSize: 64, Plan: publicationPlanResponse{RepositoryID: repositoryID, StagedPackageCount: 1, ProjectedPackageCount: 1, StorageLimitBytes: 100, Allowed: true}})
 		case "/v1/repositories/" + repositoryID + "/publishes":
-			json.NewEncoder(w).Encode(map[string]string{"id": "job-1", "state": "queued"})
-		case "/v1/publish-jobs/job-1":
-			json.NewEncoder(w).Encode(map[string]string{"id": "job-1", "state": "succeeded"})
+			json.NewEncoder(w).Encode(map[string]any{"session_id": sessionID, "batch": 0, "state": "accepted"})
+		case "/v1/publication-sessions/" + sessionID + "/finalize":
+			json.NewEncoder(w).Encode(map[string]string{"id": sessionID, "state": "queued"})
+		case "/v1/publish-jobs/" + sessionID:
+			json.NewEncoder(w).Encode(map[string]string{"id": sessionID, "state": "succeeded"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -62,8 +66,12 @@ func TestStagedPublicationCancellationPreservesStaging(t *testing.T) {
 			json.NewEncoder(w).Encode([]map[string]string{{"id": repositoryID, "name": "cancel"}})
 			return
 		}
-		if r.URL.Path == "/v1/repositories/"+repositoryID+"/publication-plan" {
-			json.NewEncoder(w).Encode(publicationPlanResponse{RepositoryID: repositoryID, ProjectedPackageCount: 1, ProjectedStorageBytes: 1, ProjectedAccountStorageBytes: 1, StorageLimitBytes: 100, Allowed: true})
+		if r.URL.Path == "/v1/repositories/"+repositoryID+"/publication-sessions" {
+			json.NewEncoder(w).Encode(publicationSessionStart{SessionID: "adadadadadadadadadadadadadadadad", BatchSize: 64, Plan: publicationPlanResponse{RepositoryID: repositoryID, ProjectedPackageCount: 1, ProjectedStorageBytes: 1, ProjectedAccountStorageBytes: 1, StorageLimitBytes: 100, Allowed: true}})
+			return
+		}
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/publication-sessions/") {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		http.NotFound(w, r)

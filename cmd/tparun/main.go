@@ -123,6 +123,7 @@ type server struct {
 	freeInodes              func() (int64, error)
 	lifecycle               *serverLifecycle
 	capacityObserve         func(stage, path string)
+	publicationHashObserve  func(bytes int64)
 	reservations            map[string]capacityReservation
 	verifyCandidate         func(candidate, work string) error
 	operatorAuth            *operatorAuthState
@@ -299,6 +300,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/v1/public/repositories", s.publicRepositories)
 	m.HandleFunc("/v1/repositories/", s.repositoryRoute)
 	m.HandleFunc("/v1/publish-jobs/", s.authHandler(s.job))
+	m.HandleFunc("/v1/publication-sessions/", s.authHandler(s.publicationSessionRoute))
 	m.HandleFunc("/r/", s.files)
 	return s.browserSession(m)
 }
@@ -559,6 +561,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		s.handlePublicationPlan(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "publication-sessions" {
+		s.createPublicationSession(w, r, id)
+		return
+	}
 	if len(parts) >= 2 && parts[1] == "reader-credentials" {
 		s.credentials(w, r, id, parts[2:])
 		return
@@ -669,6 +675,21 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 	if _, _, err := s.repositoryPolicy().AuthorizePublication(r.Context(), accountID(r), id); err != nil {
 		bad(w, http.StatusForbidden, err.Error())
 		return
+	}
+	sessionID := r.URL.Query().Get("session")
+	var sessionBatch int64
+	if sessionID != "" || r.URL.Query().Get("batch") != "" {
+		var parseErr error
+		sessionBatch, parseErr = strconv.ParseInt(r.URL.Query().Get("batch"), 10, 64)
+		if sessionID == "" || parseErr != nil || sessionBatch < 0 {
+			bad(w, http.StatusBadRequest, "invalid publication session batch")
+			return
+		}
+		session, sessionErr := s.db.PublicationSession(r.Context(), sessionID)
+		if sessionErr != nil || session.State != "open" || session.RepositoryID != id || session.OwnerAccountID != accountID(r) {
+			bad(w, http.StatusNotFound, "publication session not found")
+			return
+		}
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") && r.ContentLength > 0 {
@@ -800,7 +821,27 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	now := s.currentTime().UTC().Format(time.RFC3339Nano)
-	artifacts, identityErr := uploadedPublicationArtifacts(r.Context(), dir)
+	artifacts, identityErr := uploadedPublicationArtifactsObserved(r.Context(), dir, s.publicationHashObserve)
+	if sessionID != "" {
+		if identityErr != nil || len(artifacts) == 0 {
+			bad(w, http.StatusBadRequest, "publication session batch contains an invalid package")
+			return
+		}
+		replayed, batchErr := s.acceptPublicationSessionBatch(r.Context(), sessionID, accountID(r), id, sessionBatch, dir, artifacts, now)
+		if batchErr != nil {
+			status := http.StatusConflict
+			if strings.Contains(batchErr.Error(), "does not match") {
+				status = http.StatusBadRequest
+			}
+			bad(w, status, batchErr.Error())
+			return
+		}
+		committed = true
+		log.Printf("publication batch accepted session=%s batch=%d files=%d bytes=%d replay=%t", sessionID, sessionBatch, len(artifacts), total, replayed)
+		w.WriteHeader(http.StatusAccepted)
+		jsonOut(w, map[string]any{"session_id": sessionID, "batch": sessionBatch, "state": "accepted", "replayed": replayed})
+		return
+	}
 	if identityErr == nil && len(artifacts) > 0 {
 		if e := s.db.CreateJobWithArtifacts(r.Context(), store.Job{ID: jobID, RepositoryID: id, PublisherAccountID: accountID(r), State: "queued", IncomingPath: dir, CreatedAt: now}, artifacts); e != nil {
 			_ = os.RemoveAll(dir)
@@ -1106,13 +1147,23 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("work capacity accounting: %w", e))
 		return
 	}
-	// TPA output is variable-sized. Candidate file data is hard-bounded by the
-	// runner; reserve a matching inode/directory budget for the host copy.
-	if workBytes > (math.MaxInt64-(1<<20))/2 {
+	packageAllocationBound, e := copiedDebAllocation(work, s.cfg.DataDir)
+	if e != nil {
+		s.fail(j, fmt.Errorf("candidate package allocation accounting: %w", e))
+		return
+	}
+	// TPA output is variable-sized. Account both for its logical metadata and
+	// for block-rounded payload files: many small packages can occupy far more
+	// tmpfs space than their summed logical bytes.
+	if workBytes > (math.MaxInt64-(1<<20))/2 || packageAllocationBound > math.MaxInt64-(1<<20) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
 	}
-	rawCandidateBound := workBytes*2 + 1<<20
+	rawCandidateBound := workBytes * 2
+	if packageAllocationBound > rawCandidateBound {
+		rawCandidateBound = packageAllocationBound
+	}
+	rawCandidateBound += 1 << 20
 	if rawCandidateBound > math.MaxInt64-(allocationBlock-1) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
@@ -1966,6 +2017,21 @@ func debIdentity(ctx context.Context, path string) (string, error) {
 }
 
 func (s *server) reconcileStagingState() error {
+	openSessions, err := s.db.OpenPublicationSessions(context.Background())
+	if err != nil {
+		return fmt.Errorf("load incomplete publication sessions: %w", err)
+	}
+	for _, session := range openSessions {
+		if filepath.Clean(session.IncomingPath) != filepath.Join(s.cfg.DataDir, "incoming", session.ID) {
+			return fmt.Errorf("incomplete publication session has an invalid path: %s", session.ID)
+		}
+		if err = s.removePath(session.IncomingPath); err != nil {
+			return fmt.Errorf("remove incomplete publication session %s: %w", session.ID, err)
+		}
+		if err = s.db.DeleteOpenPublicationSession(context.Background(), session.ID); err != nil {
+			return fmt.Errorf("discard incomplete publication session %s: %w", session.ID, err)
+		}
+	}
 	pending, err := s.db.PendingCleanupJobs(context.Background())
 	if err != nil {
 		return fmt.Errorf("load pending publication cleanup: %w", err)

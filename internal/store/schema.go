@@ -251,7 +251,7 @@ func migrateSchemaTo9(db *sql.DB) error {
 	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
 	legacyDDL = schemaWithoutRepositoryDelegation(legacyDDL)
-	if err := validateSchema(db, legacyDDL, "Schema 8"); err != nil {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(legacyDDL), "Schema 8"); err != nil {
 		return fmt.Errorf("Schema 8 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -290,7 +290,7 @@ func schemaWithoutRepositoryDelegation(ddl string) string {
 
 func migrateSchemaTo10(db *sql.DB) error {
 	legacyDDL := schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(schemaSQL))
-	if err := validateSchema(db, legacyDDL, "Schema 9"); err != nil {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(legacyDDL), "Schema 9"); err != nil {
 		return fmt.Errorf("Schema 9 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -315,7 +315,7 @@ func migrateSchemaTo10(db *sql.DB) error {
 
 func migrateSchemaTo11(db *sql.DB) error {
 	legacyDDL := schemaWithoutPublisherAccount(schemaSQL)
-	if err := validateSchema(db, legacyDDL, "Schema 10"); err != nil {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(legacyDDL), "Schema 10"); err != nil {
 		return fmt.Errorf("Schema 10 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -335,13 +335,58 @@ func migrateSchemaTo11(db *sql.DB) error {
 	return tx.Commit()
 }
 
+func schemaWithoutPublicationSessions(ddl string) string {
+	var retained []string
+	for _, statement := range strings.Split(ddl, ";") {
+		trimmed := strings.TrimSpace(statement)
+		if strings.HasPrefix(trimmed, "CREATE TABLE publication_sessions(") ||
+			strings.HasPrefix(trimmed, "CREATE UNIQUE INDEX publication_sessions_one_open_per_account ") ||
+			strings.HasPrefix(trimmed, "CREATE TABLE publication_session_artifacts(") ||
+			strings.HasPrefix(trimmed, "CREATE TABLE publication_session_batches(") {
+			continue
+		}
+		if trimmed != "" {
+			retained = append(retained, trimmed)
+		}
+	}
+	return strings.Join(retained, ";\n\n") + ";"
+}
+
+func migrateSchemaTo12(db *sql.DB) error {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(schemaSQL), "Schema 11"); err != nil {
+		return fmt.Errorf("Schema 11 validation failed: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin Schema 11 to 12 migration: %w", err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`CREATE TABLE publication_sessions(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),owner_account_id TEXT NOT NULL REFERENCES accounts(id),incoming_path TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('open','finalized','aborted')),expected_count INTEGER NOT NULL CHECK(expected_count>0),next_batch INTEGER NOT NULL DEFAULT 0 CHECK(next_batch>=0),created_at TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX publication_sessions_one_open_per_account ON publication_sessions(owner_account_id) WHERE state='open'`,
+		`CREATE TABLE publication_session_artifacts(session_id TEXT NOT NULL REFERENCES publication_sessions(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,expected_size INTEGER NOT NULL CHECK(expected_size>0),expected_sha256 TEXT NOT NULL CHECK(length(expected_sha256)=64),batch_number INTEGER NOT NULL DEFAULT -1 CHECK(batch_number>=-1),PRIMARY KEY(session_id,filename),UNIQUE(session_id,package,version,architecture))`,
+		`CREATE TABLE publication_session_batches(session_id TEXT NOT NULL REFERENCES publication_sessions(id) ON DELETE CASCADE,batch_number INTEGER NOT NULL CHECK(batch_number>=0),digest TEXT NOT NULL CHECK(length(digest)=64),artifact_count INTEGER NOT NULL CHECK(artifact_count>0),created_at TEXT NOT NULL,PRIMARY KEY(session_id,batch_number))`,
+	} {
+		if _, err = tx.Exec(statement); err != nil {
+			return fmt.Errorf("create publication session state: %w", err)
+		}
+	}
+	if err = migrationCheckpoint("before-schema-12-version"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=12 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 12 version: %w", err)
+	}
+	return tx.Commit()
+}
+
 func migrateSchemaTo8(db *sql.DB) error {
 	oldAccount := "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL);"
 	legacyDDL := strings.Replace(schemaSQL, "CREATE TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','suspended')),created_at TEXT NOT NULL,membership_expires_at TEXT DEFAULT NULL,purge_after TEXT DEFAULT NULL,lifecycle_kind TEXT NOT NULL DEFAULT 'customer' CHECK(lifecycle_kind IN ('customer','ephemeral','internal')));", oldAccount, 1)
 	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
 	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	legacyDDL = schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(legacyDDL))
-	if err := validateSchema(db, legacyDDL, "Schema 7"); err != nil {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(legacyDDL), "Schema 7"); err != nil {
 		return fmt.Errorf("Schema 7 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -383,7 +428,7 @@ func migrateSchemaTo7(db *sql.DB, version int) error {
 		legacyDDL = strings.Replace(legacyDDL, oldCred, "", 1)
 	}
 	legacyDDL = schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(legacyDDL))
-	if err := validateSchema(db, legacyDDL, fmt.Sprintf("Schema %d", version)); err != nil {
+	if err := validateSchema(db, schemaWithoutPublicationSessions(legacyDDL), fmt.Sprintf("Schema %d", version)); err != nil {
 		return fmt.Errorf("Schema %d validation failed: %w", version, err)
 	}
 	tx, err := db.Begin()
@@ -478,50 +523,41 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			if !explicitMigration || ((version != 5 && version != 6) && version != 7 && version != 8 && version != 9 && version != 10) {
+			if !explicitMigration || (version < 5 || version > 11) {
 				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
 			}
-			if version == 10 {
-				if err = migrateSchemaTo11(db); err != nil {
-					return nil, err
+			if version < 11 {
+				if version <= 6 {
+					if err = migrateSchemaTo7(db, version); err != nil {
+						return nil, err
+					}
+					version = 7
 				}
-			} else if version == 9 {
-				if err = migrateSchemaTo10(db); err != nil {
-					return nil, err
+				if version == 7 {
+					if err = migrateSchemaTo8(db); err != nil {
+						return nil, err
+					}
+					version = 8
 				}
-				if err = migrateSchemaTo11(db); err != nil {
-					return nil, err
+				if version == 8 {
+					if err = migrateSchemaTo9(db); err != nil {
+						return nil, err
+					}
+					version = 9
 				}
-			} else if version == 8 {
-				if err = migrateSchemaTo9(db); err != nil {
-					return nil, err
+				if version == 9 {
+					if err = migrateSchemaTo10(db); err != nil {
+						return nil, err
+					}
+					version = 10
 				}
-				if err = migrateSchemaTo10(db); err != nil {
-					return nil, err
+				if version == 10 {
+					if err = migrateSchemaTo11(db); err != nil {
+						return nil, err
+					}
 				}
-				if err = migrateSchemaTo11(db); err != nil {
-					return nil, err
-				}
-			} else if version == 7 {
-				if err = migrateSchemaTo8(db); err != nil {
-					return nil, err
-				}
-				if err = migrateSchemaTo9(db); err != nil {
-					return nil, err
-				}
-				if err = migrateSchemaTo10(db); err != nil {
-					return nil, err
-				}
-				if err = migrateSchemaTo11(db); err != nil {
-					return nil, err
-				}
-			} else if err = migrateSchemaTo7(db, version); err != nil {
-				return nil, err
-			} else if err = migrateSchemaTo9(db); err != nil {
-				return nil, err
-			} else if err = migrateSchemaTo10(db); err != nil {
-				return nil, err
-			} else if err = migrateSchemaTo11(db); err != nil {
+			}
+			if err = migrateSchemaTo12(db); err != nil {
 				return nil, err
 			}
 		}

@@ -124,7 +124,7 @@ padding member; APT metadata is entirely real generated output. It covers:
 - actual measured payload, APT metadata and active total;
 - retained history excluded from usage and pruned to the test policy;
 - cleaned incoming/work directories and released reservations;
-- Schema 11 unchanged.
+- The Nano correction left Schema 11 unchanged. Later Schema 12 adds publication-session state without changing Nano entitlement accounting.
 
 Existing request/file/inode/disk, cleanup failure, restart, authorization, website,
 store and generation-retention tests remain part of full qualification. Tests use

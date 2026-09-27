@@ -239,7 +239,7 @@ func TestNanoRealSignedPublicationReplacementAndRetention(t *testing.T) {
 	}
 	defer db.Close()
 	var schema int
-	if err := db.QueryRow("SELECT version FROM tpahub_schema WHERE singleton=1").Scan(&schema); err != nil || schema != 11 {
+	if err := db.QueryRow("SELECT version FROM tpahub_schema WHERE singleton=1").Scan(&schema); err != nil || schema != 12 {
 		t.Fatalf("schema=%d err=%v", schema, err)
 	}
 }

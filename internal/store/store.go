@@ -83,16 +83,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 11 directly or opens the current supported schema.
+// Open initializes Schema 12 directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit supported forward upgrade or validates Schema 11.
+// Migrate performs the explicit supported forward upgrade or validates Schema 12.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -1467,7 +1467,7 @@ func (s *Store) DeleteRepository(c context.Context, id string) error {
 		return err
 	}
 	var active int
-	if err = tx.QueryRowContext(c, `SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND (state NOT IN ('succeeded','failed') OR cleanup_state='pending')`, id).Scan(&active); err != nil {
+	if err = tx.QueryRowContext(c, `SELECT (SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND (state NOT IN ('succeeded','failed') OR cleanup_state='pending')) + (SELECT COUNT(*) FROM publication_sessions WHERE repository_id=? AND state='open')`, id, id).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {
@@ -1488,6 +1488,7 @@ func (s *Store) DeleteRepository(c context.Context, id string) error {
 		return fmt.Errorf("global bootstrap repository cannot be deleted")
 	}
 	for _, statement := range []string{
+		"DELETE FROM publication_sessions WHERE repository_id=?",
 		"DELETE FROM egress_accounting_uncertain WHERE repository_id=?",
 		"DELETE FROM generation_cleanup_tasks WHERE repository_id=?",
 		"DELETE FROM reader_credentials WHERE repository_id=?",
@@ -1662,7 +1663,7 @@ func (s *Store) CreateJob(c context.Context, j Job) error {
 	return e
 }
 func (s *Store) AccountStagingPaths(c context.Context, accountID string) ([]string, error) {
-	rows, err := s.db.QueryContext(c, `SELECT j.incoming_path FROM publish_jobs j JOIN repositories r ON r.id=j.repository_id WHERE r.account_id=? AND (j.state IN ('queued','running') OR j.cleanup_state='pending')`, accountID)
+	rows, err := s.db.QueryContext(c, `SELECT j.incoming_path FROM publish_jobs j JOIN repositories r ON r.id=j.repository_id WHERE r.account_id=? AND (j.state IN ('queued','running') OR j.cleanup_state='pending') UNION ALL SELECT ps.incoming_path FROM publication_sessions ps JOIN repositories r ON r.id=ps.repository_id WHERE r.account_id=? AND ps.state='open'`, accountID, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -1679,7 +1680,7 @@ func (s *Store) AccountStagingPaths(c context.Context, accountID string) ([]stri
 }
 
 func (s *Store) ActiveStagingPaths(c context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(c, `SELECT incoming_path FROM publish_jobs WHERE state IN ('queued','running') AND incoming_path<>''`)
+	rows, err := s.db.QueryContext(c, `SELECT incoming_path FROM publish_jobs WHERE state IN ('queued','running') AND incoming_path<>'' UNION ALL SELECT incoming_path FROM publication_sessions WHERE state='open'`)
 	if err != nil {
 		return nil, err
 	}
@@ -1697,7 +1698,7 @@ func (s *Store) ActiveStagingPaths(c context.Context) ([]string, error) {
 
 func (s *Store) HasNonterminalJobs(c context.Context, repositoryID string) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(c, `SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND state NOT IN ('succeeded','failed')`, repositoryID).Scan(&count)
+	err := s.db.QueryRowContext(c, `SELECT (SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND state NOT IN ('succeeded','failed')) + (SELECT COUNT(*) FROM publication_sessions WHERE repository_id=? AND state='open')`, repositoryID, repositoryID).Scan(&count)
 	return count > 0, err
 }
 

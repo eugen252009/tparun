@@ -12,6 +12,10 @@ import (
 )
 
 func uploadedPublicationArtifacts(ctx context.Context, dir string) ([]store.PublicationArtifact, error) {
+	return uploadedPublicationArtifactsObserved(ctx, dir, nil)
+}
+
+func uploadedPublicationArtifactsObserved(ctx context.Context, dir string, hashObserved func(int64)) ([]store.PublicationArtifact, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -38,6 +42,9 @@ func uploadedPublicationArtifacts(ctx context.Context, dir string) ([]store.Publ
 		digest, err := fileSHA256(path)
 		if err != nil {
 			return nil, err
+		}
+		if hashObserved != nil {
+			hashObserved(info.Size())
 		}
 		out = append(out, store.PublicationArtifact{Filename: entry.Name(), Package: parts[0], Version: parts[1], Architecture: parts[2], UploadedSize: info.Size(), UploadedSHA256: digest})
 	}
@@ -95,6 +102,11 @@ func (s *server) verifyPublicationArtifactIdentity(ctx context.Context, root, jo
 		return expected, nil
 	}
 	matched := make([]bool, len(expected))
+	byContent := make(map[string][]int, len(expected))
+	for i, artifact := range expected {
+		key := fmt.Sprintf("%d\x00%s", artifact.UploadedSize, strings.ToLower(artifact.UploadedSHA256))
+		byContent[key] = append(byContent[key], i)
+	}
 	err = filepath.WalkDir(filepath.Join(root, "pool"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -110,18 +122,20 @@ func (s *server) verifyPublicationArtifactIdentity(ctx context.Context, root, jo
 		if err != nil {
 			return err
 		}
-		for i, artifact := range expected {
-			if !matched[i] && artifact.UploadedSize == info.Size() && artifact.UploadedSHA256 == digest {
-				relative, err := filepath.Rel(root, path)
-				if err != nil {
-					return err
-				}
-				expected[i].PublishedFilename = filepath.ToSlash(relative)
-				expected[i].PublishedSize = info.Size()
-				expected[i].PublishedSHA256 = digest
-				matched[i] = true
-				break
+		key := fmt.Sprintf("%d\x00%s", info.Size(), strings.ToLower(digest))
+		for _, i := range byContent[key] {
+			if matched[i] {
+				continue
 			}
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			expected[i].PublishedFilename = filepath.ToSlash(relative)
+			expected[i].PublishedSize = info.Size()
+			expected[i].PublishedSHA256 = digest
+			matched[i] = true
+			break
 		}
 		return nil
 	})
