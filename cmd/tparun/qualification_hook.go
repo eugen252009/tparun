@@ -1,3 +1,5 @@
+//go:build qualificationhooks
+
 package main
 
 import (

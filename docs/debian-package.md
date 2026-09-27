@@ -20,9 +20,10 @@ The service account is created portably by the package using Debian `adduser`/`a
 ## Mema Manage
 
 The manifest is installed at `/etc/mema/recipe/manage/tparun.json`, which is the
-manifest directory used by MEMA. The package recommends MEMA 0.4.1 or later
-for v2 encrypted backups and exact typed exclusions of transient GnuPG agent
-sockets. The manifest uses only canonical package paths and declares the database/repository/publication
+manifest directory used by MEMA. The package has a hard dependency on
+`mema (>= 0.4.1)` because v2 encrypted backups and exact typed exclusions of
+transient GnuPG agent sockets require that MEMA behavior. The manifest uses
+only canonical package paths and declares the database/repository/publication
 data and signing home as host state. The nginx target is a host integration
 resource and is not packaged. The manifest has no production hostname, home
 directory, secret value, or private key.

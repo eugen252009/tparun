@@ -37,8 +37,7 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: $ARCH
-Depends: adduser, ca-certificates, gnupg, tpa
-Recommends: mema (>= 0.4.1)
+Depends: adduser, ca-certificates, gnupg, tpa, mema (>= 0.4.1)
 Replaces: tparun (<< 0.1.5)
 Maintainer: TPA.run <tparun@lupricht.net>
 Homepage: https://tpa.run

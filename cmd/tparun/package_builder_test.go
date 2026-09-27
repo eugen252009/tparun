@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -35,16 +36,16 @@ func TestDebianPackageBuilderMakesTPAHardDependency(t *testing.T) {
 		t.Fatalf("read generated package control metadata: %v", err)
 	}
 	fields := parseDebianControlFields(string(control))
-	for _, dependency := range []string{"adduser", "ca-certificates", "gnupg", "tpa"} {
+	for _, dependency := range []string{"adduser", "ca-certificates", "gnupg", "tpa", "mema"} {
 		if !hasDebianDependency(fields["Depends"], dependency) {
 			t.Errorf("generated Depends %q does not include %q", fields["Depends"], dependency)
 		}
 	}
-	if hasDebianDependency(fields["Recommends"], "tpa") {
-		t.Errorf("generated Recommends still includes tpa: %q", fields["Recommends"])
+	if !hasDebianVersionedDependency(fields["Depends"], "mema", ">= 0.4.1") {
+		t.Errorf("generated Depends=%q, want mema (>= 0.4.1)", fields["Depends"])
 	}
-	if fields["Recommends"] != "mema (>= 0.4.1)" {
-		t.Errorf("generated Recommends=%q, want mema (>= 0.4.1)", fields["Recommends"])
+	if hasDebianDependency(fields["Recommends"], "mema") {
+		t.Errorf("generated Recommends still includes mema: %q", fields["Recommends"])
 	}
 	if hasDebianDependency(fields["Depends"], "systemd") {
 		t.Errorf("generated Depends unexpectedly adds systemd: %q", fields["Depends"])
@@ -62,6 +63,15 @@ func TestDebianPackageBuilderMakesTPAHardDependency(t *testing.T) {
 	}
 	if strings.TrimSpace(string(runtimeVersion)) != fields["Version"] {
 		t.Fatalf("package/runtime version mismatch: package=%q runtime=%q", fields["Version"], strings.TrimSpace(string(runtimeVersion)))
+	}
+	binary, err := os.ReadFile(filepath.Join(packageRoot, "usr/bin/tparun"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"TPARUN_QUALIFICATION_HOOK", "TPARUN_QUALIFICATION_TOKEN", "/__qualification/", "qualification-candidate@example.invalid", "QualificationCandidateMutation", "QualificationCandidateReady"} {
+		if bytes.Contains(binary, []byte(marker)) {
+			t.Errorf("release binary contains qualification-only marker %q", marker)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(packageRoot, "usr/lib/systemd/system/tparun.service")); err != nil {
 		t.Fatalf("canonical packaged systemd unit missing: %v", err)
@@ -131,6 +141,20 @@ func hasDebianDependency(list, packageName string) bool {
 		}
 		name := strings.SplitN(fields[0], ":", 2)[0]
 		if name == packageName {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDebianVersionedDependency(list, packageName, constraint string) bool {
+	for _, clause := range strings.Split(list, ",") {
+		fields := strings.Fields(strings.TrimSpace(clause))
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.SplitN(fields[0], ":", 2)[0]
+		if name == packageName && strings.Trim(strings.Join(fields[1:], " "), "()") == constraint {
 			return true
 		}
 	}
