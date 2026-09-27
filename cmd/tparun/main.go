@@ -154,7 +154,10 @@ func main() {
 		if bin == "" {
 			bin = "tpa"
 		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		// sshd may send SIGHUP when the client disconnects. Convert it to
+		// context cancellation so the bounded TPA subprocess is killed and the
+		// worker's deferred temporary-tree cleanup gets a chance to run.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 		if err := tpa.RunWorker(ctx, os.Stdin, os.Stdout, bin); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, "tparun worker:", err)

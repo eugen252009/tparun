@@ -9,12 +9,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -299,6 +301,106 @@ func serveProtocolFixture(channel ssh.Channel) error {
 	sum := sha256.Sum256(result)
 	response := protocolHeader{Version: sshProtocolVersion, Kind: "result", JobID: header.JobID, AttemptID: header.AttemptID, Backend: header.Backend, StartedAt: header.StartedAt, MaxBytes: header.MaxBytes, MaxInodes: header.MaxInodes, PayloadSize: int64(len(result)), PayloadHash: hex.EncodeToString(sum[:]), Files: files}
 	return writeFrame(channel, response, result)
+}
+
+func TestCleanupStaleWorkerDirsPreservesActiveWorkspace(t *testing.T) {
+	tmp := t.TempDir()
+	stale, staleLease, err := createWorkerWorkspace(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Flock(int(staleLease.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err = staleLease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(stale, "payload"), []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	active, activeLease, err := createWorkerWorkspace(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(activeLease.Fd()), syscall.LOCK_UN)
+		_ = activeLease.Close()
+		_ = os.RemoveAll(active)
+	}()
+	legacy := filepath.Join(tmp, "tparun-worker-legacy")
+	if err = os.Mkdir(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = cleanupStaleWorkerDirs(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale leased workspace remains: %v", err)
+	}
+	if _, err = os.Stat(active); err != nil {
+		t.Fatalf("active workspace was removed: %v", err)
+	}
+	if _, err = os.Stat(legacy); err != nil {
+		t.Fatalf("unrecognized legacy directory was removed: %v", err)
+	}
+}
+
+func TestRunWorkerCancellationCleansTemporaryWorkspace(t *testing.T) {
+	workerTemp := t.TempDir()
+	t.Setenv("TMPDIR", workerTemp)
+	inputRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(inputRoot, "probe.deb"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	payload, files, err := archiveInputs(inputRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadHash := sha256.Sum256(payload)
+	header := protocolHeader{Version: sshProtocolVersion, Kind: "build", JobID: "0123456789abcdef0123456789abcdef",
+		AttemptID: "11111111111111111111111111111111", Backend: "ssh", StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		MaxBytes: 8 << 20, MaxInodes: 64, PayloadSize: int64(len(payload)), PayloadHash: hex.EncodeToString(payloadHash[:]), Files: files}
+	var request bytes.Buffer
+	if err = writeFrame(&request, header, payload); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "tpa-started")
+	fakeTPA := filepath.Join(t.TempDir(), "tpa-slow")
+	script := "#!/bin/sh\ntouch '" + marker + "'\nsleep 30\n"
+	if err = os.WriteFile(fakeTPA, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	var response bytes.Buffer
+	go func() { done <- RunWorker(ctx, bytes.NewReader(request.Bytes()), &response, fakeTPA) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err = os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bounded worker did not start the controlled TPA process")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop after cancellation")
+	}
+	entries, err := os.ReadDir(workerTemp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("worker temporary trees retained after cancellation: %v", entries)
+	}
 }
 
 func TestSSHProtocolHelperProcess(t *testing.T) {

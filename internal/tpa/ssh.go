@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -215,11 +216,19 @@ func RunWorker(ctx context.Context, in io.Reader, out io.Writer, bin string) err
 	if hex.EncodeToString(digest[:]) != header.PayloadHash {
 		return fmt.Errorf("SSH worker input digest mismatch")
 	}
-	root, err := os.MkdirTemp("", "tparun-worker-")
+	tempRoot := os.TempDir()
+	if err = cleanupStaleWorkerDirs(tempRoot); err != nil {
+		return fmt.Errorf("clean abandoned worker directories: %w", err)
+	}
+	root, lease, err := createWorkerWorkspace(tempRoot)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(root)
+	defer func() {
+		_ = syscall.Flock(int(lease.Fd()), syscall.LOCK_UN)
+		_ = lease.Close()
+		_ = os.RemoveAll(root)
+	}()
 	input := filepath.Join(root, "input")
 	if err = os.Mkdir(input, 0700); err != nil {
 		return err
@@ -240,6 +249,84 @@ func RunWorker(ctx context.Context, in io.Reader, out io.Writer, bin string) err
 		Backend: "ssh", StartedAt: header.StartedAt, MaxBytes: header.MaxBytes, MaxInodes: header.MaxInodes,
 		PayloadSize: int64(len(responsePayload)), PayloadHash: hex.EncodeToString(resultHash[:]), Files: files}
 	return writeFrame(out, response, responsePayload)
+}
+
+func createWorkerWorkspace(tempRoot string) (string, *os.File, error) {
+	root, err := os.MkdirTemp(tempRoot, "tparun-worker-")
+	if err != nil {
+		return "", nil, err
+	}
+	leasePath := filepath.Join(root, ".lease")
+	lease, err := os.OpenFile(leasePath, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", nil, err
+	}
+	if err = syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lease.Close()
+		_ = os.RemoveAll(root)
+		return "", nil, err
+	}
+	return root, lease, nil
+}
+
+// cleanupStaleWorkerDirs removes only abandoned workspaces created by this
+// worker implementation. A held lease protects concurrent worker invocations;
+// legacy or incomplete directories without a lease are left for operator cleanup.
+func cleanupStaleWorkerDirs(tempRoot string) error {
+	entries, err := os.ReadDir(tempRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "tparun-worker-") {
+			continue
+		}
+		root := filepath.Join(tempRoot, entry.Name())
+		info, err := os.Lstat(root)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || int(stat.Uid) != os.Geteuid() {
+			continue
+		}
+		leasePath := filepath.Join(root, ".lease")
+		leaseInfo, err := os.Lstat(leasePath)
+		if err != nil || !leaseInfo.Mode().IsRegular() || leaseInfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		leaseStat, ok := leaseInfo.Sys().(*syscall.Stat_t)
+		if !ok || int(leaseStat.Uid) != os.Geteuid() {
+			continue
+		}
+		fd, err := syscall.Open(leasePath, syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			continue
+		}
+		lease := os.NewFile(uintptr(fd), leasePath)
+		if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = lease.Close()
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				continue
+			}
+			return err
+		}
+		current, statErr := os.Lstat(root)
+		if statErr == nil && os.SameFile(info, current) {
+			if removeErr := os.RemoveAll(root); removeErr != nil {
+				_ = syscall.Flock(fd, syscall.LOCK_UN)
+				_ = lease.Close()
+				return removeErr
+			}
+		}
+		_ = syscall.Flock(fd, syscall.LOCK_UN)
+		_ = lease.Close()
+	}
+	return nil
 }
 
 func writeWorkerError(out io.Writer, request protocolHeader, cause error) error {
