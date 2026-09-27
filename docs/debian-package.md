@@ -1,6 +1,6 @@
 # TPA.run Debian package
 
-The `tparun` package is the release-layer handoff for self-hosted TPA.run. It has a hard dependency on the separate `tpa` administrative/build CLI; APT installs TPA even with recommendations disabled, and the server validates it at startup before repository generation/publication. The application binary is installed at `/usr/bin/tparun` and runs directly with `/usr/bin/tparun serve`, independent of PID 1 or systemd. The optional systemd unit is `/lib/systemd/system/tparun.service`. The package does not contain or manage instance data.
+The `tparun` package is the release-layer handoff for self-hosted TPA.run. It has a hard dependency on the separate `tpa` administrative/build CLI; APT installs TPA even with recommendations disabled, and the server validates it at startup before repository generation/publication. The application binary is installed at `/usr/bin/tparun` and runs directly with `/usr/bin/tparun serve`, independent of PID 1 or systemd. The optional systemd unit is installed at the canonical `/usr/lib/systemd/system/tparun.service` path. This is a systemd unit-search path on supported Debian releases and avoids making managed restores traverse Debian 12's `/lib -> usr/lib` symlink. The package does not contain or manage instance data.
 
 ## Ownership boundary
 
@@ -20,8 +20,9 @@ The service account is created portably by the package using Debian `adduser`/`a
 ## Mema Manage
 
 The manifest is installed at `/etc/mema/recipe/manage/tparun.json`, which is the
-manifest directory used by the currently deployed Mema 0.3.4 binary. It uses
-only canonical package paths and declares the database/repository/publication
+manifest directory used by MEMA. The package recommends MEMA 0.4.1 or later
+for v2 encrypted backups and exact typed exclusions of transient GnuPG agent
+sockets. The manifest uses only canonical package paths and declares the database/repository/publication
 data and signing home as host state. The nginx target is a host integration
 resource and is not packaged. The manifest has no production hostname, home
 directory, secret value, or private key.
@@ -51,13 +52,15 @@ uses `User=tparun`, `Group=tparun`, `WorkingDirectory=/var/lib/tparun`,
 serve`, and `Restart=on-failure`. Package installation does not start or enable
 it.
 
-The next beta package uses the next immutable release identity,
-`0.1.5~beta5`, matching `internal/version.Current`; do not republish Beta4 or
-use a source suffix in place of the next beta release. The runtime `/version`
-endpoint separately reports product version, build revision, and schema. The
-Debian `Mema-Schema` field is obtained by querying the just-built binary, and
-the package build fails if the field does not match that binary. The systemd
-unit description intentionally carries no schema number.
+The next beta package uses the immutable release identity `0.1.5~beta5` by
+default. Release builds may override it explicitly; the builder injects that
+exact Debian package version into the binary and fails unless the packaged
+binary's `version` command agrees with the control metadata. The runtime
+`/version` endpoint reports product version, build revision, and schema. The
+Debian `Mema-Schema` field is queried from the just-built binary and checked
+against it. The optional unit moved from the historical `/lib` package path to
+`/usr/lib`; `Replaces` permits the older package file to be replaced during
+upgrade. The systemd unit description intentionally carries no schema number.
 
 Build with:
 

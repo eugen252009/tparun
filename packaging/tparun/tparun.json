@@ -2,7 +2,7 @@
   "version": 1,
   "service": "tparun",
   "files": [
-    {"path": "/lib/systemd/system/tparun.service", "role": "systemd-unit"}
+    {"path": "/usr/lib/systemd/system/tparun.service", "role": "systemd-unit"}
   ],
   "config": [
     {"path": "/etc/nginx/sites-enabled/tparun", "role": "nginx-config"}
@@ -11,10 +11,15 @@
     {"path": "/etc/tparun/tparun.env", "role": "host-configuration", "secret": true}
   ],
   "data": [
-    {"path": "/var/lib/tparun/data", "role": "database-repositories-publication-state"}
+    {"path": "/var/lib/tparun/data", "role": "database-repositories-publication-state", "exclude": ["./.tpahub.lock"]}
   ],
   "identity": [
-    {"path": "/var/lib/tparun/gnupg", "role": "repository-signing-identity", "secret": true, "critical": true}
+    {"path": "/var/lib/tparun/gnupg", "role": "repository-signing-identity", "secret": true, "critical": true, "exclude_sockets": [
+      "S.gpg-agent",
+      "S.gpg-agent.browser",
+      "S.gpg-agent.extra",
+      "S.gpg-agent.ssh"
+    ]}
   ],
   "binary": [
     {"path": "/usr/bin/tparun", "role": "release-binary"}
@@ -29,9 +34,10 @@
   },
   "snapshot": {"consistency": "stop-service"},
   "backup": {
-    "format": "mema-snapshot-v1",
-    "backend": "local",
-    "file": "${SERVICE}-${SNAPSHOT_ID}.mema",
+    "format": "mema-snapshot-v2",
+    "backend": "${BACKUP_BACKEND}",
+    "file": "${BACKUP_FILE}",
+    "encryption": {"type": "gpg", "recipient": "${BACKUP_RECIPIENT}"},
     "verify": {"remote_hash": false}
   },
   "variables": {
