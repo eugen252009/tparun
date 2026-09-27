@@ -14,8 +14,9 @@ import (
 // Runner executes TPA without GPG signing authority. ProtectedPaths are masked
 // inside bounded publication namespaces and never passed to the TPA process.
 type Runner struct {
-	Bin            string
-	ProtectedPaths []string
+	Bin                string
+	ProtectedPaths     []string
+	IsolateEnvironment bool
 }
 
 func runnerEnvironment(home string) []string {
@@ -145,6 +146,9 @@ func (r Runner) command(ctx context.Context, args ...string) ([]byte, error) {
 	c.Stdout = &out
 	c.Stderr = &errout
 	c.Env = runnerEnvironment("/nonexistent")
+	if r.IsolateEnvironment {
+		c.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/nonexistent", "LC_ALL=C"}
+	}
 	e := c.Run()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -169,7 +173,11 @@ func (r Runner) Check(ctx context.Context) error {
 	return nil
 }
 
-type PublishRequest struct{ Input, Output string }
+type PublishRequest struct {
+	Input, Output    string
+	JobID, AttemptID string
+	StartedAt        string
+}
 
 // PublishBounded runs the external publisher in a fixed-size tmpfs mount. The
 // completed tree is copied to the host only after the publisher succeeds, so a

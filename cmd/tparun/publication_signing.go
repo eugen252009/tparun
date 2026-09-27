@@ -14,6 +14,22 @@ import (
 	"github.com/eugen252009/tpahub/internal/tpa"
 )
 
+func publicationRunnerForConfig(cfg config.Config) publicationRunner {
+	switch cfg.PublicationBackend {
+	case "", "local":
+		return publicationTPARunner(cfg)
+	case "ssh":
+		return tpa.SSHRunner{Config: tpa.SSHConfig{Target: cfg.SSHWorkerTarget, IdentityFile: cfg.SSHIdentityFile,
+			KnownHostsFile: cfg.SSHKnownHostsFile, Port: cfg.SSHWorkerPort, SSHBinary: cfg.SSHBinary, ConnectTimeout: cfg.SSHConnectTimeout}}
+	default:
+		return invalidPublicationRunner{err: fmt.Errorf("unsupported publication backend %q", cfg.PublicationBackend)}
+	}
+}
+
+type invalidPublicationRunner struct{ err error }
+
+func (r invalidPublicationRunner) Check(context.Context) error { return r.err }
+
 func publicationTPARunner(cfg config.Config) tpa.Runner {
 	home := cfg.GPGHome
 	if home == "" {

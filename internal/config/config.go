@@ -20,6 +20,11 @@ type Config struct {
 	Listen                                string
 	DataDir                               string
 	TPABin                                string
+	PublicationBackend                    string
+	SSHWorkerTarget, SSHIdentityFile      string
+	SSHKnownHostsFile, SSHBinary          string
+	SSHWorkerPort                         int
+	SSHConnectTimeout                     time.Duration
 	GPGHome                               string
 	GPGFingerprint                        string
 	PublishTimeout                        time.Duration
@@ -56,6 +61,13 @@ func Load() Config {
 		Listen:                   envCompat("TPARUN_LISTEN", "127.0.0.1:8080"),
 		DataDir:                  envCompat("TPARUN_DATA_DIR", "./data"),
 		TPABin:                   env("TPA_BIN", "tpa"),
+		PublicationBackend:       envCompat("TPARUN_PUBLICATION_BACKEND", "local"),
+		SSHWorkerTarget:          CanonicalEnv("TPARUN_SSH_WORKER_TARGET"),
+		SSHIdentityFile:          CanonicalEnv("TPARUN_SSH_IDENTITY_FILE"),
+		SSHKnownHostsFile:        CanonicalEnv("TPARUN_SSH_KNOWN_HOSTS_FILE"),
+		SSHBinary:                env("TPARUN_SSH_BINARY", "ssh"),
+		SSHWorkerPort:            int(integerCompat("TPARUN_SSH_PORT", 22)),
+		SSHConnectTimeout:        durationCompat("TPARUN_SSH_CONNECT_TIMEOUT", 15*time.Second),
 		GPGHome:                  os.Getenv("GNUPGHOME"),
 		GPGFingerprint:           CanonicalEnv("TPARUN_GPG_FINGERPRINT"),
 		PublishTimeout:           durationCompat("TPARUN_PUBLISH_TIMEOUT", 10*time.Minute),

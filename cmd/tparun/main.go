@@ -149,6 +149,19 @@ func serverRequested(args []string) bool {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "worker" {
+		bin := os.Getenv("TPA_BIN")
+		if bin == "" {
+			bin = "tpa"
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := tpa.RunWorker(ctx, os.Stdin, os.Stdout, bin); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "tparun worker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg := config.Load()
 	args := os.Args[1:]
 	if !serverRequested(args) {
@@ -200,7 +213,7 @@ func run(cfg config.Config) error {
 	if e = os.Chmod(filepath.Join(cfg.DataDir, "tpahub.db"), 0600); e != nil {
 		return fmt.Errorf("secure database permissions: %w", e)
 	}
-	s := &server{cfg: cfg, db: db, runner: publicationTPARunner(cfg), startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
+	s := &server{cfg: cfg, db: db, runner: publicationRunnerForConfig(cfg), startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
 	if _, e = s.operatorState(); e != nil {
 		return fmt.Errorf("invalid operator WebAuthn configuration: %w", e)
 	}
@@ -1193,7 +1206,9 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
-	request := tpa.PublishRequest{Input: work, Output: candidate}
+	attemptID := newID()
+	request := tpa.PublishRequest{Input: work, Output: candidate, JobID: j.ID, AttemptID: attemptID, StartedAt: j.StartedAt}
+	log.Printf("publication runner attempt started job=%s attempt=%s backend=%s started_at=%s", j.ID, attemptID, s.cfg.PublicationBackend, j.StartedAt)
 	bounded, ok := s.runner.(boundedPublicationRunner)
 	if !ok {
 		s.fail(j, fmt.Errorf("publication runner does not enforce an output bound"))

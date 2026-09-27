@@ -61,12 +61,15 @@ strict-accounted/mock defaults. `init` refuses existing state and never migrates
 schema. See [commercial composition](docs/commercial-composition.md) for explicit
 profile overrides, billing selection and authority boundaries.
 
-Local publication currently requires Linux, the util-linux `unshare`, `mount`,
-`prlimit`, and `setpriv` commands, and enabled unprivileged user namespaces.
-TPA.run runs each TPA publication in a private user/mount namespace with a
-fixed-size `tmpfs`; publication fails closed if that sandbox cannot be created. The data
-directory and its work/candidate paths must remain on the same filesystem so a
-verified candidate can become an immutable generation by rename.
+The default local publication backend requires Linux, the util-linux `unshare`,
+`mount`, `prlimit`, and `setpriv` commands, and enabled unprivileged user
+namespaces. TPA.run runs each TPA publication in a private user/mount namespace
+with a fixed-size `tmpfs`; publication fails closed if that sandbox cannot be
+created. An opt-in SSH backend can run the same bounded, unsigned build on a
+restricted compatible worker; the authoritative server still validates, signs,
+verifies, and activates the candidate. See [SSH publication worker operations](docs/ssh-publication-worker.md).
+The data directory and its work/candidate paths must remain on the same
+filesystem so a verified candidate can become an immutable generation by rename.
 
 Configuration uses environment variables. The table below lists legacy defaults;
 initialized self-hosted defaults are described above. Explicit environment values
@@ -75,7 +78,13 @@ override profile defaults:
 ```text
 TPARUN_LISTEN                 127.0.0.1:8080
 TPARUN_DATA_DIR               ./data
-TPA_BIN                       tpa
+TPA_BIN                       tpa (local backend; worker's own TPA_BIN for SSH)
+TPARUN_PUBLICATION_BACKEND    local (or ssh; opt-in)
+TPARUN_SSH_WORKER_TARGET       unset (required for ssh)
+TPARUN_SSH_IDENTITY_FILE      unset (required for ssh)
+TPARUN_SSH_KNOWN_HOSTS_FILE   unset (required for ssh; strict pinning)
+TPARUN_SSH_PORT               22 (worker SSH port)
+TPARUN_SSH_CONNECT_TIMEOUT    15s
 GNUPGHOME                     optional GPG home
 TPARUN_GPG_FINGERPRINT        full signing fingerprint (used only by the authoritative server)
 TPARUN_PUBLISH_TIMEOUT        10m
