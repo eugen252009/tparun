@@ -65,3 +65,12 @@ Before non-trivial changes, ask:
 - Is the feature implemented now rather than merely proposed?
 
 Keep source revision, build artifact, publication, and runtime activation separate. Do not push, deploy, or mutate production unless explicitly authorized. Freeze exact review SHAs and do not create commits afterward when a review handoff requires immutability.
+
+## Privileged operations
+
+- If `mayi` is available on the current machine, use it for privileged operations; run unprivileged commands normally.
+- If Mayi is unavailable, follow the machine/project's existing documented privilege workflow.
+- Do not bypass Mayi with `sudo`, `su`, `pkexec`, an improvised root shell, or another escalation path.
+- For current syntax and behavior, consult `man mayi` and `man mayi-workflow`.
+- If Mayi rejects an operation, do not evade the restriction with shell wrappers or by moving/copying scripts or executables. Report the blocker or find a narrower legitimate operation.
+- After an approved privileged operation, verify the result with unprivileged/read-only commands where possible.
