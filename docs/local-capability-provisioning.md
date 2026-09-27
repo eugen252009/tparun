@@ -91,7 +91,8 @@ Byte values must be decimal int64 values in `[0, MaxInt64-1]`; malformed, negati
 overflowing or MaxInt64 values fail startup. Zero remains a finite allowance, not
 unlimited. No new sentinel is introduced. Private-read accepts only `true` or
 `false`. Explicit empty policy values fail rather than silently falling back.
-The old unrelated resource-bound environment parsers are unchanged.
+Server resource-bound environment values are separately validated by
+`LoadServer`; see [capacity reservation policy](capacity-reservations.md).
 
 Private-read false does **not** introduce a prohibition on creating a private
 repository. Existing policy denies reader-credential operations and private

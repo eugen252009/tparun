@@ -13,7 +13,7 @@ func clearProfileEnv(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	// Empty boolean envs are explicit false. Remove them and restore on cleanup.
-	for _, k := range []string{"TPARUN_LOCAL_STORAGE_BYTES", "TPARUN_LOCAL_EGRESS_BYTES", "TPARUN_LOCAL_PRIVATE_READ_ENABLED", "TPARUN_LOCAL_PROVISIONING_ENABLED", "TPARUN_REGISTRATION_ENABLED"} {
+	for _, k := range []string{"TPARUN_LOCAL_STORAGE_BYTES", "TPARUN_LOCAL_EGRESS_BYTES", "TPARUN_LOCAL_PRIVATE_READ_ENABLED", "TPARUN_LOCAL_PROVISIONING_ENABLED", "TPARUN_REGISTRATION_ENABLED", "TPARUN_MAX_UPLOAD_BYTES", "TPARUN_MAX_STAGING_BYTES", "TPARUN_MAX_ACCOUNT_STAGING_BYTES", "TPARUN_MAX_CANDIDATE_INODES", "TPARUN_MIN_DISK_FREE_BYTES", "TPARUN_MIN_FREE_INODES", "TPARUN_MAX_GENERATIONS", "TPARUN_PUBLISH_TIMEOUT", "TPARUN_UPLOAD_READ_TIMEOUT"} {
 		value, exists := os.LookupEnv(k)
 		os.Unsetenv(k)
 		t.Cleanup(func() {
@@ -66,6 +66,45 @@ func TestInitializedSelfHostedProfileAndLegacyCompatibility(t *testing.T) {
 		t.Fatal("explicit configuration lost")
 	}
 }
+func TestResourceLimitEnvironmentIsAppliedAndValidated(t *testing.T) {
+	clearProfileEnv(t)
+	for key, value := range map[string]string{
+		"TPARUN_MAX_UPLOAD_BYTES": "2048", "TPARUN_MAX_STAGING_BYTES": "0",
+		"TPARUN_MAX_ACCOUNT_STAGING_BYTES": "4096", "TPARUN_MAX_CANDIDATE_INODES": "128",
+		"TPARUN_MIN_DISK_FREE_BYTES": "0", "TPARUN_MIN_FREE_INODES": "7", "TPARUN_MAX_GENERATIONS": "3",
+	} {
+		t.Setenv(key, value)
+	}
+	cfg, err := LoadServer()
+	if err != nil || cfg.MaxUpload != 2048 || cfg.MaxStagingBytes != 0 || cfg.MaxAccountStagingBytes != 4096 || cfg.MaxCandidateInodes != 128 || cfg.MinDiskFreeBytes != 0 || cfg.MinFreeInodes != 7 || cfg.MaxGenerations != 3 {
+		t.Fatalf("resource settings=%+v err=%v", cfg, err)
+	}
+	for _, key := range []string{"TPARUN_PUBLISH_TIMEOUT", "TPARUN_UPLOAD_READ_TIMEOUT"} {
+		for _, value := range []string{"0s", "invalid"} {
+			t.Setenv(key, value)
+			if _, err := LoadServer(); err == nil {
+				t.Errorf("accepted %s=%q", key, value)
+			}
+		}
+	}
+	for key, values := range map[string][]string{
+		"TPARUN_MAX_UPLOAD_BYTES":          {"0", "-1", "bad", "9223372036854775808"},
+		"TPARUN_MAX_STAGING_BYTES":         {"-1", "bad", "9223372036854775808"},
+		"TPARUN_MAX_ACCOUNT_STAGING_BYTES": {"-1", "bad"},
+		"TPARUN_MAX_CANDIDATE_INODES":      {"0", "-1", "bad"},
+		"TPARUN_MIN_DISK_FREE_BYTES":       {"-1", "bad"},
+		"TPARUN_MIN_FREE_INODES":           {"-1", "bad"},
+		"TPARUN_MAX_GENERATIONS":           {"-1", "bad"},
+	} {
+		for _, value := range values {
+			t.Setenv(key, value)
+			if _, err := LoadServer(); err == nil {
+				t.Errorf("accepted %s=%q", key, value)
+			}
+		}
+	}
+}
+
 func TestProfileInitializationHonorsPrivateModesUnderPermissiveUmask(t *testing.T) {
 	old := syscall.Umask(0)
 	defer syscall.Umask(old)

@@ -56,7 +56,7 @@ func TestFreshSelfHostedInitializationStartupPublicationAndUsage(t *testing.T) {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
-	cmd.Env = append(cmd.Env, "TPARUN_SELF_HOSTED_TEST_PROCESS=1", "TPARUN_DATA_DIR="+dir, "TPARUN_LISTEN="+address, "TPA_BIN="+tpaBin, "GNUPGHOME="+signing.GPGHome, "TPARUN_GPG_FINGERPRINT="+signing.GPGFingerprint,
+	cmd.Env = append(cmd.Env, "TPARUN_SELF_HOSTED_TEST_PROCESS=1", "TPARUN_DATA_DIR="+dir, "TPARUN_LISTEN="+address, "TPA_BIN="+tpaBin, "GNUPGHOME="+signing.GPGHome, "TPARUN_GPG_FINGERPRINT="+signing.GPGFingerprint, "TPARUN_MAX_UPLOAD_BYTES=1048576",
 		"TPARUN_STRIPE_TEST_SECRET=deliberately-invalid", "TPARUN_BILLING_RATE_CARD=does-not-exist", "TPARUN_CHECKOUT_SUCCESS_URL=invalid:unused")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -129,6 +129,21 @@ func TestFreshSelfHostedInitializationStartupPublicationAndUsage(t *testing.T) {
 	var repo struct{ ID string }
 	if err := json.Unmarshal(request("POST", "/v1/repositories", []byte(`{"name":"local","visibility":"public"}`), "application/json", account.Token), &repo); err != nil || repo.ID == "" {
 		t.Fatal("repository creation failed")
+	}
+	oversized, err := http.NewRequest(http.MethodPost, base+"/v1/repositories/"+repo.ID+"/publishes?filename=too-large.deb", bytes.NewReader(make([]byte, (1<<20)+1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversized.Header.Set("Content-Type", "application/octet-stream")
+	oversized.Header.Set("Authorization", "Bearer "+account.Token)
+	oversizedResponse, err := client.Do(oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, oversizedResponse.Body)
+	oversizedResponse.Body.Close()
+	if oversizedResponse.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("serve did not enforce configured request cap: status=%d", oversizedResponse.StatusCode)
 	}
 	deb := filepath.Join(t.TempDir(), "local.deb")
 	buildWorkerTestDeb(t, deb, "self-hosted-test")

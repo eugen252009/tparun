@@ -4,7 +4,10 @@ TPA.run serializes allocation decisions through `server.stagingMu` and uses
 `reserveCapacityWithResources` before Hub-controlled filesystem growth. An upload
 releases that mutex only after its physical reservation and incoming directory
 exist; the untrusted body stream does not hold the global allocator lock.
-There are no customer-quota reservations for incoming or queued data.
+There are no customer-quota reservations for incoming or queued data. These
+server settings are read by `tparun serve`; CLI publication planning is advisory.
+Malformed, negative, or unsupported-zero values fail startup rather than
+silently reverting to defaults.
 
 ## Three separate resource authorities
 
@@ -35,13 +38,23 @@ then copies the completed tree into the host reservation. The byte bound covers
 both logical output expansion and block-rounded package payload allocations, so
 many tiny packages cannot exhaust the sandbox despite low summed logical bytes.
 Writes beyond the data or inode bound receive `ENOSPC` before host candidate
-growth. The post-copy block allocation check is defense in depth. Request bytes,
-upload file count, publication timeout and upload read timeout remain separate
-limits. A single multipart upload accepts at most 64 package files; this is a
-per-request transport limit, not a repository package-count limit. `tparun publish`
-automatically sends larger staged sets in sequential batches inside one publication
-session and finalizes one job. Do not emulate this by publishing independent
-batches, which would activate intermediate generations.
+growth. The post-copy block allocation check is defense in depth. Request bytes (`TPARUN_MAX_UPLOAD_BYTES`, default 512 MiB), upload file count
+(64), publication timeout (`TPARUN_PUBLISH_TIMEOUT`, default 10 minutes), and
+upload read timeout (`TPARUN_UPLOAD_READ_TIMEOUT`, default 15 minutes) remain
+separate limits. A single multipart upload accepts at most 64 package files;
+this is a per-request transport limit, not a repository package-count limit.
+`tparun publish` automatically sends larger staged sets in sequential batches
+inside one publication session and finalizes one job. Do not emulate this by
+publishing independent batches, which would activate intermediate generations. The
+global staging cap defaults to 4 GiB and the account cap to
+1 GiB; each can be set to zero to disable that additional cap. The 100 MiB disk
+and 1024-inode headrooms can also be set to zero, but doing so removes safety
+margin, not the underlying filesystem's capacity. Generation retention defaults
+to five generations; zero disables collection. Candidate inode bounds are
+configurable but never applied below 64. These are process-local admission guards,
+not filesystem/project quotas: other processes, sparse/metadata growth, or
+external writers can still consume the same disk. Keep independent disk
+monitoring and backups.
 
 A same-filesystem candidate-to-generation rename is a kind-D ownership transition,
 not a second allocation. The candidate reservation is cleared when the rename

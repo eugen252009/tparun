@@ -79,14 +79,24 @@ GNUPGHOME                     optional GPG home
 TPARUN_GPG_FINGERPRINT        full signing fingerprint
 TPARUN_PUBLISH_TIMEOUT        10m
 TPARUN_UPLOAD_READ_TIMEOUT    15m
-TPARUN_MAX_UPLOAD_BYTES       512 MiB
-TPARUN_MAX_STAGING_BYTES      4 GiB
-TPARUN_MAX_CANDIDATE_INODES   65536 (filesystem inode count)
-TPARUN_MIN_DISK_FREE_BYTES    100 MiB
-TPARUN_MAX_GENERATIONS        5
+TPARUN_MAX_UPLOAD_BYTES       512 MiB (positive; HTTP body, including multipart framing)
+TPARUN_MAX_STAGING_BYTES      4 GiB (0 disables this additional cap)
+TPARUN_MAX_ACCOUNT_STAGING_BYTES 1 GiB (0 disables the per-account cap)
+TPARUN_MAX_CANDIDATE_INODES   65536 (minimum effective bound is 64)
+TPARUN_MIN_DISK_FREE_BYTES    100 MiB (0 disables reserved free-space headroom)
+TPARUN_MIN_FREE_INODES        1024 (0 disables reserved free-inode headroom)
+TPARUN_MAX_GENERATIONS        5 (0 disables old-generation collection)
 TPARUN_REGISTRATION_ENABLED   false (set true to enable with billing or local provisioning)
 TPARUN_LOCAL_PROVISIONING_ENABLED false (set true only for an intentional local deployment)
 ```
+
+The publication/resource variables are read and enforced by `tparun serve`;
+client-side planning is advisory. Values must be base-10 integers. Invalid,
+negative, or zero values where zero is not meaningful cause server startup to
+fail rather than silently selecting a default. Zero disables only the explicitly
+optional staging/headroom/retention controls shown above; it does not mean an
+unlimited account entitlement. See [capacity reservation policy](docs/capacity-reservations.md)
+for what each bound measures and what it does not protect.
 
 ## Website and onboarding
 

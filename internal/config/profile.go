@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 const (
@@ -81,6 +83,9 @@ func LoadServer() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("unknown server profile %q", c.Profile)
 	}
+	if err := validateResourceLimitEnvironment(); err != nil {
+		return Config{}, err
+	}
 	if err := loadLocalPolicy(&c); err != nil {
 		return Config{}, err
 	}
@@ -94,6 +99,49 @@ func LoadServer() (Config, error) {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+// validateResourceLimitEnvironment prevents misspelled or malformed operator
+// limits from silently reverting to defaults. Zero is accepted only for
+// controls whose existing enforcement explicitly treats it as disabled.
+func validateResourceLimitEnvironment() error {
+	for _, name := range []string{"TPARUN_PUBLISH_TIMEOUT", "TPARUN_UPLOAD_READ_TIMEOUT"} {
+		value, set := os.LookupEnv(name)
+		if !set {
+			continue
+		}
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("invalid %s %q: expected a positive duration", name, value)
+		}
+	}
+	for _, setting := range []struct {
+		name      string
+		allowZero bool
+	}{
+		{"TPARUN_MAX_UPLOAD_BYTES", false},
+		{"TPARUN_MAX_STAGING_BYTES", true},
+		{"TPARUN_MAX_ACCOUNT_STAGING_BYTES", true},
+		{"TPARUN_MAX_CANDIDATE_INODES", false},
+		{"TPARUN_MIN_DISK_FREE_BYTES", true},
+		{"TPARUN_MIN_FREE_INODES", true},
+		{"TPARUN_MAX_GENERATIONS", true},
+	} {
+		name, allowZero := setting.name, setting.allowZero
+		value, set := os.LookupEnv(name)
+		if !set {
+			continue
+		}
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || n < 0 || (!allowZero && n == 0) {
+			qualifier := "a positive"
+			if allowZero {
+				qualifier = "a non-negative"
+			}
+			return fmt.Errorf("invalid %s %q: expected %s integer", name, value, qualifier)
+		}
+	}
+	return nil
 }
 
 // InitializeSelfHosted is called while the Hub data-directory lock is held.

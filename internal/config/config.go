@@ -62,12 +62,12 @@ func Load() Config {
 		UploadReadTimeout:        durationCompat("TPARUN_UPLOAD_READ_TIMEOUT", 15*time.Minute),
 		ShutdownTimeout:          durationCompat("TPARUN_SHUTDOWN_TIMEOUT", 20*time.Second),
 		MaxUpload:                integerCompat("TPARUN_MAX_UPLOAD_BYTES", 512<<20),
-		MaxStagingBytes:          integerCompat("TPARUN_MAX_STAGING_BYTES", 4<<30),
-		MaxAccountStagingBytes:   integerCompat("TPARUN_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
+		MaxStagingBytes:          integerCompatAllowZero("TPARUN_MAX_STAGING_BYTES", 4<<30),
+		MaxAccountStagingBytes:   integerCompatAllowZero("TPARUN_MAX_ACCOUNT_STAGING_BYTES", 1<<30),
 		MaxCandidateInodes:       integerCompat("TPARUN_MAX_CANDIDATE_INODES", 65536),
-		MinDiskFreeBytes:         integerCompat("TPARUN_MIN_DISK_FREE_BYTES", 100<<20),
-		MinFreeInodes:            integerCompat("TPARUN_MIN_FREE_INODES", 1024),
-		MaxGenerations:           integerCompat("TPARUN_MAX_GENERATIONS", 5),
+		MinDiskFreeBytes:         integerCompatAllowZero("TPARUN_MIN_DISK_FREE_BYTES", 100<<20),
+		MinFreeInodes:            integerCompatAllowZero("TPARUN_MIN_FREE_INODES", 1024),
+		MaxGenerations:           integerCompatAllowZero("TPARUN_MAX_GENERATIONS", 5),
 		RegistrationEnabled:      CanonicalEnv("TPARUN_REGISTRATION_ENABLED") == "true",
 		LocalProvisioningEnabled: CanonicalEnv("TPARUN_LOCAL_PROVISIONING_ENABLED") == "true",
 		BillingProvider:          envCompat("TPARUN_BILLING_PROVIDER", "mock"),
@@ -155,6 +155,15 @@ func durationCompat(k string, d time.Duration) time.Duration {
 func integerCompat(k string, d int64) int64 {
 	if v := CanonicalEnv(k); v != "" {
 		if x, e := strconv.ParseInt(v, 10, 64); e == nil && x > 0 {
+			return x
+		}
+	}
+	return d
+}
+
+func integerCompatAllowZero(k string, d int64) int64 {
+	if v := CanonicalEnv(k); v != "" {
+		if x, e := strconv.ParseInt(v, 10, 64); e == nil && x >= 0 {
 			return x
 		}
 	}
