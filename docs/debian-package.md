@@ -1,13 +1,11 @@
 # TPA.run Debian package
 
-The `tparun` package is the release-layer handoff for self-hosted TPA.run. Starting with version 0.1.3, it recommends the `tpa` administrative/build CLI; TPA is not required to serve repositories.
-The application binary is installed at `/usr/bin/tparun`; its systemd unit is
-`/lib/systemd/system/tparun.service`. The package does not contain or manage
-instance data.
+The `tparun` package is the release-layer handoff for self-hosted TPA.run. It recommends the separate `tpa` administrative/build CLI; TPA is not part of the serving runtime. The application binary is installed at `/usr/bin/tparun` and runs directly with `/usr/bin/tparun serve`, independent of PID 1 or systemd. The optional systemd unit is `/lib/systemd/system/tparun.service`. The package does not contain or manage instance data.
 
 ## Ownership boundary
 
-- Package-owned: binary, unit, default environment file, sysusers/tmpfiles rules,
+- Package-owned: binary, optional unit and sysusers/tmpfiles integration files,
+  default environment conffile, portable account/filesystem maintainer setup,
   and the Mema Manage manifest.
 - Mutable instance state: `/var/lib/tparun/data` (database, repositories,
   incoming objects, publication state, and generations).
@@ -17,9 +15,7 @@ instance data.
   file; they are never built into the package.
 - Rebuildable state: APT `Packages`, `Release`, and `InRelease` metadata.
 
-The service runs as the dedicated `tparun` user. `tparun.service` is shipped but
-has no maintainer-script start or restart behavior. Removing the package does
-not remove `/var/lib/tparun`.
+The service account is created portably by the package using Debian `adduser`/`addgroup` with dynamic IDs. Existing compatible `tparun` accounts are preserved; an account whose primary group conflicts with `tparun` causes a clear configuration failure. The post-install setup creates the state directories without recursive ownership changes and applies conservative modes. It does not invoke systemd tools or automatically enable/start/restart the unit. The systemd unit remains available for explicit host integration. Removing or purging the package does not remove `/var/lib/tparun` or its signing state; `/etc/tparun/tparun.env` follows normal dpkg conffile behavior.
 
 ## Mema Manage
 
@@ -34,12 +30,58 @@ directory, secret value, or private key.
 
 Adoption is deliberately a release-layer operation: install the package while
 leaving the existing database, repository objects, publication generations,
-signing home, and environment configuration in place. A host-specific path
-migration or systemd cutover is a separate authorized operation; the package
-itself does not copy, delete, or migrate instance state.
+signing home, and environment configuration in place. State setup follows a
+strict ownership rule: an absent root is created for `tparun`; an existing
+`tparun:tparun` root is preserved; an empty `root:root` `/var/lib/tparun`
+mountpoint may be adopted by changing ownership of that directory only; any
+incompatible non-empty or ambiguous state fails without recursive ownership
+changes. A host-specific
+path migration or systemd cutover is a separate authorized operation; the
+package itself does not copy, delete, or migrate instance state.
+
+The package's hard dependencies do not include systemd. Its maintainer setup
+uses `adduser`, `addgroup`, `install`, `stat`, `chown`, and `chmod`; it never
+calls `systemd-sysusers` or `systemd-tmpfiles`. The sysusers/tmpfiles snippets
+are optional host integration data and are not needed for installation. The
+Mema service recipe also declares a systemd target for Mema-enabled hosts; that
+adapter is separate from package dependencies and the direct runtime, and
+systemd-specific Mema management is unavailable on a no-systemd host. The unit
+uses `User=tparun`, `Group=tparun`, `WorkingDirectory=/var/lib/tparun`,
+`EnvironmentFile=/etc/tparun/tparun.env`, explicit `ExecStart=/usr/bin/tparun
+serve`, and `Restart=on-failure`. Package installation does not start or enable
+it.
 
 Build with:
 
 ```sh
-SOURCE_DATE_EPOCH=... packaging/tparun/build.sh dist/tparun_0.1.3_amd64.deb
+SOURCE_DATE_EPOCH=... packaging/tparun/build.sh dist/tparun_0.1.5~beta4_amd64.deb
 ```
+
+The build embeds `git rev-parse HEAD` as the runtime revision by default. For a
+package built from a modified worktree, set `TPARUN_BUILD_REVISION` to a
+stable, safe identifier that distinguishes the exact code and package inputs;
+`git diff` alone omits untracked files. For example:
+
+```sh
+SOURCE_DIGEST=$(
+  {
+    find cmd/tparun internal packaging/tparun -type f -print0 \
+      | LC_ALL=C sort -z | xargs -0 sha256sum
+    sha256sum go.mod go.sum
+  } | sha256sum | awk '{print $1}'
+)
+TPARUN_BUILD_REVISION="$(git rev-parse HEAD)+src.${SOURCE_DIGEST}"
+```
+
+Do not let a dirty build report only the base commit as if it identified all
+packaged source.
+
+## Docker state volumes
+
+Mount a persistent volume at `/var/lib/tparun`. A fresh empty Docker volume is
+normally `root:root`; package setup safely adopts only that empty mountpoint,
+then creates `data` and `gnupg` for `tparun`. Existing compatible state is not
+recursively changed. Non-empty incompatible state, symlinks, non-directories,
+and foreign ownership fail closed. Qualify persistence by removing and
+recreating a disposable container with the same named volume; a container
+restart alone does not prove volume persistence.

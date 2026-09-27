@@ -1,0 +1,127 @@
+#!/bin/sh
+set -eu
+
+fail() {
+    printf 'tparun package setup: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "${1:-}" = configure ] || exit 0
+[ "$(id -u)" -eq 0 ] || fail 'post-install setup must run as root'
+
+if ! getent group tparun >/dev/null 2>&1; then
+    addgroup --system --quiet tparun
+fi
+group_entry=$(getent group tparun 2>/dev/null || true)
+[ -n "$group_entry" ] || fail 'group tparun was not created or cannot be resolved'
+gid=$(printf '%s\n' "$group_entry" | cut -d: -f3)
+case "$gid" in ''|*[!0-9]*) fail 'group tparun has an invalid GID';; esac
+
+account_entry=$(getent passwd tparun 2>/dev/null || true)
+if [ -n "$account_entry" ]; then
+    account_gid=$(printf '%s\n' "$account_entry" | cut -d: -f4)
+    [ "$account_gid" = "$gid" ] || fail "existing user tparun has primary GID $account_gid, expected tparun group GID $gid"
+else
+    adduser --system --quiet --ingroup tparun --home /var/lib/tparun \
+        --no-create-home --shell /usr/sbin/nologin --disabled-login \
+        --disabled-password --gecos 'TPA.run service' tparun
+    account_entry=$(getent passwd tparun 2>/dev/null || true)
+    [ -n "$account_entry" ] || fail 'user tparun was not created or cannot be resolved'
+    account_gid=$(printf '%s\n' "$account_entry" | cut -d: -f4)
+    [ "$account_gid" = "$gid" ] || fail "new user tparun has primary GID $account_gid, expected $gid"
+fi
+uid=$(printf '%s\n' "$account_entry" | cut -d: -f3)
+case "$uid" in ''|*[!0-9]*) fail 'user tparun has an invalid UID';; esac
+
+state_root_is_empty() {
+    path=$1
+    # Cover ordinary and dot-prefixed entries; -L also catches dangling links.
+    for entry in "$path"/* "$path"/.[!.]* "$path"/..?*; do
+        if [ -e "$entry" ] || [ -L "$entry" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+ensure_state_root() {
+    path=/var/lib/tparun
+    if [ -L "$path" ]; then
+        fail "$path is a symlink; refusing to change state ownership"
+    fi
+    if [ -e "$path" ]; then
+        [ -d "$path" ] || fail "$path exists but is not a directory"
+        actual=$(stat -c '%u:%g' "$path") || fail "cannot inspect $path ownership"
+        if [ "$actual" = "$uid:$gid" ]; then
+            : # Compatible state is preserved; only the root mode is normalized.
+        elif [ "$actual" = 0:0 ]; then
+            state_root_is_empty "$path" || fail "$path is owned 0:0 and is not empty; refusing to adopt existing state"
+            chown "$uid:$gid" "$path" || fail "cannot adopt empty root-owned state mountpoint $path"
+        else
+            fail "$path is owned $actual, expected $uid:$gid; refusing state ownership change"
+        fi
+        chmod 0750 "$path" || fail "cannot set permissions on $path"
+    else
+        install -d -m 0750 -o "$uid" -g "$gid" "$path" || fail "cannot create $path"
+    fi
+}
+
+ensure_state_dir() {
+    path=$1
+    mode=$2
+    if [ -L "$path" ]; then
+        fail "$path is a symlink; refusing to change state ownership"
+    fi
+    if [ -e "$path" ]; then
+        [ -d "$path" ] || fail "$path exists but is not a directory"
+        actual=$(stat -c '%u:%g' "$path") || fail "cannot inspect $path ownership"
+        [ "$actual" = "$uid:$gid" ] || fail "$path is owned $actual, expected $uid:$gid; refusing recursive ownership changes"
+        chmod "$mode" "$path" || fail "cannot set permissions on $path"
+    else
+        install -d -m "$mode" -o "$uid" -g "$gid" "$path" || fail "cannot create $path"
+    fi
+}
+
+ensure_config_dir() {
+    path=/etc/tparun
+    if [ -L "$path" ]; then
+        fail "$path is a symlink; refusing to change configuration ownership"
+    fi
+    if [ -e "$path" ]; then
+        [ -d "$path" ] || fail "$path exists but is not a directory"
+        actual=$(stat -c '%u:%g' "$path") || fail "cannot inspect $path ownership"
+        case "$actual" in
+            0:0|0:"$gid") ;;
+            *) fail "$path is owned $actual, expected root:root or root:$gid" ;;
+        esac
+        chown "0:$gid" "$path" || fail "cannot set group on $path"
+        chmod 0750 "$path" || fail "cannot set permissions on $path"
+    else
+        install -d -m 0750 -o 0 -g "$gid" "$path" || fail "cannot create $path"
+    fi
+}
+
+ensure_config_file() {
+    path=/etc/tparun/tparun.env
+    # A missing conffile may be an intentional administrator choice. Never
+    # recreate it here; dpkg owns default-file creation and preservation.
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        return 0
+    fi
+    [ ! -L "$path" ] || fail "$path is a symlink; refusing to alter its target"
+    [ -f "$path" ] || fail "$path exists but is not a regular file"
+    actual=$(stat -c '%u:%g' "$path") || fail "cannot inspect $path ownership"
+    case "$actual" in
+        0:0|0:"$gid") ;;
+        *) fail "$path is owned $actual, expected root:root or root:$gid" ;;
+    esac
+    chown "0:$gid" "$path" || fail "cannot set group on $path"
+    chmod 0640 "$path" || fail "cannot set permissions on $path"
+}
+
+ensure_config_dir
+ensure_config_file
+ensure_state_root
+ensure_state_dir /var/lib/tparun/data 0700
+ensure_state_dir /var/lib/tparun/gnupg 0700
+exit 0

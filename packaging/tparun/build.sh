@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-VERSION=${TPARUN_VERSION:-0.1.3}
+VERSION=${TPARUN_VERSION:-0.1.5~beta4}
 ARCH=${TPARUN_ARCH:-amd64}
 OUTPUT=${1:-$ROOT/dist/tparun_${VERSION}_${ARCH}.deb}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
@@ -15,23 +15,25 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 install -d -m 0755 "$work/DEBIAN" "$work/usr/bin" "$work/lib/systemd/system" \
   "$work/usr/lib/sysusers.d" "$work/usr/lib/tmpfiles.d" "$work/etc/tparun" "$work/etc/mema/recipe/manage"
-revision=$(git -C "$ROOT" rev-parse HEAD)
+revision=${TPARUN_BUILD_REVISION:-$(git -C "$ROOT" rev-parse HEAD)}
+[[ "$revision" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]] || { echo 'TPARUN_BUILD_REVISION must be a safe build identifier' >&2; exit 1; }
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$revision" \
   -o "$work/usr/bin/tparun" "$ROOT/cmd/tparun"
 chmod 0755 "$work/usr/bin/tparun"
 install -m 0644 "$ROOT/packaging/tparun/tparun.service" "$work/lib/systemd/system/tparun.service"
 install -m 0644 "$ROOT/packaging/tparun/tparun.sysusers" "$work/usr/lib/sysusers.d/tparun.conf"
 install -m 0644 "$ROOT/packaging/tparun/tparun.tmpfiles" "$work/usr/lib/tmpfiles.d/tparun.conf"
-install -m 0644 "$ROOT/packaging/tparun/tparun.env" "$work/etc/tparun/tparun.env"
+install -m 0640 "$ROOT/packaging/tparun/tparun.env" "$work/etc/tparun/tparun.env"
 install -m 0644 "$ROOT/packaging/tparun/tparun.json" "$work/etc/mema/recipe/manage/tparun.json"
 printf '/etc/tparun/tparun.env\n' > "$work/DEBIAN/conffiles"
+install -m 0755 "$ROOT/packaging/tparun/postinst" "$work/DEBIAN/postinst"
 cat > "$work/DEBIAN/control" <<EOF
 Package: tparun
 Version: $VERSION
 Section: net
 Priority: optional
 Architecture: $ARCH
-Depends: ca-certificates, gnupg, systemd
+Depends: adduser, ca-certificates, gnupg
 Recommends: tpa
 Maintainer: TPA.run <tparun@lupricht.net>
 Homepage: https://tpa.run

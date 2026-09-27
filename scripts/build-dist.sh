@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DIST=${1:-$ROOT/dist}
-VERSION=${TPARUN_VERSION:-0.1.3}
+VERSION=${TPARUN_VERSION:-0.1.4}
 RELEASE_VERSION=${TPARUN_RELEASE_VERSION:-0.1.5}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
 ARCH=${TPARUN_ARCH:-amd64}
