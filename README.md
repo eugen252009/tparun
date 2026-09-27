@@ -26,7 +26,8 @@ Hub state, or invoke APT recursively. Future application updates use ordinary
 [`https://tpa.run/tparun.sources`](https://tpa.run/tparun.sources). See
 [Debian bootstrap packaging](docs/debian-bootstrap.md). The public bootstrap
 repository also carries the qualified `mema` and `bloom` packages used by the
-[clean Debian qualification](docs/debian-bootstrap-qualification.md).
+[clean Debian qualification](docs/debian-bootstrap-qualification.md). Self-hosters
+can follow the [service installation, startup, and update guide](docs/self-hosted-operations.md).
 
 ## Build and run
 
