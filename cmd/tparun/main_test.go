@@ -62,13 +62,14 @@ func configuredTestServer(t *testing.T, configure func(*server)) (*server, *http
 	}
 	_ = db.CreateAccount(context.Background(), store.Account{ID: "a", Email: "a@example.invalid", PasswordHash: "x", Status: "active", CreatedAt: "2024-01-01T00:00:00Z"}, defaultTPAGrants("2024-01-01T00:00:00Z")...)
 	_ = db.CreateSession(context.Background(), store.Session{ID: "s", AccountID: "a", TokenPrefix: "tph_s_test"}, store.HashToken("tph_s_test"))
-	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true, LocalProvisioningEnabled: true}, db: db, runner: tpa.Runner{}, customerAuthRate: newAuthLimiter(4096, 10, time.Minute), verifyCandidate: func(candidate, _ string) error {
+	testCandidate := func(candidate, _ string) error {
 		entries, err := os.ReadDir(candidate)
 		if err != nil || len(entries) == 0 {
 			return fmt.Errorf("invalid test candidate")
 		}
 		return nil
-	}}
+	}
+	s := &server{cfg: config.Config{DataDir: d, MaxUpload: 1024, RegistrationEnabled: true, LocalProvisioningEnabled: true}, db: db, runner: tpa.Runner{}, customerAuthRate: newAuthLimiter(4096, 10, time.Minute), verifyCandidate: testCandidate, verifyUnsignedCandidate: testCandidate, signCandidate: func(context.Context, string) error { return nil }}
 	if configure != nil {
 		configure(s)
 	}
@@ -261,7 +262,7 @@ func TestPublicationPanicRestartMatrixPreservesNextPublish(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			s2 := &server{cfg: s.cfg, db: db, runner: copyingPublicationRunner{}, ctx: context.Background(), verifyCandidate: s.verifyCandidate}
+			s2 := &server{cfg: s.cfg, db: db, runner: copyingPublicationRunner{}, ctx: context.Background(), verifyCandidate: s.verifyCandidate, verifyUnsignedCandidate: s.verifyUnsignedCandidate, signCandidate: s.signCandidate}
 			if err = s2.reconcilePublicationState(); err != nil {
 				t.Fatal(err)
 			}
@@ -1006,7 +1007,7 @@ func TestDiskFullPublicationCheckpointPreservesPreviousGeneration(t *testing.T) 
 	}
 }
 
-func TestSigningFailurePreservesPreviousGeneration(t *testing.T) {
+func TestPublisherFailurePreservesPreviousGeneration(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "failing-tpa")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
@@ -1019,8 +1020,8 @@ func TestSigningFailurePreservesPreviousGeneration(t *testing.T) {
 	if err := os.Symlink(filepath.Join("generations", "job-1"), filepath.Join(root, "current")); err != nil {
 		t.Fatal(err)
 	}
-	if err := (tpa.Runner{Bin: bin}).Publish(context.Background(), tpa.PublishRequest{Input: "input", Output: filepath.Join(root, "generations", "job-2")}); err == nil {
-		t.Fatal("signing failure was accepted")
+	if err := (tpa.Runner{Bin: bin}).PublishBounded(context.Background(), tpa.PublishRequest{Input: dir, Output: filepath.Join(root, "generations", "job-2")}, 1<<20); err == nil {
+		t.Fatal("publisher failure was accepted")
 	}
 	target, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
 	if err != nil || filepath.Base(target) != "job-1" {
@@ -1252,7 +1253,7 @@ func testCandidateSigningConfig(t *testing.T) config.Config {
 	return config.Config{GPGHome: home, GPGFingerprint: fingerprint}
 }
 
-func writeSemanticCandidate(t *testing.T, candidate, work string, cfg config.Config) {
+func writeUnsignedSemanticCandidate(t *testing.T, candidate, work string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(candidate, "pool"), 0755); err != nil {
 		t.Fatal(err)
@@ -1284,10 +1285,25 @@ func writeSemanticCandidate(t *testing.T, candidate, work string, cfg config.Con
 	if err = os.WriteFile(packages, []byte(stanzas), 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeSemanticRelease(t, candidate)
+}
+
+func writeSemanticCandidate(t *testing.T, candidate, work string, cfg config.Config) {
+	t.Helper()
+	writeUnsignedSemanticCandidate(t, candidate, work)
 	signSemanticCandidate(t, candidate, cfg)
 }
 
 func signSemanticCandidate(t *testing.T, candidate string, cfg config.Config) {
+	t.Helper()
+	_ = os.Remove(filepath.Join(candidate, "dists", "stable", "InRelease"))
+	writeSemanticRelease(t, candidate)
+	if err := signPublicationCandidate(context.Background(), candidate, cfg); err != nil {
+		t.Fatalf("sign candidate Release: %v", err)
+	}
+}
+
+func writeSemanticRelease(t *testing.T, candidate string) {
 	t.Helper()
 	packages := filepath.Join(candidate, "dists", "stable", "main", "binary-amd64", "Packages")
 	pd, err := os.ReadFile(packages)
@@ -1316,20 +1332,14 @@ func signSemanticCandidate(t *testing.T, candidate string, cfg config.Config) {
 	if err = os.WriteFile(releasePath, []byte(release), 0644); err != nil {
 		t.Fatal(err)
 	}
-	inRelease := filepath.Join(candidate, "dists", "stable", "InRelease")
-	cmd := exec.Command("gpg", "--batch", "--yes", "--homedir", cfg.GPGHome, "--local-user", cfg.GPGFingerprint, "--clearsign", "--output", inRelease, releasePath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("sign candidate Release: %v: %s", err, output)
-	}
 }
 
 func resignSemanticRelease(t *testing.T, candidate string, cfg config.Config) {
 	t.Helper()
-	releasePath := filepath.Join(candidate, "dists", "stable", "Release")
 	inRelease := filepath.Join(candidate, "dists", "stable", "InRelease")
-	cmd := exec.Command("gpg", "--batch", "--yes", "--homedir", cfg.GPGHome, "--local-user", cfg.GPGFingerprint, "--clearsign", "--output", inRelease, releasePath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("resign candidate Release: %v: %s", err, output)
+	_ = os.Remove(inRelease)
+	if err := signPublicationCandidate(context.Background(), candidate, cfg); err != nil {
+		t.Fatalf("resign candidate Release: %v", err)
 	}
 }
 
@@ -1376,6 +1386,46 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 	if err := verifyPublicationCandidate(valid, work, cfg); err != nil {
 		t.Fatalf("valid candidate rejected: %v", err)
 	}
+	makeUnsignedCandidate := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "unsigned-candidate")
+		writeUnsignedSemanticCandidate(t, p, work)
+		return p
+	}
+	unsigned := makeUnsignedCandidate(t)
+	if err := verifyUnsignedPublicationCandidate(unsigned, work, cfg); err != nil {
+		t.Fatalf("valid unsigned candidate rejected: %v", err)
+	}
+	if err := signPublicationCandidate(context.Background(), unsigned, cfg); err != nil {
+		t.Fatalf("server signing failed: %v", err)
+	}
+	if err := verifyPublicationCandidate(unsigned, work, cfg); err != nil {
+		t.Fatalf("server-signed candidate rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(string) error
+	}{
+		{"unexpected-file", func(p string) error { return os.WriteFile(filepath.Join(p, "unexpected"), []byte("x"), 0644) }},
+		{"inrelease-already-present", func(p string) error {
+			return os.WriteFile(filepath.Join(p, "dists", "stable", "InRelease"), []byte("signature"), 0644)
+		}},
+		{"detached-signature-present", func(p string) error {
+			return os.WriteFile(filepath.Join(p, "dists", "stable", "Release.gpg"), []byte("signature"), 0644)
+		}},
+		{"symlink", func(p string) error { return os.Symlink("Release", filepath.Join(p, "dists", "stable", "extra")) }},
+		{"non-regular", func(p string) error { return unix.Mkfifo(filepath.Join(p, "dists", "stable", "fifo"), 0600) }},
+	} {
+		t.Run("unsigned-"+tc.name, func(t *testing.T) {
+			p := makeUnsignedCandidate(t)
+			if err := tc.mutate(p); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyUnsignedPublicationCandidate(p, work, cfg); err == nil {
+				t.Fatal("invalid unsigned candidate accepted")
+			}
+		})
+	}
 	allWork := filepath.Join(t.TempDir(), "all-work")
 	if err := os.Mkdir(allWork, 0755); err != nil {
 		t.Fatal(err)
@@ -1411,6 +1461,14 @@ func TestPublicationCandidateSemanticVerification(t *testing.T) {
 			os.WriteFile(filepath.Join(p, "Packages"), []byte("ok"), 0644)
 		}},
 		{"missing-inrelease", func(t *testing.T, p string) { os.Remove(filepath.Join(p, "dists", "stable", "InRelease")) }},
+		{"unexpected-file", func(t *testing.T, p string) { os.WriteFile(filepath.Join(p, "unexpected"), []byte("x"), 0644) }},
+		{"symlink", func(t *testing.T, p string) { os.Symlink("Release", filepath.Join(p, "dists", "stable", "extra")) }},
+		{"non-regular", func(t *testing.T, p string) {
+			if err := unix.Mkfifo(filepath.Join(p, "dists", "stable", "fifo"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+
 		{"invalid-signing-envelope", func(t *testing.T, p string) {
 			os.WriteFile(filepath.Join(p, "dists", "stable", "InRelease"), []byte("unsigned"), 0644)
 		}},

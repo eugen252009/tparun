@@ -34,7 +34,9 @@ publication planner; different package versions remain present.
 Global and per-account staging admission use allocated filesystem blocks, not
 logical file lengths. Candidate output is bounded before the runner starts:
 the production runner uses a fixed-size `tmpfs` mount with a bounded inode count,
-then copies the completed tree into the host reservation. The byte bound covers
+then copies the completed unsigned tree into the host reservation. Capacity reserves
+one additional host inode for the authoritative server's `InRelease` after candidate
+validation and signing. The byte bound covers
 both logical output expansion and block-rounded package payload allocations, so
 many tiny packages cannot exhaust the sandbox despite low summed logical bytes.
 Writes beyond the data or inode bound receive `ENOSPC` before host candidate

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugen252009/tpahub/internal/config"
 	"github.com/eugen252009/tpahub/internal/store"
-	"github.com/eugen252009/tpahub/internal/tpa"
 )
 
 // Build a real, extractable uncompressed Debian package. An additional trailing
@@ -71,6 +71,54 @@ func sizedNanoDeb(t *testing.T, size int, flavor byte, version string) []byte {
 	return data
 }
 
+func qualifyPublishedRepositoryWithAPT(t *testing.T, baseURL, repository string, signing config.Config) {
+	t.Helper()
+	aptGet, err := exec.LookPath("apt-get")
+	if err != nil {
+		t.Skip("apt-get is unavailable; consumer-side readback not run")
+	}
+	aptCache, err := exec.LookPath("apt-cache")
+	if err != nil {
+		t.Skip("apt-cache is unavailable; consumer-side readback not run")
+	}
+	keyring, err := exec.Command("gpg", "--batch", "--homedir", signing.GPGHome, "--export", signing.GPGFingerprint).Output()
+	if err != nil {
+		t.Fatalf("export test public key: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(root, "test-keyring.gpg")
+	if err := os.WriteFile(keyPath, keyring, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(root, "sources.list")
+	source := fmt.Sprintf("deb [signed-by=%s] %s/r/%s stable main\n", keyPath, baseURL, repository)
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	lists := filepath.Join(root, "lists")
+	archives := filepath.Join(root, "archives")
+	for _, path := range []string{lists, filepath.Join(lists, "partial"), archives, filepath.Join(archives, "partial")} {
+		if err := os.MkdirAll(path, 0777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := []string{"-o", "Dir::Etc::sourcelist=" + sourcePath, "-o", "Dir::Etc::sourceparts=-", "-o", "Dir::State::lists=" + lists, "-o", "Dir::Cache=" + filepath.Join(root, "cache"), "-o", "Dir::Cache::archives=" + archives, "-o", "Debug::NoLocking=1", "-o", "APT::Get::List-Cleanup=0", "update"}
+	if output, err := exec.Command(aptGet, args...).CombinedOutput(); err != nil {
+		t.Fatalf("APT update rejected server-signed repository: %v\n%s", err, output)
+	}
+	showArgs := []string{"-o", "Dir::Etc::sourcelist=" + sourcePath, "-o", "Dir::Etc::sourceparts=-", "-o", "Dir::State::lists=" + lists, "show", "nano-fixture"}
+	output, err := exec.Command(aptCache, showArgs...).CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "Package: nano-fixture") {
+		t.Fatalf("APT did not read the published package index: %v\n%s", err, output)
+	}
+}
+
 func TestNanoRealSignedPublicationReplacementAndRetention(t *testing.T) {
 	bin := buildCurrentTPA(t)
 	signing := testCandidateSigningConfig(t)
@@ -88,7 +136,10 @@ func TestNanoRealSignedPublicationReplacementAndRetention(t *testing.T) {
 		s.cfg.PublishTimeout = time.Minute
 		s.cfg.MaxGenerations = 2
 		s.verifyCandidate = nil // real signature, index, payload and identity validation
-		s.runner = tpa.Runner{Bin: bin, GPGHome: signing.GPGHome, Fingerprint: signing.GPGFingerprint}
+		s.verifyUnsignedCandidate = nil
+		s.signCandidate = nil
+		s.cfg.TPABin = bin
+		s.runner = publicationTPARunner(s.cfg)
 	})
 	// No helper grant override: use the actual persisted Nano grant resolver.
 	repo := createLocalPolicyRepo(t, s, "tph_s_test", "public")
@@ -233,6 +284,7 @@ func TestNanoRealSignedPublicationReplacementAndRetention(t *testing.T) {
 			}
 		})
 	}
+	qualifyPublishedRepositoryWithAPT(t, h.URL, repo, signing)
 	db, err := sql.Open("sqlite", filepath.Join(s.cfg.DataDir, "tpahub.db"))
 	if err != nil {
 		t.Fatal(err)

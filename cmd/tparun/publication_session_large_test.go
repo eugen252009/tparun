@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/store"
-	"github.com/eugen252009/tpahub/internal/tpa"
 )
 
 func TestPublicationSessionPublishes1000DistinctPackagesEndToEnd(t *testing.T) {
@@ -30,7 +29,10 @@ func TestPublicationSessionPublishes1000DistinctPackagesEndToEnd(t *testing.T) {
 		s.cfg.PublishTimeout = 5 * time.Minute
 		s.cfg.MaxGenerations = 2
 		s.verifyCandidate = nil
-		s.runner = tpa.Runner{Bin: bin, GPGHome: signing.GPGHome, Fingerprint: signing.GPGFingerprint}
+		s.verifyUnsignedCandidate = nil
+		s.signCandidate = nil
+		s.cfg.TPABin = bin
+		s.runner = publicationTPARunner(s.cfg)
 		s.ctx = workerCtx
 	})
 	defer h.Close()

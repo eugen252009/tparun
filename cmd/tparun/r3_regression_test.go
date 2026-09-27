@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"net/http"
@@ -25,7 +25,6 @@ import (
 
 type semanticCandidateRunner struct {
 	t      *testing.T
-	cfg    config.Config
 	mutate func(string)
 }
 
@@ -42,7 +41,7 @@ func (r *recordingPublicationRunner) PublishBounded(ctx context.Context, request
 
 func (r semanticCandidateRunner) Check(context.Context) error { return nil }
 func (r semanticCandidateRunner) Publish(_ context.Context, p tpa.PublishRequest) error {
-	writeSemanticCandidate(r.t, p.Output, p.Input, r.cfg)
+	writeUnsignedSemanticCandidate(r.t, p.Output, p.Input)
 	if r.mutate != nil {
 		r.mutate(p.Output)
 	}
@@ -151,19 +150,9 @@ func TestSuccessfulRunnerMalformedCandidatesNeverActivate(t *testing.T) {
 			os.MkdirAll(p, 0755)
 			os.WriteFile(filepath.Join(p, "garbage"), []byte("x"), 0644)
 		}},
-		{"missing-release", func(p string) { os.Remove(filepath.Join(p, "dists", "stable", "InRelease")) }},
-		{"missing-signature", func(p string) {
-			os.WriteFile(filepath.Join(p, "dists", "stable", "InRelease"), []byte("unsigned"), 0644)
-		}},
-		{"invalid-signature", func(p string) {
-			path := filepath.Join(p, "dists", "stable", "InRelease")
-			data, _ := os.ReadFile(path)
-			marker := []byte("-----BEGIN PGP SIGNATURE-----\n\n")
-			at := bytes.Index(data, marker)
-			if at >= 0 {
-				data[at+len(marker)] = '!'
-				os.WriteFile(path, data, 0644)
-			}
+		{"missing-release", func(p string) { os.Remove(filepath.Join(p, "dists", "stable", "Release")) }},
+		{"unexpected-signature", func(p string) {
+			os.WriteFile(filepath.Join(p, "dists", "stable", "InRelease"), []byte("runner must not sign"), 0644)
 		}},
 		{"truncated-index", func(p string) {
 			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte("Package"), 0644)
@@ -180,7 +169,9 @@ func TestSuccessfulRunnerMalformedCandidatesNeverActivate(t *testing.T) {
 				os.WriteFile(filepath.Join(p, "pool", entries[0].Name()), []byte("bad"), 0644)
 			}
 		}},
-		{"missing-new-package", func(p string) { omitSemanticPackage(t, p, "new.deb", cfg) }},
+		{"missing-new-package", func(p string) {
+			os.WriteFile(filepath.Join(p, "dists", "stable", "main", "binary-amd64", "Packages"), []byte(""), 0644)
+		}},
 		{"self-consistent-replaced-payload", func(p string) {
 			alternate := t.TempDir()
 			entries, err := os.ReadDir(filepath.Join(p, "pool"))
@@ -202,17 +193,23 @@ func TestSuccessfulRunnerMalformedCandidatesNeverActivate(t *testing.T) {
 			if err = os.RemoveAll(p); err != nil {
 				t.Fatal(err)
 			}
-			writeSemanticCandidate(t, p, alternate, cfg)
+			writeUnsignedSemanticCandidate(t, p, alternate)
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, repo, root, j := workerFailureFixture(t)
 			s.verifyCandidate = nil
+			s.verifyUnsignedCandidate = nil
 			s.cfg.GPGHome, s.cfg.GPGFingerprint = cfg.GPGHome, cfg.GPGFingerprint
-			s.runner = semanticCandidateRunner{t: t, cfg: cfg, mutate: tc.mutate}
+			var signingAttempts int
+			s.signCandidate = func(context.Context, string) error { signingAttempts++; return nil }
+			s.runner = semanticCandidateRunner{t: t, mutate: tc.mutate}
 			s.process(j)
 			assertOldAuthorityAndFailed(t, s, repo, root, j.ID)
+			if signingAttempts != 0 {
+				t.Fatalf("malformed unsigned candidate reached signer %d times", signingAttempts)
+			}
 		})
 	}
 }
@@ -295,8 +292,13 @@ func TestWorkerCandidateHardBoundENOSPCPreservesAuthorityAndRetry(t *testing.T) 
 		t.Fatal(err)
 	}
 	s.runner = tpa.Runner{Bin: bin}
+	var signingAttempts int
+	s.signCandidate = func(context.Context, string) error { signingAttempts++; return nil }
 	s.process(j)
 	assertOldAuthorityAndFailed(t, s, repo, root, j.ID)
+	if signingAttempts != 0 {
+		t.Fatalf("failed runner reached signer %d times", signingAttempts)
+	}
 	failed, err := s.db.Job(context.Background(), j.ID)
 	if err != nil || !strings.Contains(strings.ToLower(failed.Error), "space") {
 		t.Fatalf("candidate hard bound did not return ENOSPC: job=%+v err=%v", failed, err)
@@ -325,7 +327,13 @@ func TestWorkerSigningFailurePreservesAuthorityAndRetry(t *testing.T) {
 	tpaBin := buildCurrentTPA(t)
 	buildWorkerTestDeb(t, filepath.Join(root, "generations", "old", "old.deb"), "old-worker-package")
 	buildWorkerTestDeb(t, filepath.Join(j.IncomingPath, "new.deb"), "new-worker-package")
-	s.runner = tpa.Runner{Bin: tpaBin, GPGHome: t.TempDir(), Fingerprint: "0000000000000000000000000000000000000000"}
+	badKeyHome := filepath.Join(t.TempDir(), "gnupg")
+	if err := os.Mkdir(badKeyHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.GPGHome, s.cfg.GPGFingerprint, s.cfg.TPABin = badKeyHome, "0000000000000000000000000000000000000000", tpaBin
+	s.verifyCandidate, s.verifyUnsignedCandidate, s.signCandidate = nil, nil, nil
+	s.runner = publicationTPARunner(s.cfg)
 	s.process(j)
 	assertOldAuthorityAndFailed(t, s, repo, root, j.ID)
 	failed, err := s.db.Job(context.Background(), j.ID)
@@ -333,7 +341,8 @@ func TestWorkerSigningFailurePreservesAuthorityAndRetry(t *testing.T) {
 		t.Fatalf("worker did not reach signing path: job=%+v err=%v", failed, err)
 	}
 	signing := testCandidateSigningConfig(t)
-	s.runner = tpa.Runner{Bin: tpaBin, GPGHome: signing.GPGHome, Fingerprint: signing.GPGFingerprint}
+	s.cfg.GPGHome, s.cfg.GPGFingerprint = signing.GPGHome, signing.GPGFingerprint
+	s.runner = publicationTPARunner(s.cfg)
 	incoming := filepath.Join(s.cfg.DataDir, "incoming", "retry-sign")
 	if err := os.MkdirAll(incoming, 0700); err != nil {
 		t.Fatal(err)
@@ -349,6 +358,39 @@ func TestWorkerSigningFailurePreservesAuthorityAndRetry(t *testing.T) {
 		t.Fatalf("retry active=%s", active)
 	}
 }
+func TestSignedCandidateVerificationFailurePreservesAuthority(t *testing.T) {
+	s, repo, root, job := workerFailureFixture(t)
+	s.cfg.PublishTimeout = time.Minute
+	bin := buildCurrentTPA(t)
+	buildWorkerTestDeb(t, filepath.Join(root, "generations", "old", "old.deb"), "old-worker-package")
+	buildWorkerTestDeb(t, filepath.Join(job.IncomingPath, "new.deb"), "new-worker-package")
+	signing := testCandidateSigningConfig(t)
+	s.cfg.GPGHome, s.cfg.GPGFingerprint, s.cfg.TPABin = signing.GPGHome, signing.GPGFingerprint, bin
+	s.runner = publicationTPARunner(s.cfg)
+	s.verifyUnsignedCandidate, s.verifyCandidate = nil, nil
+	var signAttempts int
+	s.signCandidate = func(ctx context.Context, candidate string) error {
+		signAttempts++
+		inRelease := filepath.Join(candidate, "dists", "stable", "InRelease")
+		if _, err := os.Lstat(inRelease); !os.IsNotExist(err) {
+			return fmt.Errorf("runner produced signature before authoritative signer")
+		}
+		if err := signPublicationCandidate(ctx, candidate, s.cfg); err != nil {
+			return err
+		}
+		return os.WriteFile(inRelease, []byte("tampered after signing"), 0644)
+	}
+	s.process(job)
+	assertOldAuthorityAndFailed(t, s, repo, root, job.ID)
+	if signAttempts != 1 {
+		t.Fatalf("sign attempts=%d, want 1", signAttempts)
+	}
+	failed, err := s.db.Job(context.Background(), job.ID)
+	if err != nil || !strings.Contains(strings.ToLower(failed.Error), "signed publication candidate invalid") {
+		t.Fatalf("signed verification failure not recorded: %+v %v", failed, err)
+	}
+}
+
 func TestOrdinaryPostSwapFailuresRestoreDurableAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -461,7 +503,7 @@ func TestPublicationProcessDeathRecoveryMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			s := &server{cfg: config.Config{DataDir: data, PublishTimeout: time.Minute, MaxStagingBytes: 1 << 30}, db: db, ctx: context.Background(), runner: copyingPublicationRunner{}, verifyCandidate: func(string, string) error { return nil }}
+			s := &server{cfg: config.Config{DataDir: data, PublishTimeout: time.Minute, MaxStagingBytes: 1 << 30}, db: db, ctx: context.Background(), runner: copyingPublicationRunner{}, verifyCandidate: func(string, string) error { return nil }, verifyUnsignedCandidate: func(string, string) error { return nil }, signCandidate: func(context.Context, string) error { return nil }}
 			if err = s.reconcilePublicationState(); err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +597,7 @@ func TestPublicationProcessDeathHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage := os.Getenv("TPARUN_CRASH_STAGE")
-	s := &server{cfg: config.Config{DataDir: data, PublishTimeout: time.Minute, MaxStagingBytes: 1 << 30}, db: db, ctx: context.Background(), runner: copyingPublicationRunner{}, verifyCandidate: func(string, string) error { return nil }}
+	s := &server{cfg: config.Config{DataDir: data, PublishTimeout: time.Minute, MaxStagingBytes: 1 << 30}, db: db, ctx: context.Background(), runner: copyingPublicationRunner{}, verifyCandidate: func(string, string) error { return nil }, verifyUnsignedCandidate: func(string, string) error { return nil }, signCandidate: func(context.Context, string) error { return nil }}
 	s.publicationFault = func(current string) error {
 		if current == stage {
 			os.Exit(42)

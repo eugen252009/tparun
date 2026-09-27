@@ -48,6 +48,8 @@ TPARUN_OPERATOR_RP_ID=<public DNS hostname, without scheme>
 TPARUN_OPERATOR_ORIGIN=https://<public DNS hostname>
 ```
 
+Publication is split across a signing boundary: the bounded TPA process builds an unsigned repository, and the server validates the exact candidate before creating `InRelease`, validating its signature, and activating that same tree. The build process is not given GPG arguments or signing environment; the configured GPG home is masked in its mount namespace and its capabilities are dropped. Keep the signing home separate from the data/work paths so the runner can mask it without overlapping publication inputs or outputs.
+
 The packaged defaults disable account registration. Enable it only when you are ready to accept registrations and have chosen the intended self-hosted provisioning policy:
 
 ```ini

@@ -85,7 +85,6 @@ func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return fmt.Spr
 
 type publicationRunner interface {
 	Check(context.Context) error
-	Publish(context.Context, tpa.PublishRequest) error
 }
 type boundedPublicationRunner interface {
 	PublishBounded(context.Context, tpa.PublishRequest, int64) error
@@ -126,6 +125,8 @@ type server struct {
 	publicationHashObserve  func(bytes int64)
 	reservations            map[string]capacityReservation
 	verifyCandidate         func(candidate, work string) error
+	verifyUnsignedCandidate func(candidate, work string) error
+	signCandidate           func(context.Context, string) error
 	operatorAuth            *operatorAuthState
 	operatorInitMu          sync.Mutex
 	pointerSwap             func(next, current string) error
@@ -199,7 +200,7 @@ func run(cfg config.Config) error {
 	if e = os.Chmod(filepath.Join(cfg.DataDir, "tpahub.db"), 0600); e != nil {
 		return fmt.Errorf("secure database permissions: %w", e)
 	}
-	s := &server{cfg: cfg, db: db, runner: tpa.Runner{Bin: cfg.TPABin, GPGHome: cfg.GPGHome, Fingerprint: cfg.GPGFingerprint}, startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
+	s := &server{cfg: cfg, db: db, runner: publicationTPARunner(cfg), startedAt: time.Now().UTC(), customerAuthRate: newAuthLimiter(4096, 10, time.Minute), cleanupWake: make(chan struct{}, 1)}
 	if _, e = s.operatorState(); e != nil {
 		return fmt.Errorf("invalid operator WebAuthn configuration: %w", e)
 	}
@@ -1186,7 +1187,9 @@ func (s *server) process(j store.Job) {
 		s.fail(j, fmt.Errorf("candidate capacity overflow"))
 		return
 	}
-	if e = s.reserveCapacityWithResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "candidate", candidateReservation, candidateInodes+1); e != nil {
+	// Reserve one host inode beyond the bounded unsigned tree for the
+	// authoritative InRelease created after TPA exits.
+	if e = s.reserveCapacityWithResources(context.Background(), repo.AccountID, j.RepositoryID, j.ID, "candidate", candidateReservation, candidateInodes+2); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -1217,23 +1220,37 @@ func (s *server) process(j store.Job) {
 		s.fail(j, e)
 		return
 	}
+	verifyUnsigned := s.verifyUnsignedCandidate
+	if verifyUnsigned == nil {
+		verifyUnsigned = func(candidate, work string) error { return verifyUnsignedPublicationCandidate(candidate, work, s.cfg) }
+	}
+	if e := verifyUnsigned(candidate, work); e != nil {
+		s.fail(j, fmt.Errorf("unsigned publication candidate invalid: %w", e))
+		return
+	}
+	if e := checkCandidateBounds(candidate, candidateBound, candidateReservation); e != nil {
+		s.fail(j, e)
+		return
+	}
+	sign := s.signCandidate
+	if sign == nil {
+		sign = func(ctx context.Context, candidate string) error {
+			return signPublicationCandidate(ctx, candidate, s.cfg)
+		}
+	}
+	if e := sign(ctx, candidate); e != nil {
+		s.fail(j, fmt.Errorf("sign publication candidate: %w", e))
+		return
+	}
 	verify := s.verifyCandidate
 	if verify == nil {
 		verify = func(candidate, work string) error { return verifyPublicationCandidate(candidate, work, s.cfg) }
 	}
 	if e := verify(candidate, work); e != nil {
-		s.fail(j, e)
+		s.fail(j, fmt.Errorf("signed publication candidate invalid: %w", e))
 		return
 	}
-	candidateBytes, e := fileTreeSize(candidate)
-	candidateAllocated, allocationErr := fileTreeAllocatedSize(candidate)
-	if e != nil || allocationErr != nil || candidateBytes > candidateBound || candidateAllocated > candidateReservation {
-		if e == nil {
-			e = allocationErr
-		}
-		if e == nil {
-			e = fmt.Errorf("candidate exceeded reserved capacity")
-		}
+	if e := checkCandidateBounds(candidate, candidateBound, candidateReservation); e != nil {
 		s.fail(j, e)
 		return
 	}
@@ -1560,7 +1577,15 @@ func atomicReplaceSymlink(next, current string) error {
 }
 
 func verifyPublicationCandidate(candidate, work string, cfg config.Config) error {
-	if cfg.GPGFingerprint == "" {
+	return verifyPublicationCandidatePhase(candidate, work, cfg, true)
+}
+
+func verifyUnsignedPublicationCandidate(candidate, work string, cfg config.Config) error {
+	return verifyPublicationCandidatePhase(candidate, work, cfg, false)
+}
+
+func verifyPublicationCandidatePhase(candidate, work string, cfg config.Config, signed bool) error {
+	if signed && cfg.GPGFingerprint == "" {
 		return fmt.Errorf("publication signing fingerprint is not configured")
 	}
 	verificationTimeout := cfg.PublishTimeout
@@ -1569,12 +1594,13 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), verificationTimeout)
 	defer cancel()
-	info, err := os.Stat(candidate)
-	if err != nil || !info.IsDir() {
+	info, err := os.Lstat(candidate)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("publication candidate is not a directory")
 	}
 	indexedPayloads := map[string]candidatePackage{}
 	candidatePayloads := map[string]bool{}
+	candidateFiles := map[string]bool{}
 	err = filepath.WalkDir(candidate, func(path string, entry os.DirEntry, err error) error {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
@@ -1600,6 +1626,7 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 			return relativeErr
 		}
 		relative = filepath.ToSlash(relative)
+		candidateFiles[relative] = true
 		if strings.HasPrefix(relative, "pool/") {
 			candidatePayloads[relative] = true
 		}
@@ -1632,14 +1659,29 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	if len(releaseArchitectures) == 0 {
 		return fmt.Errorf("publication candidate Release has no architectures")
 	}
-	if err = verifyCandidateSignature(ctx, inReleasePath, releaseBytes, cfg); err != nil {
-		return err
+	if signed {
+		if _, err := os.Lstat(inReleasePath); err != nil {
+			return fmt.Errorf("publication candidate missing InRelease: %w", err)
+		}
+	} else {
+		for _, signature := range []string{inReleasePath, filepath.Join(distDir, "Release.gpg")} {
+			if _, err := os.Lstat(signature); err == nil {
+				return fmt.Errorf("unsigned publication candidate contains signature artifact: %s", filepath.Base(signature))
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
 	}
+	expectedFiles := map[string]bool{"dists/stable/Release": true}
 	for relative, expected := range checksums {
 		path, pathErr := candidateRelativePath(distDir, relative)
 		if pathErr != nil {
 			return fmt.Errorf("invalid Release path %q: %w", relative, pathErr)
 		}
+		if relative == "Release" || relative == "InRelease" || relative == "Release.gpg" {
+			return fmt.Errorf("Release checksum contains reserved path: %s", relative)
+		}
+		expectedFiles[filepath.ToSlash(filepath.Join("dists", "stable", relative))] = true
 		if fileErr := verifyCandidateFile(ctx, path, expected.size, expected.sha256); fileErr != nil {
 			return fmt.Errorf("Release entry %s: %w", relative, fileErr)
 		}
@@ -1716,6 +1758,12 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	if len(candidatePayloads) != len(indexedPayloads) {
 		return fmt.Errorf("candidate index/pool payload set mismatch")
 	}
+	for path := range indexedPayloads {
+		expectedFiles[path] = true
+	}
+	if signed {
+		expectedFiles["dists/stable/InRelease"] = true
+	}
 	err = filepath.WalkDir(work, func(path string, entry os.DirEntry, walkErr error) error {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
@@ -1757,6 +1805,21 @@ func verifyPublicationCandidate(candidate, work string, cfg config.Config) error
 	}
 	if len(indexedPayloads) != 0 {
 		return fmt.Errorf("candidate contains package payload absent from input")
+	}
+	for path := range candidateFiles {
+		if !expectedFiles[path] {
+			return fmt.Errorf("publication candidate contains unexpected file: %s", path)
+		}
+	}
+	for path := range expectedFiles {
+		if !candidateFiles[path] {
+			return fmt.Errorf("publication candidate missing expected file: %s", path)
+		}
+	}
+	if signed {
+		if err = verifyCandidateSignature(ctx, inReleasePath, releaseBytes, cfg); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1822,10 +1885,7 @@ func parseCandidateRelease(data []byte) (map[string]candidateChecksum, map[strin
 func verifyCandidateSignature(ctx context.Context, inRelease string, release []byte, cfg config.Config) error {
 	command := func(args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "gpg", args...)
-		cmd.Env = os.Environ()
-		if cfg.GPGHome != "" {
-			cmd.Env = append(cmd.Env, "GNUPGHOME="+cfg.GPGHome)
-		}
+		cmd.Env = serverGPGEnvironment(cfg)
 		return cmd
 	}
 	status, err := command("--batch", "--status-fd=1", "--verify", inRelease).CombinedOutput()

@@ -62,9 +62,9 @@ schema. See [commercial composition](docs/commercial-composition.md) for explici
 profile overrides, billing selection and authority boundaries.
 
 Local publication currently requires Linux, the util-linux `unshare`, `mount`,
-and `prlimit` commands, and enabled unprivileged user namespaces. TPA.run runs
-each TPA publication in a private user/mount namespace with a fixed-size
-`tmpfs`; publication fails closed if that sandbox cannot be created. The data
+`prlimit`, and `setpriv` commands, and enabled unprivileged user namespaces.
+TPA.run runs each TPA publication in a private user/mount namespace with a
+fixed-size `tmpfs`; publication fails closed if that sandbox cannot be created. The data
 directory and its work/candidate paths must remain on the same filesystem so a
 verified candidate can become an immutable generation by rename.
 
@@ -77,7 +77,7 @@ TPARUN_LISTEN                 127.0.0.1:8080
 TPARUN_DATA_DIR               ./data
 TPA_BIN                       tpa
 GNUPGHOME                     optional GPG home
-TPARUN_GPG_FINGERPRINT        full signing fingerprint
+TPARUN_GPG_FINGERPRINT        full signing fingerprint (used only by the authoritative server)
 TPARUN_PUBLISH_TIMEOUT        10m
 TPARUN_UPLOAD_READ_TIMEOUT    15m
 TPARUN_MAX_UPLOAD_BYTES       512 MiB (positive; HTTP body, including multipart framing)
@@ -239,7 +239,7 @@ post-reboot rebuilds: [developer environment qualification](docs/developer-envir
 
 Management endpoints require `Authorization: Bearer tph_s_...`: account registration (`POST /v1/accounts`), login (`POST /v1/login`), logout (`POST /v1/logout`), repository management, publishing, jobs, and reader credentials. The signing-key endpoint remains public. Public repository files are anonymous; private files require HTTP Basic credentials using the reader token as the password.
 
-State is SQLite. `.deb` artifacts remain authoritative and are stored on the local filesystem; TPA creates and verifies signed atomic repository snapshots.
+State is SQLite. `.deb` artifacts remain authoritative and are stored on the local filesystem. The bounded TPA subprocess builds an unsigned candidate; TPA.run validates its Release metadata, package indexes and payloads before the authoritative server signs `Release`, verifies the signed `InRelease`, and activates that exact tree. The build subprocess receives no GPG signing arguments or signing environment; its namespace masks the configured GPG home and drops capabilities before running TPA.
 
 ```text
 data/{tpahub.db,incoming/<job>,work/<job>,artifacts/<repo-id>,repos/<repo-id>}
