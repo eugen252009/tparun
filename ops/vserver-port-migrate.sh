@@ -38,13 +38,14 @@ BACKED_FILES=()
 
 usage() {
   cat <<'EOF'
-Usage:
-  sudo ./vserver-port-migrate.sh --check
-  sudo ./vserver-port-migrate.sh --apply
-  sudo ./vserver-port-migrate.sh --rollback /root/vserver-port-migration-rollback/<timestamp>
+Usage (when Mayi is installed):
+  mayi ./ops/vserver-port-migrate.sh --check
+  mayi ./ops/vserver-port-migrate.sh --apply
+  mayi ./ops/vserver-port-migrate.sh --rollback /root/vserver-port-migration-rollback/<timestamp>
 
-No mode defaults to usage only. --apply performs a coordinated, backed-up
-migration. --rollback restores the recorded pre-migration files and user service.
+Otherwise use the host's documented authorized privilege workflow. No mode
+defaults to usage only. --apply performs a coordinated, backed-up migration.
+--rollback restores the recorded pre-migration files and user service.
 EOF
 }
 
@@ -56,7 +57,7 @@ on_err() {
   if (( MUTATION_STARTED )); then
     printf '\nFAILED during phase: %s (exit %s)\n' "$PHASE" "$rc" >&2
     printf 'Rollback directory: %s\n' "${BACKUP_DIR:-not created}" >&2
-    printf 'Manual rollback: sudo %q --rollback %q\n' "$0" "${BACKUP_DIR:-<backup-directory>}" >&2
+    printf 'Manual rollback (through the approved privilege workflow): %q --rollback %q\n' "$0" "${BACKUP_DIR:-<backup-directory>}" >&2
     printf 'No automatic destructive rollback was attempted.\n' >&2
   fi
   exit "$rc"
@@ -66,7 +67,7 @@ trap on_err ERR
 need() { command -v "$1" >/dev/null 2>&1 || fail "required command missing: $1"; }
 
 if [[ "$MODE" == "" || "$MODE" == "--help" || "$MODE" == "-h" ]]; then usage; exit 0; fi
-if (( EUID != 0 )); then fail 'run with sudo (effective UID must be 0)'; fi
+if (( EUID != 0 )); then fail 'run through the authorized privilege workflow (effective UID must be 0)'; fi
 [[ "$(hostname -s)" == "$EXPECTED_HOST" ]] || fail "wrong host: expected $EXPECTED_HOST, found $(hostname -s)"
 case "$MODE" in --check|--apply) [[ $# -eq 1 ]] || { usage >&2; exit 2; };; --rollback) [[ $# -eq 2 ]] || { usage >&2; exit 2; };; *) usage >&2; exit 2;; esac
 for c in systemctl loginctl runuser ss sha256sum dpkg dpkg-deb dpkg-query install cp tar find grep sed awk nginx curl python3 flock id stat getent systemd-sysusers systemd-tmpfiles realpath readlink hostname touch chmod rm date mktemp seq chown cut sort head cat cmp df du gpg; do need "$c"; done
@@ -798,4 +799,4 @@ PHASE=final-audit
 sed -i 's/^migration_state=started$/migration_state=complete/' "$BACKUP_DIR/manifest.txt"
 printf '\nAPPLY PASS\nRollback directory: %s\n' "$BACKUP_DIR"
 printf 'Contact: 8083 -> 8060; status: already migrated before this apply run\n'
-printf 'Rollback command: sudo %q --rollback %q\n' "$0" "$BACKUP_DIR"
+printf 'Rollback command (through the approved privilege workflow): %q --rollback %q\n' "$0" "$BACKUP_DIR"
