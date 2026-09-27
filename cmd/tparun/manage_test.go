@@ -1,13 +1,84 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/eugen252009/tpahub/internal/config"
+	"github.com/eugen252009/tpahub/internal/store"
 )
+
+func TestListCLIShowsRepositoriesForLoggedInAccount(t *testing.T) {
+	clientTestHome(t)
+	s, h := testServer(t)
+	ctx := context.Background()
+	for _, repository := range []store.Repository{
+		{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", AccountID: "a", Name: "private-repo", Visibility: "private", CreatedAt: "now"},
+		{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AccountID: "a", Name: "public-repo", Visibility: "public", CreatedAt: "now"},
+	} {
+		if err := s.db.CreateRepository(ctx, repository); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.db.CreateAccount(ctx, store.Account{ID: "other", Email: "other@example.invalid", PasswordHash: "x", Status: store.AccountStatusActive, CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.CreateRepository(ctx, store.Repository{ID: "cccccccccccccccccccccccccccccccc", AccountID: "other", Name: "not-owned", Visibility: "public", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := loadCLIForServer(h.URL)
+	client.Email = "a@example.invalid"
+	client.Token = "tph_s_test"
+	if err := saveCLI(client); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStdout := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	cliErr := cli(config.Config{}, []string{"list"})
+	_ = write.Close()
+	os.Stdout = oldStdout
+	output, readErr := io.ReadAll(read)
+	_ = read.Close()
+	if cliErr != nil || readErr != nil {
+		t.Fatalf("list command failed: %v/%v", cliErr, readErr)
+	}
+	text := string(output)
+	for _, want := range []string{
+		"ID\tVISIBILITY\tURL",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tprivate\t" + h.URL + "/r/a/private-repo",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tpublic\t" + h.URL + "/r/a/public-repo",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("list output missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "not-owned") || strings.Contains(text, "cccccccccccccccccccccccccccccccc") {
+		t.Fatalf("list exposed another account's repository:\n%s", text)
+	}
+}
+
+func TestListCLIRequiresLoginAndNoOperands(t *testing.T) {
+	clientTestHome(t)
+	_, h := testServer(t)
+	t.Setenv("TPARUN_SERVER", h.URL)
+	if err := cli(config.Config{}, []string{"list"}); err == nil || !strings.Contains(err.Error(), "authentication required") {
+		t.Fatalf("unauthenticated list error=%v", err)
+	}
+	if err := listRepositoriesCLI(cliConfig{Server: h.URL, Token: "tph_s_test"}, []string{"unexpected"}); err == nil || err.Error() != "usage: tparun list" {
+		t.Fatalf("operand validation error=%v", err)
+	}
+}
 
 func TestParseRepositoryReference(t *testing.T) {
 	for _, tc := range []struct {

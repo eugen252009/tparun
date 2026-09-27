@@ -77,7 +77,7 @@ func readRepositoryPassword() (string, error) {
 func cli(cfg config.Config, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
 		fmt.Println("TPA.run CLI (tparun)")
-		fmt.Println("Machine repositories: add <repo-url> | remove <repo-url> | installed")
+		fmt.Println("Repositories: list (account-owned; requires login) | add <repo-url> | remove <repo-url> | installed (local APT sources)")
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
 		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | --version | doctor")
@@ -206,6 +206,8 @@ func cli(cfg config.Config, args []string) error {
 		c = updated
 	}
 	switch args[0] {
+	case "list":
+		return listRepositoriesCLI(c, args[1:])
 	case "register", "login":
 		if args[0] == "login" && len(args) >= 2 && args[1] == "--ssh" {
 			nonInteractive := has(args, "--non-interactive")

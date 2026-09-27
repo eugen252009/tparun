@@ -33,6 +33,35 @@ func (w *multipartWriter) AddFile(field, path string) error {
 
 var repositoryPrompt = func(prompt string) string { return input(prompt, false) }
 
+func listRepositoriesCLI(c cliConfig, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: tparun list")
+	}
+	if c.Token == "" {
+		return fmt.Errorf("authentication required; run tparun login")
+	}
+
+	var repositories []repositoryView
+	if err := getJSONWithSSHReauth(c, c.Server+"/v1/repositories", &repositories); err != nil {
+		return fmt.Errorf("list repositories: %w", err)
+	}
+	if len(repositories) == 0 {
+		fmt.Println("No repositories found.")
+		return nil
+	}
+
+	for _, repository := range repositories {
+		if !repositoryID(repository.ID) || !validUsername(repository.Username) || !validRepositoryName(repository.Name) || (repository.Visibility != "private" && repository.Visibility != "public") {
+			return fmt.Errorf("server returned invalid repository data")
+		}
+	}
+	fmt.Println("ID\tVISIBILITY\tURL")
+	for _, repository := range repositories {
+		fmt.Printf("%s\t%s\t%s\n", repository.ID, repository.Visibility, canonicalRepositoryURL(c.Server, repository.Username, repository.Name))
+	}
+	return nil
+}
+
 func repositoryCommand(c cliConfig, a []string) error {
 	if len(a) < 1 {
 		return fmt.Errorf("repo command required")

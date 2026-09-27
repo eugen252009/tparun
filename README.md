@@ -104,6 +104,7 @@ Legacy single-server credentials bind to their stored server before overrides. A
 tparun register
 tparun login                  # use the configured server
 tparun login tpa.run          # shorthand for https://tpa.run
+tparun list                   # repositories owned by the logged-in account
 tparun create private-tools
 tparun show https://tpa.run/r/eugen/private-tools
 tparun add https://tpa.run/r/eugen/private-tools
@@ -157,7 +158,7 @@ exact network-fetched key and files without changing the machine:
 tparun add https://tpa.run/r/eugen/private-tools --dry-run
 ```
 
-`tparun installed` lists repositories configured on this machine. It is distinct from remote repository management.
+`tparun list` lists repositories owned by the account authenticated to the selected server, including private and public repositories, with IDs, visibility, and canonical URLs. It requires login. `tparun installed` instead lists repositories configured as APT sources on this machine.
 
 The CLI writes:
 
