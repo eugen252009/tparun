@@ -1,0 +1,32 @@
+services:
+  app:
+    image: debian:trixie
+    platform: linux/amd64
+    container_name: tparun-staging
+    entrypoint: ["/bin/sh", "/opt/tparun-staging/entrypoint.sh"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    init: false
+    ports:
+      - "192.168.188.2:7050:8082"
+    extra_hosts:
+      - "repo.home.arpa:192.168.188.2"
+    environment:
+      TPARUN_STAGING_LISTEN: "0.0.0.0:8082"
+      TPARUN_STAGING_MIN_VERSION: "0.1.5~beta4"
+      TPARUN_STAGING_BOOTSTRAP_ORIGIN: "beta"
+    volumes:
+      - ./entrypoint.sh:/opt/tparun-staging/entrypoint.sh:ro
+      - ./config:/etc/tparun
+      - ./data:/var/lib/tparun
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8082/ready >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
