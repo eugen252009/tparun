@@ -143,10 +143,15 @@ type capacityReservation struct {
 	Bytes, Inodes                        int64
 }
 
+func serverRequested(args []string) bool {
+	return len(args) > 0 && args[0] == "serve"
+}
+
 func main() {
 	cfg := config.Load()
-	if len(os.Args) > 1 && os.Args[1] != "serve" {
-		if err := cli(cfg, os.Args[1:]); err != nil {
+	args := os.Args[1:]
+	if !serverRequested(args) {
+		if err := cli(cfg, args); err != nil {
 			log.Fatal(err)
 		}
 		return

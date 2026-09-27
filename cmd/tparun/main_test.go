@@ -30,6 +30,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestServerRequiresExplicitServeCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "no arguments prints CLI help", args: nil, want: false},
+		{name: "login is a CLI command", args: []string{"login"}, want: false},
+		{name: "serve explicitly starts the server", args: []string{"serve"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := serverRequested(tc.args); got != tc.want {
+				t.Fatalf("serverRequested(%v) = %t, want %t", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func testServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
 	return configuredTestServer(t, nil)
