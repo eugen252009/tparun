@@ -51,16 +51,24 @@ uses `User=tparun`, `Group=tparun`, `WorkingDirectory=/var/lib/tparun`,
 serve`, and `Restart=on-failure`. Package installation does not start or enable
 it.
 
+The next beta package uses the next immutable release identity,
+`0.1.5~beta5`, matching `internal/version.Current`; do not republish Beta4 or
+use a source suffix in place of the next beta release. The runtime `/version`
+endpoint separately reports product version, build revision, and schema. The
+Debian `Mema-Schema` field is obtained by querying the just-built binary, and
+the package build fails if the field does not match that binary. The systemd
+unit description intentionally carries no schema number.
+
 Build with:
 
 ```sh
-SOURCE_DATE_EPOCH=... packaging/tparun/build.sh dist/tparun_0.1.5~beta4_amd64.deb
+TPARUN_VERSION=0.1.5~beta5 SOURCE_DATE_EPOCH=... \
+  packaging/tparun/build.sh dist/tparun_0.1.5~beta5_amd64.deb
 ```
 
 The build embeds `git rev-parse HEAD` as the runtime revision by default. For a
-package built from a modified worktree, set `TPARUN_BUILD_REVISION` to a
-stable, safe identifier that distinguishes the exact code and package inputs;
-`git diff` alone omits untracked files. For example:
+beta package, use a stable identifier that distinguishes the exact source and
+package inputs; `git diff` alone omits untracked files. For example:
 
 ```sh
 SOURCE_DIGEST=$(

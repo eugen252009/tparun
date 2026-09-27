@@ -6,8 +6,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/eugen252009/tpahub/internal/store"
+	appversion "github.com/eugen252009/tpahub/internal/version"
 )
 
 func TestSourcesEndpointIsIndependentOfWorkingDirectory(t *testing.T) {
@@ -57,11 +61,12 @@ func TestPublicBootstrapAndVersionEndpoints(t *testing.T) {
 		Service   string `json:"service"`
 		Version   string `json:"version"`
 		Revision  string `json:"revision"`
+		Schema    string `json:"schema"`
 		StartedAt string `json:"started_at"`
 	}
 	json.NewDecoder(r.Body).Decode(&v)
 	r.Body.Close()
-	if r.StatusCode != 200 || v.Service != "tparun" || v.Version == "" || v.Revision == "" {
+	if r.StatusCode != 200 || v.Service != "tparun" || v.Version != appversion.Current || v.Revision == "" || v.Schema != strconv.Itoa(store.CurrentSchemaVersion()) {
 		t.Fatalf("version: %+v", v)
 	}
 	started := s.startedAt

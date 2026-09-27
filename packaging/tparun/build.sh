@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-VERSION=${TPARUN_VERSION:-0.1.5~beta4}
+VERSION=${TPARUN_VERSION:-0.1.5~beta5}
 ARCH=${TPARUN_ARCH:-amd64}
 OUTPUT=${1:-$ROOT/dist/tparun_${VERSION}_${ARCH}.deb}
 EPOCH=${SOURCE_DATE_EPOCH:-0}
@@ -20,6 +20,8 @@ revision=${TPARUN_BUILD_REVISION:-$(git -C "$ROOT" rev-parse HEAD)}
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/eugen252009/tpahub/internal/version.BuildRevision=$revision" \
   -o "$work/usr/bin/tparun" "$ROOT/cmd/tparun"
 chmod 0755 "$work/usr/bin/tparun"
+schema=$("$work/usr/bin/tparun" schema)
+[[ "$schema" =~ ^[1-9][0-9]*$ ]] || { echo "built tparun reported invalid schema: $schema" >&2; exit 1; }
 install -m 0644 "$ROOT/packaging/tparun/tparun.service" "$work/lib/systemd/system/tparun.service"
 install -m 0644 "$ROOT/packaging/tparun/tparun.sysusers" "$work/usr/lib/sysusers.d/tparun.conf"
 install -m 0644 "$ROOT/packaging/tparun/tparun.tmpfiles" "$work/usr/lib/tmpfiles.d/tparun.conf"
@@ -39,7 +41,7 @@ Maintainer: TPA.run <tparun@lupricht.net>
 Homepage: https://tpa.run
 Mema-Type: binary
 Mema-Service: tparun
-Mema-Schema: 11
+Mema-Schema: $schema
 Description: TPA.run self-hosted application
  Persistent APT repository and package publishing service.
  This package owns the release binary and host integration files; instance
@@ -49,4 +51,6 @@ EOF
 find "$work" -exec touch -h -d "@$EPOCH" {} +
 mkdir -p "$(dirname "$OUTPUT")"
 dpkg-deb --build --root-owner-group "$work" "$OUTPUT" >/dev/null
+packaged_schema=$(dpkg-deb -f "$OUTPUT" Mema-Schema)
+[[ "$packaged_schema" == "$schema" ]] || { echo "package schema metadata $packaged_schema does not match binary schema $schema" >&2; exit 1; }
 printf '%s\n' "$OUTPUT"

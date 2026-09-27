@@ -1,5 +1,5 @@
 [Unit]
-Description=TPA.run application (Schema 11)
+Description=TPA.run application
 After=network-online.target
 Wants=network-online.target
 
