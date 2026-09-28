@@ -81,6 +81,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
 		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | --version | doctor")
+		fmt.Println("Operator diagnostics: admin publication-status --cookie-file <path> [--json]")
 		fmt.Println("Server names without a scheme default to HTTPS; explicit server arguments override configuration.")
 		return nil
 	}
@@ -352,8 +353,11 @@ func cli(cfg config.Config, args []string) error {
 }
 
 func adminCLI(cfg config.Config, args []string) error {
+	if len(args) > 0 && args[0] == "publication-status" {
+		return adminPublicationStatusCLI(args[1:])
+	}
 	if len(args) < 2 || (args[0] != "egress" && args[0] != "account" && args[0] != "operator" && args[0] != "bootstrap" && args[0] != "repository") {
-		return fmt.Errorf("usage: tparun admin repository transfer-owner <repository-id> <account-id> | grant <repository-id> <account-id> repository.publish | revoke <repository-id> <account-id> repository.publish | bootstrap ... | egress ... | account classify <account-id> --class <production|test|internal|unclassified>")
+		return fmt.Errorf("usage: tparun admin publication-status --cookie-file <path> [--server <origin>] [--json] | repository ... | bootstrap ... | egress ... | account ... | operator ...")
 	}
 	dataDir := flagValue(args, "--data-dir", cfg.DataDir)
 	if args[0] == "operator" && args[1] == "recovery" {

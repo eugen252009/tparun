@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"io"
 	"log"
 	"math"
@@ -26,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,6 +35,7 @@ import (
 	"github.com/eugen252009/tpahub/internal/payments"
 	"github.com/eugen252009/tpahub/internal/store"
 	"github.com/eugen252009/tpahub/internal/tpa"
+	"github.com/eugen252009/tpahub/internal/tpahubproduct"
 	"github.com/eugen252009/tpahub/internal/usage"
 	appversion "github.com/eugen252009/tpahub/internal/version"
 	"golang.org/x/sys/unix"
@@ -129,6 +130,7 @@ type server struct {
 	signCandidate           func(context.Context, string) error
 	operatorAuth            *operatorAuthState
 	operatorInitMu          sync.Mutex
+	activeAttempts          atomic.Int64
 	pointerSwap             func(next, current string) error
 	durablePublicationFault func() error
 	cleanupWake             chan struct{}
@@ -281,6 +283,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("/login", s.loginPage)
 	m.HandleFunc("/account", s.accountPage)
 	m.HandleFunc("/ops", s.ops)
+	m.HandleFunc("/ops/api/publication-status", s.publicationOperationalStatus)
 	m.HandleFunc("/ops/bootstrap", s.bootstrapRoute)
 	registerOptionalRoutes(m, s)
 	m.HandleFunc("/ops/login", s.operatorLoginPage)
@@ -1209,16 +1212,7 @@ func (s *server) process(j store.Job) {
 	attemptID := newID()
 	request := tpa.PublishRequest{Input: work, Output: candidate, JobID: j.ID, AttemptID: attemptID, StartedAt: j.StartedAt}
 	log.Printf("publication runner attempt started job=%s attempt=%s backend=%s started_at=%s", j.ID, attemptID, s.cfg.PublicationBackend, j.StartedAt)
-	bounded, ok := s.runner.(boundedPublicationRunner)
-	if !ok {
-		s.fail(j, fmt.Errorf("publication runner does not enforce an output bound"))
-		return
-	}
-	if boundedWithInodes, supportsInodes := s.runner.(boundedPublicationRunnerWithInodes); supportsInodes {
-		e = boundedWithInodes.PublishBoundedWithInodes(ctx, request, candidateBound, candidateInodes+1)
-	} else {
-		e = bounded.PublishBounded(ctx, request, candidateBound)
-	}
+	e = s.runPublicationAttempt(ctx, request, candidateBound, candidateInodes+1)
 	if e != nil {
 		s.fail(j, e)
 		return

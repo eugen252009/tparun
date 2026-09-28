@@ -40,6 +40,14 @@ Install a compatible TPA binary and its required sandbox utilities on the worker
 - The local backend remains the default and can be restored with `TPARUN_PUBLICATION_BACKEND=local`.
 - This implementation does not provide a remote queue, durable remote lease, worker pool, or automatic retry. Validate the exact worker image, OpenSSH forced-command policy, TPA binary, sandbox, and host resource limits in an isolated environment before enabling the backend.
 
+## Operator publication queue status
+
+An operator passkey session can query `GET /ops/api/publication-status`. The read-only response contains aggregate counts only; it does not disclose account/repository identity, package data, paths, or attempt IDs. `tparun admin publication-status --cookie-file <path> [--server <origin>] [--json]` uses the same operator session. The file must contain only the `tpahub_operator_session` cookie value and be private (mode 0600 or stricter); account bearer tokens are not accepted.
+
+Publication jobs persist with states `queued`, `running`, `succeeded`, or `failed`. Publication sessions persist with states `open`, `finalized`, or `aborted`; only `open` sessions are incomplete. `execution_idle` means no queued/running jobs and no currently active bounded runner calls. `fully_quiescent` additionally requires zero open sessions; require this stronger predicate before restarting the authority because startup discards incomplete sessions.
+
+`active_attempts` is a process-local count around the authority's bounded runner call (an SSH client invocation when the SSH backend is selected). Attempt IDs and backend selection are not persisted or exposed. The count does not independently inspect remote worker processes after a connection or authority has been lost; it is not evidence that an orphaned process on a worker host has terminated. Follow the dedicated worker's recovery/inspection procedure after interrupted connections.
+
 ## Qualification status
 
 The SSH backend has been end-to-end qualified in disposable Debian Trixie infrastructure against OpenSSH, the real `tparun worker`, bounded TPA publication, server-side signing/activation, and an APT client. Qualification also exercised restricted forced-command behavior, pinned host keys, transport/worker failures, a controlled timeout, and service restart with an in-flight attempt. This does not qualify any particular production or NAS host, package, network policy, resource limit, or worker-image deployment; repeat qualification against the exact intended environment before enabling it.
