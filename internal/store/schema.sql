@@ -64,6 +64,11 @@ CREATE TABLE repository_egress_usage(repository_id TEXT NOT NULL REFERENCES repo
 
 CREATE TABLE repository_publications(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),active_generation TEXT NOT NULL,updated_at TEXT NOT NULL);
 
+CREATE TABLE repository_apt_signers(repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,fingerprint TEXT NOT NULL,public_key BLOB NOT NULL,created_at TEXT NOT NULL,revoked_at TEXT NOT NULL DEFAULT '',PRIMARY KEY(repository_id,fingerprint));
+
+CREATE TABLE prebuilt_publications(job_id TEXT PRIMARY KEY REFERENCES publish_jobs(id) ON DELETE CASCADE,expected_parent TEXT NOT NULL,apt_signer_fingerprint TEXT NOT NULL,manifest_json BLOB NOT NULL);
+CREATE TABLE repository_publication_slots(repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,publication_id TEXT NOT NULL UNIQUE,claimed_at TEXT NOT NULL);
+
 CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT,credential_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version > 0));

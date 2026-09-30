@@ -78,7 +78,7 @@ func TestMigrateRejectsUnsupportedMetadataWithoutMutation(t *testing.T) {
 		"pre-release-1":                 `UPDATE tpahub_schema SET version=1`,
 		"pre-release-2":                 `UPDATE tpahub_schema SET version=2`,
 		"pre-release-3":                 `UPDATE tpahub_schema SET version=3`,
-		"future-thirteen":               `UPDATE tpahub_schema SET version=13`,
+		"future-fifteen":                `UPDATE tpahub_schema SET version=15`,
 		"missing-index":                 `DROP INDEX publish_jobs_queue`,
 		"missing-column":                `ALTER TABLE operator_credentials DROP COLUMN label`,
 		"missing-foreign-key":           `PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=replace(sql,' REFERENCES accounts(id)','') WHERE name='sessions'; PRAGMA writable_schema=OFF`,

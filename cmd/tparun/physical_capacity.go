@@ -27,7 +27,7 @@ func (s *server) physicalCapacity(ctx context.Context, account string) (physical
 	for id, r := range s.reservations {
 		var path string
 		switch r.Kind {
-		case "incoming":
+		case "incoming", "prebuilt-generation":
 			path = filepath.Join(s.cfg.DataDir, "incoming", id)
 		case "work":
 			path = filepath.Join(s.cfg.DataDir, "work", id)
@@ -182,7 +182,7 @@ func (s *server) copyUploadFile(path string, src io.Reader, limit int64) (int64,
 	if err != nil {
 		return 0, err
 	}
-	n, err := io.Copy(&uploadWriter{s: s, file: file, limit: limit - 1}, io.LimitReader(src, limit))
+	n, err := io.Copy(&uploadWriter{s: s, file: file, limit: limit}, io.LimitReader(src, limit))
 	s.stagingMu.Lock()
 	closeErr := file.Close()
 	s.stagingMu.Unlock()

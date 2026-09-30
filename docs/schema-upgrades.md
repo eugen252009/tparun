@@ -1,6 +1,6 @@
 # Persistent schema and upgrades
 
-**Schema 5 is the first supported persistent schema; Schema 12 is the current development schema.** Explicit migration supports Schema 5 through 11. Schemas 1–4 were internal,
+**Schema 5 is the first supported persistent schema; Schema 14 is the current development schema.** Explicit migration supports Schema 5 through 13. Schemas 1–4 were internal,
 disposable development schemas, with no supported user data or upgrade contract.
 They are rejected, not migrated, reinterpreted or automatically deleted.
 
@@ -8,7 +8,7 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 
 | State | `serve` / Store.Open | `migrate` |
 |---|---|---|
-| Fresh empty state | Creates current Schema 12 directly, atomically | Requires an initialized database |
+| Fresh empty state | Creates current Schema 14 directly, atomically | Requires an initialized database |
 | Schemas 1–4 | Reject: unsupported pre-release state | Same rejection, no mutation |
 | Schema 5/6/7 | Reject until explicitly migrated to Schema 8 | Explicit atomic forward migration |
 | Newer than this binary | Reject: use compatible binary/backup | Same rejection, no mutation |
@@ -18,8 +18,8 @@ They are rejected, not migrated, reinterpreted or automatically deleted.
 version and application/package version are separate, unrelated numbers.
 `internal/store/schema.sql` defines the durable structures; `CurrentSchemaVersion`
 is the version authority. Fresh initialization installs this definition and records
-8 in one transaction. Schema 5/6/7 upgrades preserve existing account, grant, repository, session, SSH credential, and operator rows. Schema 8 adds inert account lifecycle persistence (`membership_expires_at`, `purge_after`, and the validated `lifecycle_kind`) without enabling lifecycle enforcement. Startup validates tables, columns, constraints, foreign keys,
-indexes and triggers, not just the version integer.
+14 in one transaction. Schema 5/6/7 upgrades preserve existing account, grant, repository, session, SSH credential, and operator rows. Schema 8 adds inert account lifecycle persistence (`membership_expires_at`, `purge_after`, and the validated `lifecycle_kind`) without enabling lifecycle enforcement. Startup validates tables, columns, constraints, foreign keys,
+indexes and triggers, not just the version integer. Schema 13 adds repository-scoped APT public signer trust and durable prebuilt-publication inventory, parent, and verified signer records. Schema 14 adds durable repository-scoped publication slots so concurrent client-signed uploads serialize across store connections; it does not change the existing managed-signing publication path.
 
 The singleton/version metadata header remains stable so older release binaries
 can recognize and reject newer versions without modifying them.

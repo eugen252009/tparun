@@ -115,6 +115,8 @@ type server struct {
 	sshChallenges           map[string]sshLoginChallenge
 	purchaseMu              sync.Mutex
 	stagingMu               sync.Mutex
+	generationLocksMu       sync.Mutex
+	generationLocks         map[string]*sync.RWMutex
 	egressLookup            func(string, time.Time) (int64, int64, error)
 	egressMu                sync.RWMutex
 	egressDegraded          map[string]bool
@@ -139,6 +141,20 @@ type server struct {
 	beginEgressDelivery     func(context.Context, string, string, string) error
 	reserveEgressDelivery   func(context.Context, string, string, string, string, int64, int64, string) (bool, error)
 	completeEgressDelivery  func(context.Context, string, string, string, int64, string) error
+}
+
+func (s *server) generationLock(repositoryID string) *sync.RWMutex {
+	s.generationLocksMu.Lock()
+	defer s.generationLocksMu.Unlock()
+	if s.generationLocks == nil {
+		s.generationLocks = make(map[string]*sync.RWMutex)
+	}
+	lock := s.generationLocks[repositoryID]
+	if lock == nil {
+		lock = &sync.RWMutex{}
+		s.generationLocks[repositoryID] = lock
+	}
+	return lock
 }
 
 type capacityReservation struct {
@@ -579,6 +595,18 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		s.key(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "apt-signers" {
+		s.repositoryAPTSigners(w, r, id, "")
+		return
+	}
+	if len(parts) == 3 && parts[1] == "apt-signers" {
+		s.repositoryAPTSigners(w, r, id, parts[2])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "generations" && r.Method == http.MethodPost {
+		s.uploadPrebuiltGeneration(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "publication-plan" && r.Method == http.MethodPost {
 		s.handlePublicationPlan(w, r, id)
 		return
@@ -964,8 +992,11 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	generationLock := s.generationLock(repo.ID)
+	generationLock.RLock()
 	root, rootErr := s.publishedRepositoryRoot(r.Context(), repo.ID)
 	if rootErr != nil {
+		generationLock.RUnlock()
 		if errors.Is(rootErr, store.ErrNotFound) {
 			bad(w, http.StatusNotFound, "not found")
 		} else {
@@ -975,18 +1006,28 @@ func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pin the authorized root and reject symlink traversal outside it. The old
 	// os.Stat/ServeFile pair followed escaping symlinks in repository content.
-	files, e := os.OpenRoot(root)
+	rootDir, e := os.OpenRoot(root)
 	if e != nil {
+		generationLock.RUnlock()
 		bad(w, 404, "not found")
 		return
 	}
-	defer files.Close()
-	info, e := files.Stat(rel)
+	file, e := rootDir.Open(rel)
+	_ = rootDir.Close()
+	if e != nil {
+		generationLock.RUnlock()
+		bad(w, 404, "not found")
+		return
+	}
+	info, e := file.Stat()
+	generationLock.RUnlock()
 	if e != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
 		bad(w, 404, "not found")
 		return
 	}
-	s.serveRepositoryFile(w, r, repo, files.FS(), rel, info.Size())
+	defer file.Close()
+	s.serveRepositoryFile(w, r, repo, file, rel, info)
 }
 func (s *server) key(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "GET" {
@@ -1404,6 +1445,9 @@ func (s *server) collectOldGenerations(repositoryID string) error {
 }
 
 func (s *server) collectOldGenerationsOnce(repositoryID string) error {
+	generationLock := s.generationLock(repositoryID)
+	generationLock.Lock()
+	defer generationLock.Unlock()
 	if s.cfg.MaxGenerations <= 0 {
 		return nil
 	}
@@ -1594,6 +1638,13 @@ func verifyUnsignedPublicationCandidate(candidate, work string, cfg config.Confi
 }
 
 func verifyPublicationCandidatePhase(candidate, work string, cfg config.Config, signed bool) error {
+	return verifyPublicationCandidatePhaseContext(context.Background(), candidate, work, cfg, signed)
+}
+
+const maxAPTReleaseBytes int64 = 32 << 20
+const maxAPTInReleaseBytes int64 = maxAPTReleaseBytes + 1<<20
+
+func verifyPublicationCandidatePhaseContext(parent context.Context, candidate, work string, cfg config.Config, signed bool) error {
 	if signed && cfg.GPGFingerprint == "" {
 		return fmt.Errorf("publication signing fingerprint is not configured")
 	}
@@ -1601,7 +1652,7 @@ func verifyPublicationCandidatePhase(candidate, work string, cfg config.Config, 
 	if verificationTimeout <= 0 {
 		verificationTimeout = time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), verificationTimeout)
+	ctx, cancel := context.WithTimeout(parent, verificationTimeout)
 	defer cancel()
 	info, err := os.Lstat(candidate)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -1647,6 +1698,10 @@ func verifyPublicationCandidatePhase(candidate, work string, cfg config.Config, 
 	distDir := filepath.Join(candidate, "dists", "stable")
 	releasePath := filepath.Join(distDir, "Release")
 	inReleasePath := filepath.Join(distDir, "InRelease")
+	releaseInfo, err := os.Lstat(releasePath)
+	if err != nil || !releaseInfo.Mode().IsRegular() || releaseInfo.Size() > maxAPTReleaseBytes {
+		return fmt.Errorf("publication candidate Release is missing, non-regular, or too large")
+	}
 	releaseBytes, err := os.ReadFile(releasePath)
 	if err != nil {
 		return fmt.Errorf("publication candidate missing Release: %w", err)
@@ -1773,47 +1828,49 @@ func verifyPublicationCandidatePhase(candidate, work string, cfg config.Config, 
 	if signed {
 		expectedFiles["dists/stable/InRelease"] = true
 	}
-	err = filepath.WalkDir(work, func(path string, entry os.DirEntry, walkErr error) error {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".deb") {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("work package is a symlink: %s", path)
-		}
-		identity, identityErr := debIdentity(ctx, path)
-		if identityErr != nil {
-			return fmt.Errorf("read work package identity %s: %w", entry.Name(), identityErr)
-		}
-		var candidateName string
-		var expected candidatePackage
-		for name, candidate := range indexedPayloads {
-			if candidate.identity == identity {
-				if candidateName != "" {
-					return fmt.Errorf("ambiguous candidate package identity: %s", identity)
-				}
-				candidateName, expected = name, candidate
+	if work != "" {
+		err = filepath.WalkDir(work, func(path string, entry os.DirEntry, walkErr error) error {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return contextErr
 			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".deb") {
+				return nil
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("work package is a symlink: %s", path)
+			}
+			identity, identityErr := debIdentity(ctx, path)
+			if identityErr != nil {
+				return fmt.Errorf("read work package identity %s: %w", entry.Name(), identityErr)
+			}
+			var candidateName string
+			var expected candidatePackage
+			for name, candidate := range indexedPayloads {
+				if candidate.identity == identity {
+					if candidateName != "" {
+						return fmt.Errorf("ambiguous candidate package identity: %s", identity)
+					}
+					candidateName, expected = name, candidate
+				}
+			}
+			if candidateName == "" {
+				return fmt.Errorf("package missing from candidate index: %s", entry.Name())
+			}
+			if fileErr := verifyCandidateFile(ctx, path, expected.size, expected.sha256); fileErr != nil {
+				return fmt.Errorf("candidate package differs from input %s: %w", entry.Name(), fileErr)
+			}
+			delete(indexedPayloads, candidateName)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		if candidateName == "" {
-			return fmt.Errorf("package missing from candidate index: %s", entry.Name())
+		if len(indexedPayloads) != 0 {
+			return fmt.Errorf("candidate contains package payload absent from input")
 		}
-		if fileErr := verifyCandidateFile(ctx, path, expected.size, expected.sha256); fileErr != nil {
-			return fmt.Errorf("candidate package differs from input %s: %w", entry.Name(), fileErr)
-		}
-		delete(indexedPayloads, candidateName)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if len(indexedPayloads) != 0 {
-		return fmt.Errorf("candidate contains package payload absent from input")
 	}
 	for path := range candidateFiles {
 		if !expectedFiles[path] {
@@ -1892,6 +1949,13 @@ func parseCandidateRelease(data []byte) (map[string]candidateChecksum, map[strin
 }
 
 func verifyCandidateSignature(ctx context.Context, inRelease string, release []byte, cfg config.Config) error {
+	info, err := os.Lstat(inRelease)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxAPTInReleaseBytes {
+		return fmt.Errorf("publication candidate InRelease is missing, non-regular, or too large")
+	}
+	if err = requireTerminalInReleaseSignature(inRelease, info.Size()); err != nil {
+		return err
+	}
 	command := func(args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "gpg", args...)
 		cmd.Env = serverGPGEnvironment(cfg)
@@ -1901,20 +1965,11 @@ func verifyCandidateSignature(ctx context.Context, inRelease string, release []b
 	if err != nil {
 		return fmt.Errorf("publication candidate signature invalid: %w", err)
 	}
-	want := strings.ToUpper(cfg.GPGFingerprint)
-	valid := false
-	for _, line := range strings.Split(string(status), "\n") {
-		marker := "[GNUPG:] VALIDSIG "
-		position := strings.Index(line, marker)
-		if position < 0 {
-			continue
-		}
-		fields := strings.Fields(line[position+len(marker):])
-		if len(fields) > 0 && (strings.ToUpper(fields[0]) == want || (len(fields) > 9 && strings.ToUpper(fields[len(fields)-1]) == want)) {
-			valid = true
-		}
+	fingerprint, err := verifiedOpenPGPSigner(status)
+	if err != nil {
+		return fmt.Errorf("publication candidate signature invalid: %w", err)
 	}
-	if !valid {
+	if !strings.EqualFold(fingerprint, cfg.GPGFingerprint) {
 		return fmt.Errorf("publication candidate signature key mismatch")
 	}
 	plain, err := command("--batch", "--decrypt", inRelease).Output()
@@ -1924,8 +1979,57 @@ func verifyCandidateSignature(ctx context.Context, inRelease string, release []b
 	return nil
 }
 
+func requireTerminalInReleaseSignature(path string, size int64) error {
+	const footer = "-----END PGP SIGNATURE-----\n"
+	if size < int64(len(footer)) {
+		return fmt.Errorf("InRelease signature footer missing")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err = file.Seek(-int64(len(footer)), io.SeekEnd); err != nil {
+		return err
+	}
+	tail := make([]byte, len(footer))
+	if _, err = io.ReadFull(file, tail); err != nil || string(tail) != footer {
+		return fmt.Errorf("InRelease contains trailing data or a non-canonical signature footer")
+	}
+	return nil
+}
+
+func verifiedOpenPGPSigner(status []byte) (string, error) {
+	valid := ""
+	for _, line := range strings.Split(string(status), "\n") {
+		if !strings.HasPrefix(line, "[GNUPG:] ") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "[GNUPG:] "))
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "EXPKEYSIG", "EXPSIG", "REVKEYSIG", "BADSIG", "ERRSIG", "NO_PUBKEY", "NODATA", "KEYEXPIRED", "SIGEXPIRED":
+			return "", fmt.Errorf("OpenPGP status %s is not acceptable", fields[0])
+		case "VALIDSIG":
+			if len(fields) < 2 || valid != "" {
+				return "", fmt.Errorf("missing or ambiguous valid signature")
+			}
+			valid = strings.ToUpper(fields[1])
+			if len(fields) > 10 && len(fields[len(fields)-1]) >= 40 {
+				valid = strings.ToUpper(fields[len(fields)-1])
+			}
+		}
+	}
+	if valid == "" {
+		return "", fmt.Errorf("no valid OpenPGP signature")
+	}
+	return valid, nil
+}
+
 func candidateRelativePath(root, relative string) (string, error) {
-	if relative == "" || filepath.IsAbs(relative) || strings.Contains(relative, "\\") {
+	if relative == "" || len(relative) > maxGenerationPathBytes || filepath.IsAbs(relative) || strings.Contains(relative, "\\") {
 		return "", fmt.Errorf("path is not a relative slash path")
 	}
 	clean := filepath.Clean(filepath.FromSlash(relative))

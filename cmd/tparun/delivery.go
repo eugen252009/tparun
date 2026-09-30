@@ -3,8 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
+	"os"
+	"path"
 	"time"
 
 	"github.com/eugen252009/tpahub/internal/config"
@@ -63,7 +64,7 @@ func (s *server) initDelivery() error {
 
 // serveRepositoryFile is the sole byte-serving path after common authorization,
 // durable-generation resolution and regular-file checks in files.
-func (s *server) serveRepositoryFile(w http.ResponseWriter, r *http.Request, repo store.Repository, files fs.FS, path string, size int64) {
+func (s *server) serveRepositoryFile(w http.ResponseWriter, r *http.Request, repo store.Repository, file *os.File, filePath string, info os.FileInfo) {
 	if err := s.initDelivery(); err != nil {
 		bad(w, 503, "delivery configuration unavailable")
 		return
@@ -77,7 +78,7 @@ func (s *server) serveRepositoryFile(w http.ResponseWriter, r *http.Request, rep
 		counted = &repositoryCountingWriter{ResponseWriter: w}
 		output = counted
 	}
-	guard, err := d.enforcement.Prepare(r.Context(), enforcement.Request{RepositoryID: repo.ID, AccountID: repo.AccountID, Size: size, StartedAt: started})
+	guard, err := d.enforcement.Prepare(r.Context(), enforcement.Request{RepositoryID: repo.ID, AccountID: repo.AccountID, Size: info.Size(), StartedAt: started})
 	if err != nil || guard == nil {
 		message := "delivery enforcement unavailable"
 		var unavailable *enforcement.Unavailable
@@ -115,7 +116,7 @@ func (s *server) serveRepositoryFile(w http.ResponseWriter, r *http.Request, rep
 	// Register completion before invoking a modifier: abnormal Wrap/Serve unwind
 	// must not strand a successfully prepared strict reservation.
 	output = guard.Wrap(output)
-	http.ServeFileFS(output, r, files, path)
+	http.ServeContent(output, r, path.Base(filePath), info.ModTime(), file)
 	completed = true
 }
 

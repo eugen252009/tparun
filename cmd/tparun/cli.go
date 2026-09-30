@@ -79,6 +79,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("TPA.run CLI (tparun)")
 		fmt.Println("Repositories: list (account-owned; requires login) | add <repo-url> | remove <repo-url> | installed (local APT sources)")
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
+		fmt.Println("Prebuilt APT generations: signer add|list|revoke <repo-url> [...] | publish-generation <repo-url> --directory <tree> --manifest <file>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
 		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | --version | doctor")
 		fmt.Println("Operator diagnostics: admin publication-status --cookie-file <path> [--json]")
@@ -92,6 +93,11 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("  -y, --yes      Skip confirmation")
 		fmt.Println("      --no-wait  Queue publication and return its ID")
 		fmt.Println("      --verbose  Show the detailed publication plan")
+		return nil
+	}
+	if args[0] == "publish-generation" && has(args[1:], "--help") {
+		fmt.Println("Usage: tparun publish-generation <repo-url> --directory <tree> --manifest <file>")
+		fmt.Println("Upload a TPA-built, signed, inventory-verified APT generation for server validation and activation.")
 		return nil
 	}
 	if args[0] == "installed" {
@@ -207,6 +213,37 @@ func cli(cfg config.Config, args []string) error {
 		c = updated
 	}
 	switch args[0] {
+	case "signer":
+		return repositorySignerCLI(c, args[1:])
+	case "publish-generation":
+		var repository, directory, manifest string
+		for i := 1; i < len(args); i++ {
+			switch {
+			case args[i] == "--directory":
+				i++
+				if i < len(args) {
+					directory = args[i]
+				}
+			case args[i] == "--manifest":
+				i++
+				if i < len(args) {
+					manifest = args[i]
+				}
+			case strings.HasPrefix(args[i], "--directory="):
+				directory = strings.TrimPrefix(args[i], "--directory=")
+			case strings.HasPrefix(args[i], "--manifest="):
+				manifest = strings.TrimPrefix(args[i], "--manifest=")
+			default:
+				if strings.HasPrefix(args[i], "-") || repository != "" {
+					return fmt.Errorf("usage: tparun publish-generation <repo-url> --directory <tree> --manifest <file>")
+				}
+				repository = args[i]
+			}
+		}
+		if repository == "" || directory == "" || manifest == "" {
+			return fmt.Errorf("usage: tparun publish-generation <repo-url> --directory <tree> --manifest <file>")
+		}
+		return publishClientGeneration(c, repository, directory, manifest)
 	case "list":
 		return listRepositoriesCLI(c, args[1:])
 	case "register", "login":

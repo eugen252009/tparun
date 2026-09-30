@@ -20,6 +20,10 @@ import (
 )
 
 type Repository struct{ ID, AccountID, Name, Visibility, CreatedAt string }
+type RepositoryAPTSigner struct {
+	RepositoryID, Fingerprint, CreatedAt, RevokedAt string
+	PublicKey                                       []byte
+}
 type Job struct {
 	ID, RepositoryID, State, IncomingPath, Error, CreatedAt, StartedAt, FinishedAt, CleanupState, CleanupError, CleanupNextRetry string
 	GenerationID, VerificationState, VerifiedAt, VerificationError, PublisherAccountID                                           string
@@ -83,16 +87,16 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 14
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }
 
-// Open initializes Schema 12 directly or opens the current supported schema.
+// Open initializes the current schema directly or opens the current supported schema.
 // Pre-release, future and invalid databases are rejected without mutation.
 func Open(dir string) (*Store, error) { return open(dir, true, false) }
 
-// Migrate performs the explicit supported forward upgrade or validates Schema 12.
+// Migrate performs the explicit supported forward upgrade or validates the current schema.
 // Schemas 1–4 are unsupported.
 func Migrate(dir string) error {
 	path := filepath.Join(dir, "tpahub.db")
@@ -1514,6 +1518,9 @@ func (s *Store) SetActiveGeneration(c context.Context, repositoryID, generation,
 // bound to the same owner, then performs the atomic publication transition.
 type AuthorizedPublication struct {
 	RepositoryID, JobID, OwnerAccountID string
+	ExpectedParent                      string
+	CheckParent                         bool
+	PublicationID                       string
 }
 
 func (s *Store) CommitAuthorizedPublication(c context.Context, publication AuthorizedPublication, activeAt, updatedAt string) error {
@@ -1530,6 +1537,15 @@ func (s *Store) CommitAuthorizedPublication(c context.Context, publication Autho
 	if owner == "" || owner != publication.OwnerAccountID {
 		return fmt.Errorf("publication repository owner changed before commit")
 	}
+	if publication.CheckParent {
+		var active string
+		if err = tx.QueryRowContext(c, `SELECT COALESCE((SELECT active_generation FROM repository_publications WHERE repository_id=?),'')`, repositoryID).Scan(&active); err != nil {
+			return err
+		}
+		if active != publication.ExpectedParent {
+			return fmt.Errorf("publication expected parent %q but current generation is %q", publication.ExpectedParent, active)
+		}
+	}
 	if _, err = tx.ExecContext(c, `INSERT INTO repository_publications(repository_id,active_generation,updated_at) VALUES(?,?,?) ON CONFLICT(repository_id) DO UPDATE SET active_generation=excluded.active_generation,updated_at=excluded.updated_at`, repositoryID, jobID, updatedAt); err != nil {
 		return err
 	}
@@ -1540,6 +1556,16 @@ func (s *Store) CommitAuthorizedPublication(c context.Context, publication Autho
 	rowsAffected, err := result.RowsAffected()
 	if err != nil || rowsAffected != 1 {
 		return fmt.Errorf("publication job state changed before commit")
+	}
+	if publication.PublicationID != "" {
+		result, err = tx.ExecContext(c, `DELETE FROM repository_publication_slots WHERE repository_id=? AND publication_id=?`, repositoryID, publication.PublicationID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err = result.RowsAffected()
+		if err != nil || rowsAffected != 1 {
+			return fmt.Errorf("repository publication claim changed before commit")
+		}
 	}
 	return tx.Commit()
 }
@@ -1698,7 +1724,7 @@ func (s *Store) ActiveStagingPaths(c context.Context) ([]string, error) {
 
 func (s *Store) HasNonterminalJobs(c context.Context, repositoryID string) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(c, `SELECT (SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND state NOT IN ('succeeded','failed')) + (SELECT COUNT(*) FROM publication_sessions WHERE repository_id=? AND state='open')`, repositoryID, repositoryID).Scan(&count)
+	err := s.db.QueryRowContext(c, `SELECT (SELECT COUNT(*) FROM publish_jobs WHERE repository_id=? AND state NOT IN ('succeeded','failed')) + (SELECT COUNT(*) FROM publication_sessions WHERE repository_id=? AND state='open') + (SELECT COUNT(*) FROM repository_publication_slots WHERE repository_id=?)`, repositoryID, repositoryID, repositoryID).Scan(&count)
 	return count > 0, err
 }
 
@@ -1731,7 +1757,7 @@ func (s *Store) Claim(c context.Context) (Job, error) {
 	}
 	defer tx.Rollback()
 	var j Job
-	e = tx.QueryRowContext(c, "SELECT id,repository_id,publisher_account_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs WHERE state='queued' ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.PublisherAccountID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
+	e = tx.QueryRowContext(c, "SELECT id,repository_id,publisher_account_id,state,incoming_path,error,created_at,COALESCE(started_at,''),COALESCE(finished_at,''),cleanup_state,cleanup_error,cleanup_attempts,cleanup_next_retry,generation_id,verification_state,verified_at,verification_error FROM publish_jobs j WHERE state='queued' AND NOT EXISTS (SELECT 1 FROM repository_publication_slots s WHERE s.repository_id=j.repository_id) ORDER BY created_at LIMIT 1").Scan(&j.ID, &j.RepositoryID, &j.PublisherAccountID, &j.State, &j.IncomingPath, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CleanupState, &j.CleanupError, &j.CleanupAttempts, &j.CleanupNextRetry, &j.GenerationID, &j.VerificationState, &j.VerifiedAt, &j.VerificationError)
 	if e != nil {
 		return Job{}, e
 	}

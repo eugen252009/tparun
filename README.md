@@ -1,6 +1,8 @@
 # TPA.run
 
-**Current development schema: Schema 12 (upgradable from Schema 5/6/7/8/9/10/11).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+**Current development schema: Schema 14 (upgradable from Schema 5/6/7/8/9/10/11/12/13).** [Schema and upgrade contract](docs/schema-upgrades.md). Schemas 1–4 are disposable pre-release state and are rejected without automatic migration or deletion.
+
+The additive client-signed complete-generation path is documented in [prebuilt generation publication](docs/prebuilt-generation-publication.md). Existing staged, server-managed signing remains available.
 
 TPA.run is a CLI-first service for publishing and serving public or private APT repositories. **TPA.run uses TPA; it does not implement APT repository generation itself.** TPA remains a separate external executable invoked across a process boundary.
 
