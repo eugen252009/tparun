@@ -79,6 +79,25 @@ func TestDecodeGenerationManifestRequiresCanonicalSafeInventory(t *testing.T) {
 	}
 }
 
+func TestDecodeGenerationManifestSupportsTenThousandFiles(t *testing.T) {
+	manifest := generationManifest{
+		Version: 1, RepositoryID: "repo", GenerationID: strings.Repeat("a", 32),
+		Files: make([]generationManifestFile, 10000),
+	}
+	for index := range manifest.Files {
+		manifest.Files[index] = generationManifestFile{
+			Path: fmt.Sprintf("package-%05d.deb", index), Size: 1, SHA256: strings.Repeat("a", 64),
+		}
+	}
+	decoded, total, err := decodeGenerationManifest(canonicalManifest(t, manifest), "repo")
+	if err != nil {
+		t.Fatalf("decode 10,000-file manifest: %v", err)
+	}
+	if len(decoded.Files) != len(manifest.Files) || total != int64(len(manifest.Files)) {
+		t.Fatalf("decoded files=%d total=%d, want files=%d total=%d", len(decoded.Files), total, len(manifest.Files), len(manifest.Files))
+	}
+}
+
 func TestPrebuiltSignedGenerationAdmissionAndParentCAS(t *testing.T) {
 	s, h := testServer(t)
 	s.cfg.MaxUpload = 16 << 20

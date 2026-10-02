@@ -67,9 +67,10 @@ lowercase SHA-256). The repository ID must match the route. Generation IDs are
 generation. Paths are relative slash-separated paths with no traversal,
 backslashes, links, or special files. The inventory covers every regular file
 in the repository tree and no file may be omitted or added. The manifest itself
-is outside the tree and is not self-hashed. The manifest is limited to 4 MiB
-and 8,192 files; paths are at most 4,096 bytes and 64 components, with at most
-65,536 unique directories. The whole multipart request is bounded by `MaxUpload`
+is outside the tree and is not self-hashed. The manifest is limited to 16 MiB
+and 65,536 files; paths are at most 4,096 bytes and 64 components, with at most
+65,536 unique directories. Inventory and validation memory scale with file
+count but remain bounded by these fixed limits. The whole multipart request is bounded by `MaxUpload`
 (512 MiB by default); TPA.run also applies its configured upload-read timeout.
 APT `Release` and `InRelease` files are separately size-bounded during
 verification.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,8 +13,8 @@ import (
 	"strings"
 )
 
-const maxGenerationFiles = 8192
-const maxGenerationManifestBytes = 4 << 20
+const maxGenerationFiles = 65536
+const maxGenerationManifestBytes = 16 << 20
 const maxGenerationPathBytes = 4096
 const maxGenerationPathDepth = 64
 const maxGenerationDirectories = 65536
@@ -37,7 +38,7 @@ func decodeGenerationManifest(data []byte, repositoryID string) (generationManif
 	if len(data) == 0 || len(data) > maxGenerationManifestBytes {
 		return manifest, 0, fmt.Errorf("invalid generation manifest size")
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
 		return manifest, 0, fmt.Errorf("invalid generation manifest: %w", err)
@@ -46,7 +47,11 @@ func decodeGenerationManifest(data []byte, repositoryID string) (generationManif
 		return manifest, 0, fmt.Errorf("generation manifest has trailing data")
 	}
 	canonical, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil || string(append(canonical, '\n')) != string(data) {
+	if err != nil {
+		return manifest, 0, fmt.Errorf("generation manifest is not in canonical form")
+	}
+	canonical = append(canonical, '\n')
+	if !bytes.Equal(canonical, data) {
 		return manifest, 0, fmt.Errorf("generation manifest is not in canonical form")
 	}
 	if manifest.Version != 1 || manifest.RepositoryID != repositoryID || !idRE.MatchString(manifest.GenerationID) || (manifest.ParentGeneration != "" && !idRE.MatchString(manifest.ParentGeneration)) {
