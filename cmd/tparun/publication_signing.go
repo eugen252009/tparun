@@ -30,7 +30,7 @@ type invalidPublicationRunner struct{ err error }
 
 func (r invalidPublicationRunner) Check(context.Context) error { return r.err }
 
-func publicationTPARunner(cfg config.Config) tpa.Runner {
+func publicationSigningHome(cfg config.Config) string {
 	home := cfg.GPGHome
 	if home == "" {
 		home = os.Getenv("HOME")
@@ -41,6 +41,11 @@ func publicationTPARunner(cfg config.Config) tpa.Runner {
 			home = filepath.Join(home, ".gnupg")
 		}
 	}
+	return home
+}
+
+func publicationTPARunner(cfg config.Config) tpa.Runner {
+	home := publicationSigningHome(cfg)
 	var protected []string
 	if home != "" {
 		protected = []string{home}

@@ -69,6 +69,8 @@ CREATE TABLE repository_apt_signers(repository_id TEXT NOT NULL REFERENCES repos
 CREATE TABLE prebuilt_publications(job_id TEXT PRIMARY KEY REFERENCES publish_jobs(id) ON DELETE CASCADE,expected_parent TEXT NOT NULL,apt_signer_fingerprint TEXT NOT NULL,manifest_json BLOB NOT NULL);
 CREATE TABLE repository_publication_slots(repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,publication_id TEXT NOT NULL UNIQUE,claimed_at TEXT NOT NULL);
 
+CREATE TABLE package_lifecycle_jobs(job_id TEXT PRIMARY KEY REFERENCES publish_jobs(id) ON DELETE CASCADE,repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,actor_account_id TEXT NOT NULL REFERENCES accounts(id),idempotency_key TEXT NOT NULL,operation TEXT NOT NULL CHECK(operation IN ('unlist','delete')),package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,confirmed INTEGER NOT NULL CHECK(confirmed IN (0,1)),generation_before TEXT NOT NULL,generation_after TEXT NOT NULL DEFAULT '',artifact_filename TEXT NOT NULL,artifact_size INTEGER NOT NULL CHECK(artifact_size>0),artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256)=64),metadata_state TEXT NOT NULL CHECK(metadata_state IN ('pending','published','unchanged','failed')),artifact_state TEXT NOT NULL CHECK(artifact_state IN ('pending','retained','deleted','cleanup_failed')),result TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,UNIQUE(repository_id,actor_account_id,idempotency_key));
+
 CREATE TABLE sessions(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),token_prefix TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,last_used_at TEXT,revoked_at TEXT,credential_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE tpahub_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version > 0));
@@ -78,6 +80,9 @@ CREATE UNIQUE INDEX billing_purchases_pending ON billing_purchases(account_id,pr
 CREATE UNIQUE INDEX billing_purchases_provider_reference ON billing_purchases(provider, billing_environment, provider_reference) WHERE provider_reference<>'';
 
 CREATE INDEX publish_jobs_queue ON publish_jobs(state,created_at);
+
+CREATE INDEX package_lifecycle_history ON package_lifecycle_jobs(repository_id,generation_after);
+CREATE UNIQUE INDEX package_lifecycle_generation ON package_lifecycle_jobs(repository_id,generation_after) WHERE generation_after<>'';
 
 CREATE INDEX purchase_grant_instances_lookup ON purchase_grant_instances(customer_id,product_id,capability_id);
 

@@ -2,7 +2,10 @@
 
 This additive path accepts a complete TPA-built APT repository generation. It
 is separate from the existing staged upload and managed-signing flow; the latter
-remains supported and unchanged.
+remains supported and unchanged. Server-side package lifecycle mutation requires
+the local managed signing key and is not available for client-signed generations;
+clients can mutate a local complete tree with TPA and publish the replacement
+through this endpoint. See [package lifecycle operations](package-lifecycle.md).
 
 ## Trust and ownership
 

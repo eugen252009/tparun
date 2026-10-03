@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -603,6 +604,10 @@ func (s *server) repository(w http.ResponseWriter, r *http.Request) {
 		s.repositoryAPTSigners(w, r, id, parts[2])
 		return
 	}
+	if len(parts) == 3 && parts[1] == "packages" && (parts[2] == "unlist" || parts[2] == "delete") {
+		s.packageLifecycle(w, r, id, parts[2])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "generations" && r.Method == http.MethodPost {
 		s.uploadPrebuiltGeneration(w, r, id)
 		return
@@ -917,7 +922,7 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 	j, e := s.db.Job(r.Context(), id)
 	if e == nil {
 		repo, _ := s.db.Repository(r.Context(), j.RepositoryID)
-		if repo.AccountID != accountID(r) {
+		if repo.AccountID != accountID(r) && j.PublisherAccountID != accountID(r) {
 			e = store.ErrNotFound
 		}
 	}
@@ -930,10 +935,20 @@ func (s *server) job(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInternalServerError, "publication status unavailable")
 		return
 	}
+	lifecycle, lifecycleErr := s.db.PackageLifecycle(r.Context(), j.ID)
+	if lifecycleErr != nil && !errors.Is(lifecycleErr, sql.ErrNoRows) {
+		bad(w, http.StatusInternalServerError, "lifecycle status unavailable")
+		return
+	}
+	var lifecycleView *store.PackageLifecycleJob
+	if lifecycleErr == nil {
+		lifecycleView = &lifecycle
+	}
 	jsonOut(w, struct {
 		store.Job
 		Artifacts []store.PublicationArtifact `json:"artifacts"`
-	}{Job: j, Artifacts: artifacts})
+		Lifecycle *store.PackageLifecycleJob  `json:"lifecycle,omitempty"`
+	}{Job: j, Artifacts: artifacts, Lifecycle: lifecycleView})
 }
 func (s *server) files(w http.ResponseWriter, r *http.Request) {
 	if token, ok := bearer(r); ok {
@@ -1446,7 +1461,9 @@ func (s *server) collectOldGenerations(repositoryID string) error {
 
 func (s *server) collectOldGenerationsOnce(repositoryID string) error {
 	generationLock := s.generationLock(repositoryID)
-	generationLock.Lock()
+	if !generationLock.TryLock() {
+		return fmt.Errorf("generation cleanup deferred while repository mutation is active")
+	}
 	defer generationLock.Unlock()
 	if s.cfg.MaxGenerations <= 0 {
 		return nil
@@ -1645,6 +1662,16 @@ const maxAPTReleaseBytes int64 = 32 << 20
 const maxAPTInReleaseBytes int64 = maxAPTReleaseBytes + 1<<20
 
 func verifyPublicationCandidatePhaseContext(parent context.Context, candidate, work string, cfg config.Config, signed bool) error {
+	return verifyPublicationCandidatePhaseContextWithLifecycle(parent, candidate, work, cfg, signed, nil, false)
+}
+
+// verifyLifecycleCandidate permits only the orphaned .deb files recorded by
+// committed lifecycle jobs; all repository mutation still comes from TPA.
+func verifyLifecycleCandidate(candidate string, cfg config.Config, retained map[string]candidatePackage) error {
+	return verifyPublicationCandidatePhaseContextWithLifecycle(context.Background(), candidate, "", cfg, true, retained, true)
+}
+
+func verifyPublicationCandidatePhaseContextWithLifecycle(parent context.Context, candidate, work string, cfg config.Config, signed bool, retained map[string]candidatePackage, allowEmptyIndexes bool) error {
 	if signed && cfg.GPGFingerprint == "" {
 		return fmt.Errorf("publication signing fingerprint is not configured")
 	}
@@ -1776,7 +1803,7 @@ func verifyPublicationCandidatePhaseContext(parent context.Context, candidate, w
 			return fmt.Errorf("Release missing checksum for %s", relativeGzip)
 		}
 		packagesPath := filepath.Join(componentDir, binaryDir.Name(), "Packages")
-		entries, indexErr := verifyPackageIndex(ctx, candidate, packagesPath, architecture)
+		entries, indexErr := verifyPackageIndex(ctx, candidate, packagesPath, architecture, allowEmptyIndexes)
 		if indexErr != nil {
 			return indexErr
 		}
@@ -1815,11 +1842,32 @@ func verifyPublicationCandidatePhaseContext(parent context.Context, candidate, w
 		}
 	}
 	for path := range candidatePayloads {
-		if _, indexed := indexedPayloads[path]; !indexed {
-			return fmt.Errorf("candidate pool payload is not indexed: %s", path)
+		if _, indexed := indexedPayloads[path]; indexed {
+			continue
+		}
+		expected, permitted := retained[path]
+		if !permitted {
+			return fmt.Errorf("candidate pool payload is not indexed or lifecycle-retained: %s", path)
+		}
+		artifactPath, pathErr := candidateRelativePath(candidate, path)
+		if pathErr != nil {
+			return pathErr
+		}
+		if fileErr := verifyCandidateFile(ctx, artifactPath, expected.size, expected.sha256); fileErr != nil {
+			return fmt.Errorf("retained package payload mismatch: %w", fileErr)
+		}
+		identity, identityErr := debIdentity(ctx, artifactPath)
+		if identityErr != nil || identity != expected.identity {
+			return fmt.Errorf("retained package identity mismatch: %s", path)
+		}
+		expectedFiles[path] = true
+	}
+	for path := range retained {
+		if !candidatePayloads[path] {
+			return fmt.Errorf("lifecycle-retained package payload is missing: %s", path)
 		}
 	}
-	if len(candidatePayloads) != len(indexedPayloads) {
+	if len(candidatePayloads) != len(indexedPayloads)+len(retained) {
 		return fmt.Errorf("candidate index/pool payload set mismatch")
 	}
 	for path := range indexedPayloads {
@@ -2087,7 +2135,7 @@ func digestReader(ctx context.Context, reader io.Reader, maximum int64) (int64, 
 	}
 }
 
-func verifyPackageIndex(ctx context.Context, candidate, packagesPath, indexArchitecture string) (map[string]candidatePackage, error) {
+func verifyPackageIndex(ctx context.Context, candidate, packagesPath, indexArchitecture string, allowEmpty ...bool) (map[string]candidatePackage, error) {
 	f, err := os.Open(packagesPath)
 	if err != nil {
 		return nil, err
@@ -2170,7 +2218,8 @@ func verifyPackageIndex(ctx context.Context, candidate, packagesPath, indexArchi
 	if err = verifyStanza(); err != nil {
 		return nil, err
 	}
-	if len(indexed) == 0 {
+	emptyAllowed := len(allowEmpty) > 0 && allowEmpty[0]
+	if len(indexed) == 0 && !emptyAllowed {
 		return nil, fmt.Errorf("empty Packages index")
 	}
 	return indexed, nil

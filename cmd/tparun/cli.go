@@ -79,6 +79,7 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("TPA.run CLI (tparun)")
 		fmt.Println("Repositories: list (account-owned; requires login) | add <repo-url> | remove <repo-url> | installed (local APT sources)")
 		fmt.Println("Publication workspace: stage <package.deb>... | unstage <package.deb> | status | publish [--yes] [--verbose] <repo-url>")
+		fmt.Println("Package lifecycle: package unlist <repo-url> <package> <version> <architecture> | package delete <repo-url> <package> <version> <architecture> [--yes]")
 		fmt.Println("Prebuilt APT generations: signer add|list|revoke <repo-url> [...] | publish-generation <repo-url> --directory <tree> --manifest <file>")
 		fmt.Println("Remote repositories: create <name> | show <repo-url> | edit <repo-url> visibility | delete <repo-url>")
 		fmt.Println("Identity: account    Authentication: register [server] | login [server] | login --ssh [identity-file] | logout    System: version | --version | doctor")
@@ -93,6 +94,12 @@ func cli(cfg config.Config, args []string) error {
 		fmt.Println("  -y, --yes      Skip confirmation")
 		fmt.Println("      --no-wait  Queue publication and return its ID")
 		fmt.Println("      --verbose  Show the detailed publication plan")
+		return nil
+	}
+	if args[0] == "package" && has(args[1:], "--help") {
+		fmt.Println("Usage: tparun package unlist <repo-url> <package> <version> <architecture>")
+		fmt.Println("       tparun package delete <repo-url> <package> <version> <architecture> [--yes]")
+		fmt.Println("Unlist removes one exact identity from APT metadata; delete confirms and removes its artifact after safe unlisting.")
 		return nil
 	}
 	if args[0] == "publish-generation" && has(args[1:], "--help") {
@@ -215,6 +222,11 @@ func cli(cfg config.Config, args []string) error {
 	switch args[0] {
 	case "signer":
 		return repositorySignerCLI(c, args[1:])
+	case "package":
+		if len(args) < 2 || (args[1] != "unlist" && args[1] != "delete") {
+			return fmt.Errorf("usage: tparun package unlist|delete <repo-url> <package> <version> <architecture> [--yes]")
+		}
+		return packageLifecycleCLI(c, args[1:])
 	case "publish-generation":
 		var repository, directory, manifest string
 		for i := 1; i < len(args); i++ {

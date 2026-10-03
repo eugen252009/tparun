@@ -87,7 +87,7 @@ func migrationCheckpoint(stage string) error {
 	return nil
 }
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 15
 
 // CurrentSchemaVersion is the schema authority exposed to deployment tooling.
 func CurrentSchemaVersion() int { return currentSchemaVersion }

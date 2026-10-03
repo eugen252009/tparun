@@ -251,7 +251,7 @@ func migrateSchemaTo9(db *sql.DB) error {
 	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
 	legacyDDL = schemaWithoutRepositoryDelegation(legacyDDL)
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL)), "Schema 8"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL))), "Schema 8"); err != nil {
 		return fmt.Errorf("Schema 8 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -290,7 +290,7 @@ func schemaWithoutRepositoryDelegation(ddl string) string {
 
 func migrateSchemaTo10(db *sql.DB) error {
 	legacyDDL := schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(schemaSQL))
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL)), "Schema 9"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL))), "Schema 9"); err != nil {
 		return fmt.Errorf("Schema 9 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -315,7 +315,7 @@ func migrateSchemaTo10(db *sql.DB) error {
 
 func migrateSchemaTo11(db *sql.DB) error {
 	legacyDDL := schemaWithoutPublisherAccount(schemaSQL)
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL)), "Schema 10"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL))), "Schema 10"); err != nil {
 		return fmt.Errorf("Schema 10 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -381,7 +381,7 @@ func schemaWithoutRepositoryPublicationSlots(ddl string) string {
 }
 
 func migrateSchemaTo13(db *sql.DB) error {
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaSQL), "Schema 12"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaSQL)), "Schema 12"); err != nil {
 		return fmt.Errorf("Schema 12 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -406,8 +406,24 @@ func migrateSchemaTo13(db *sql.DB) error {
 	return tx.Commit()
 }
 
+func schemaWithoutPackageLifecycle(ddl string) string {
+	var retained []string
+	for _, statement := range strings.Split(ddl, ";") {
+		trimmed := strings.TrimSpace(statement)
+		if strings.HasPrefix(trimmed, "CREATE TABLE package_lifecycle_jobs(") ||
+			strings.HasPrefix(trimmed, "CREATE INDEX package_lifecycle_history ") ||
+			strings.HasPrefix(trimmed, "CREATE UNIQUE INDEX package_lifecycle_generation ") {
+			continue
+		}
+		if trimmed != "" {
+			retained = append(retained, trimmed)
+		}
+	}
+	return strings.Join(retained, ";\n\n") + ";"
+}
+
 func migrateSchemaTo14(db *sql.DB) error {
-	if err := validateSchema(db, schemaWithoutRepositoryPublicationSlots(schemaSQL), "Schema 13"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutRepositoryPublicationSlots(schemaSQL)), "Schema 13"); err != nil {
 		return fmt.Errorf("Schema 13 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -427,8 +443,35 @@ func migrateSchemaTo14(db *sql.DB) error {
 	return tx.Commit()
 }
 
+func migrateSchemaTo15(db *sql.DB) error {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaSQL), "Schema 14"); err != nil {
+		return fmt.Errorf("Schema 14 validation failed: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin Schema 14 to 15 migration: %w", err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`CREATE TABLE package_lifecycle_jobs(job_id TEXT PRIMARY KEY REFERENCES publish_jobs(id) ON DELETE CASCADE,repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,actor_account_id TEXT NOT NULL REFERENCES accounts(id),idempotency_key TEXT NOT NULL,operation TEXT NOT NULL CHECK(operation IN ('unlist','delete')),package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,confirmed INTEGER NOT NULL CHECK(confirmed IN (0,1)),generation_before TEXT NOT NULL,generation_after TEXT NOT NULL DEFAULT '',artifact_filename TEXT NOT NULL,artifact_size INTEGER NOT NULL CHECK(artifact_size>0),artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256)=64),metadata_state TEXT NOT NULL CHECK(metadata_state IN ('pending','published','unchanged','failed')),artifact_state TEXT NOT NULL CHECK(artifact_state IN ('pending','retained','deleted','cleanup_failed')),result TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,UNIQUE(repository_id,actor_account_id,idempotency_key))`,
+		`CREATE INDEX package_lifecycle_history ON package_lifecycle_jobs(repository_id,generation_after)`,
+		`CREATE UNIQUE INDEX package_lifecycle_generation ON package_lifecycle_jobs(repository_id,generation_after) WHERE generation_after<>''`,
+	} {
+		if _, err = tx.Exec(statement); err != nil {
+			return fmt.Errorf("create package lifecycle audit state: %w", err)
+		}
+	}
+	if err = migrationCheckpoint("before-schema-15-version"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE tpahub_schema SET version=15 WHERE singleton=1`); err != nil {
+		return fmt.Errorf("set Schema 15 version: %w", err)
+	}
+	return tx.Commit()
+}
+
 func migrateSchemaTo12(db *sql.DB) error {
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(schemaSQL)), "Schema 11"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(schemaSQL))), "Schema 11"); err != nil {
 		return fmt.Errorf("Schema 11 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -461,7 +504,7 @@ func migrateSchemaTo8(db *sql.DB) error {
 	legacyDDL = strings.Replace(legacyDDL, ",generation_id TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),verified_at TEXT NOT NULL DEFAULT '',verification_error TEXT NOT NULL DEFAULT ''", "", 1)
 	legacyDDL = strings.Replace(legacyDDL, "\n\nCREATE TABLE publication_artifacts(job_id TEXT NOT NULL REFERENCES publish_jobs(id) ON DELETE CASCADE,filename TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,architecture TEXT NOT NULL,uploaded_size INTEGER NOT NULL CHECK(uploaded_size>=0),uploaded_sha256 TEXT NOT NULL CHECK(length(uploaded_sha256)=64),published_filename TEXT NOT NULL DEFAULT '',published_size INTEGER NOT NULL DEFAULT 0 CHECK(published_size>=0),published_sha256 TEXT NOT NULL DEFAULT '',verification_state TEXT NOT NULL DEFAULT 'pending' CHECK(verification_state IN ('pending','match','mismatch')),PRIMARY KEY(job_id,filename));", "", 1)
 	legacyDDL = schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(legacyDDL))
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL)), "Schema 7"); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL))), "Schema 7"); err != nil {
 		return fmt.Errorf("Schema 7 validation failed: %w", err)
 	}
 	tx, err := db.Begin()
@@ -503,7 +546,7 @@ func migrateSchemaTo7(db *sql.DB, version int) error {
 		legacyDDL = strings.Replace(legacyDDL, oldCred, "", 1)
 	}
 	legacyDDL = schemaWithoutPublisherAccount(schemaWithoutRepositoryDelegation(legacyDDL))
-	if err := validateSchema(db, schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL)), fmt.Sprintf("Schema %d", version)); err != nil {
+	if err := validateSchema(db, schemaWithoutPackageLifecycle(schemaWithoutClientPublicationTables(schemaWithoutPublicationSessions(legacyDDL))), fmt.Sprintf("Schema %d", version)); err != nil {
 		return fmt.Errorf("Schema %d validation failed: %w", version, err)
 	}
 	tx, err := db.Begin()
@@ -544,7 +587,7 @@ func migrateSchemaTo7(db *sql.DB, version int) error {
 	return tx.Commit()
 }
 
-func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, err error) {
+func open(dir string, reconcileRunning, explicitMigration bool, forceReadWrite ...bool) (result *Store, err error) {
 	path := filepath.Join(dir, "tpahub.db")
 	info, statErr := os.Stat(path)
 	if statErr != nil && !os.IsNotExist(statErr) {
@@ -560,6 +603,9 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 		}
 	}
 	readOnly := !fresh && !explicitMigration
+	if len(forceReadWrite) != 0 && forceReadWrite[0] {
+		readOnly = false
+	}
 	dsn := path
 	if readOnly {
 		absolute, e := filepath.Abs(path)
@@ -601,7 +647,7 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 			return nil, fmt.Errorf("database schema %d is newer than this binary (schema %d); use a compatible binary or restore its matching backup", version, currentSchemaVersion)
 		}
 		if version != currentSchemaVersion {
-			if !explicitMigration || (version < 5 || version > 13) {
+			if !explicitMigration || (version < 5 || version > 14) {
 				return nil, fmt.Errorf("schema %d requires an explicit supported forward migration to %d", version, currentSchemaVersion)
 			}
 			if version < 11 {
@@ -645,8 +691,16 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 					return nil, err
 				}
 			}
-			if err = migrateSchemaTo14(db); err != nil {
-				return nil, err
+			if version <= 13 {
+				if err = migrateSchemaTo14(db); err != nil {
+					return nil, err
+				}
+				version = 14
+			}
+			if version <= 14 {
+				if err = migrateSchemaTo15(db); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if err = validateCurrentSchema(db); err != nil {
@@ -695,6 +749,10 @@ func open(dir string, reconcileRunning, explicitMigration bool) (result *Store, 
 	}
 	if reconcileRunning {
 		_, err = db.Exec(`UPDATE publish_jobs SET state='failed',error='interrupted by service restart',finished_at=?,cleanup_state='pending' WHERE state='running'`, time.Now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return nil, err
+		}
+		_, err = db.Exec(`UPDATE package_lifecycle_jobs SET metadata_state='unchanged',artifact_state='retained',result='interrupted' WHERE job_id IN (SELECT id FROM publish_jobs WHERE state='failed' AND error='interrupted by service restart') AND generation_after=''`)
 		if err != nil {
 			return nil, err
 		}

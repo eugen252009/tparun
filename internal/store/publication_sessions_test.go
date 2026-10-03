@@ -70,7 +70,7 @@ func TestSchema11To12MigrationPreservesExistingState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`DROP TABLE publication_session_batches; DROP TABLE publication_session_artifacts; DROP TABLE publication_sessions; DROP TABLE prebuilt_publications; DROP TABLE repository_apt_signers; DROP TABLE repository_publication_slots; UPDATE tpahub_schema SET version=11 WHERE singleton=1`); err != nil {
+	if _, err = db.Exec(`DROP INDEX package_lifecycle_history; DROP INDEX package_lifecycle_generation; DROP TABLE package_lifecycle_jobs; DROP TABLE publication_session_batches; DROP TABLE publication_session_artifacts; DROP TABLE publication_sessions; DROP TABLE prebuilt_publications; DROP TABLE repository_apt_signers; DROP TABLE repository_publication_slots; UPDATE tpahub_schema SET version=11 WHERE singleton=1`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSchema11To12MigrationPreservesExistingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if CurrentSchemaVersion() != 14 {
+	if CurrentSchemaVersion() != 15 {
 		t.Fatalf("schema version=%d", CurrentSchemaVersion())
 	}
 	if _, err = s.AccountByID(context.Background(), "owner"); err != nil {
@@ -96,7 +96,7 @@ func TestSchema11To12MigrationPreservesExistingState(t *testing.T) {
 		t.Fatalf("active generation=%q err=%v", generation, err)
 	}
 	if _, err = s.db.Exec(`INSERT INTO publication_sessions(id,repository_id,owner_account_id,incoming_path,state,expected_count,created_at) VALUES(?,?,?,?,?,?,?)`, "abababababababababababababababab", "public", "owner", "/incoming/session", "open", 1, "now"); err != nil {
-		t.Fatalf("Schema 14 session table unavailable: %v", err)
+		t.Fatalf("Schema 15 publication session table unavailable: %v", err)
 	}
 	if !strings.Contains(strings.ToLower(schemaSQL), "publication_session_batches") {
 		t.Fatal("canonical schema omitted session batch table")

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestSchema13To14PublicationSlotMigrationIsAtomic(t *testing.T) {
+func TestSchema13To15PublicationStateMigrationsAreAtomic(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {
@@ -22,7 +22,7 @@ func TestSchema13To14PublicationSlotMigrationIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`DROP TABLE repository_publication_slots; UPDATE tpahub_schema SET version=13 WHERE singleton=1`); err != nil {
+	if _, err = db.Exec(`DROP INDEX package_lifecycle_history; DROP INDEX package_lifecycle_generation; DROP TABLE package_lifecycle_jobs; DROP TABLE repository_publication_slots; UPDATE tpahub_schema SET version=13 WHERE singleton=1`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -60,8 +60,63 @@ func TestSchema13To14PublicationSlotMigrationIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 14 {
+	if err = s.db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 15 {
 		t.Fatalf("migrated schema=%d err=%v", version, err)
+	}
+}
+
+func TestSchema14To15LifecycleMigrationIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	dbStore, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = dbStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`DROP INDEX package_lifecycle_history; DROP INDEX package_lifecycle_generation; DROP TABLE package_lifecycle_jobs; UPDATE tpahub_schema SET version=14 WHERE singleton=1`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrationFault = func(stage string) error {
+		if stage == "before-schema-15-version" {
+			return errors.New("injected Schema 15 migration failure")
+		}
+		return nil
+	}
+	if err = Migrate(dir); err == nil {
+		t.Fatal("injected Schema 14 to 15 failure was ignored")
+	}
+	migrationFault = nil
+	db, err = sql.Open("sqlite", filepath.Join(dir, "tpahub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version, tables int
+	if err = db.QueryRow(`SELECT version FROM tpahub_schema`).Scan(&version); err != nil || version != 14 {
+		t.Fatalf("failed migration version=%d err=%v", version, err)
+	}
+	if err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='package_lifecycle_jobs'`).Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("failed migration lifecycle table count=%d err=%v", tables, err)
+	}
+	_ = db.Close()
+	if err = Migrate(dir); err != nil {
+		t.Fatal(err)
+	}
+	dbStore, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbStore.Close()
+	if CurrentSchemaVersion() != 15 {
+		t.Fatalf("migrated schema=%d", CurrentSchemaVersion())
 	}
 }
 
